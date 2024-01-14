@@ -31,9 +31,8 @@ pip install -r requirements.txt
 
 ## Notes
 
-- Areas are edittable, double click the table beside the Extract button to edit it.
-  
-- "Clear Areas" deletes all rendered rectangles/areas
-
 - The "**PDF DWG list**" button lists the PDF and DWG in a directory and checks the filenames of both type to see if a PDF's filename has an exact filename of a DWG. (Output is in excel)
 
+- Coordinates are edittable, double click the table beside the Extract button to edit it.
+  
+- "Clear Areas" deletes all rendered rectangles/areas
