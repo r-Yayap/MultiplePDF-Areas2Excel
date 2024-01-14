@@ -19,6 +19,7 @@ or you could also just make an .exe through pyinstaller
 ## Usage
 1. Run Extract_GUI.py
 2. After running the code:
+   
     (1) Browse your desired folder which contains your PDFs.
    ![image](https://github.com/Yayap-dev/PDF-Text-Extractor/assets/21073411/66b54df5-ca84-4367-a3ee-5da2ddba268d)
 
