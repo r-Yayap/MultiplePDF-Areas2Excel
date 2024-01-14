@@ -14,10 +14,8 @@ Install the dependencies stated in requirements.txt
 pip install -r requirements.txt
 ```
 
-or you could also just make an .exe through pyinstaller
-
 ## Usage
-1. Run Extract_GUI.py
+1. Run Extract_GUI.py ( or you could also just make an .exe through pyinstaller, then run it )
 2. Then:
    
     (1) Browse your desired folder which contains your PDFs.
