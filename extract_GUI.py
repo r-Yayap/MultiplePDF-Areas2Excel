@@ -124,6 +124,7 @@ def browse_pdf_folder():
     include_subfolders_var = ctk.IntVar()
 
     def toggle_include_subfolders():
+        global include_subfolders  # Add this line to use the global variable
         include_subfolders = include_subfolders_var.get()
 
         # Check if include_subfolders has a valid value (1 for True, 0 for False)
@@ -490,6 +491,7 @@ def extract_text():
             subfolders.clear()
 
         for pdf_filename in files:
+            pdf_path = os.path.join(root_folder, pdf_filename)
             if pdf_filename.endswith('.pdf'):
                 pdf_path = os.path.join(root_folder, pdf_filename)
 
@@ -592,7 +594,7 @@ def extract_text():
         os.startfile(output_excel_path)
 
     # Destroy the progress bar
-    progress.destroy()
+    #progress.destroy()
 
 '''
 The next lines are codes for PDF and DWG Counter
