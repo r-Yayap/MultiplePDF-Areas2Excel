@@ -33,7 +33,7 @@ pip install PyMuPDF==1.23.11
    
     (3) Select output location of the Excel File
    
-    (4) Draw Rectangles by doing a _Click-drag _motion. This rectangles are the ones that will be extracted.
+    (4) Draw Rectangles by doing a _Click-drag _motion. These rectangles are the ones that will be extracted.
    
     (5) Press Extract button.
 
