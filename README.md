@@ -1,7 +1,7 @@
 # PDF-Text-Extractor
 A PDF text extractor built using python to extract text on specific areas for multiple files.
 
-This code as mentioned above can read texts (using [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module) in a PDF file by specifically selecting an area in a pdf through a Graphical User Interface then extract the texts on that area then iterates on multiple PDFs. The output would then be saved as an Excel file. It works great on multiple PDF with the same PDF dimensions.
+This code as mentioned above can read texts (using [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module) in a PDF file by specifically selecting an area in a pdf through a Graphical User Interface then extract the texts on that area/s for multiple PDFs. The output would then be saved as an Excel file. It works great on multiple PDF with the same PDF dimensions.
 
 Built with the help of ChatGPT, Google, and Youtube, this is a simple tool to help me and my team in our daily tasks of scanning through PDFs. I am not a full-pledged coder so the code might look messy in the eyes of a coder. Regardless, the current capability of this code would suffice for what I had in mind when this was still an idea. It has helped me save a lot of time and be more efficient, and I hope for those who will use this would also feel the same.
 
@@ -40,6 +40,7 @@ pip install PyMuPDF==1.23.11
 ## Notes
 
 - Check the 'Include Subfolders?' if you want to include the PDFs in the subfolders
+  
 - The "**PDF DWG list**" button lists the PDF and DWG in a directory and checks the filenames of both type to see if a PDF's filename has an exact filename of a DWG. (Output is in excel)
 
 - Coordinates are edittable, double click the table beside the Extract button to edit it.
