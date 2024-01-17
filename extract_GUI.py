@@ -1,5 +1,6 @@
 import shutil
 import time
+import os
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
@@ -13,6 +14,7 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 
 import pdf_dwg_list as pdl
 import dir_list as dlist
+import bulk_rename as brn
 
 # Global variables
 ws = None
@@ -43,8 +45,14 @@ class EditableTreeview(ttk.Treeview):
         ttk.Treeview.__init__(self, *args, **kwargs)
         self._entry = None
         self._col = None
-        self.bind("<Double-1>", self.on_double_click)
-        self.bind("<FocusOut>", self.on_focus_out)
+
+        # Bind right-click to show context menu
+        self.bind("<Button-3>", self.show_context_menu)
+        
+
+        # Create context menu
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="Remove Row", command=self.remove_row)
 
     def on_double_click(self, event):
         item = self.focus()
@@ -53,11 +61,20 @@ class EditableTreeview(ttk.Treeview):
             self._col = col
             cell_values = self.item(item, "values")
             if cell_values:
-                # Extract the column index from the col identifier
                 col_index = int(col.split("#")[-1]) - 1
                 cell_value = cell_values[col_index]
                 self.edit_cell(item, col, cell_value)
-
+                
+    def show_context_menu(self, event):
+        item = self.identify_row(event.y)
+        if item:
+            self.context_menu.post(event.x_root, event.y_root)
+            
+    def remove_row(self):
+        item = self.focus()
+        if item:
+            self.delete(item)
+            
     def on_focus_out(self, event):
         if self._entry is not None:
             self.stop_editing()
@@ -695,6 +712,8 @@ def show_specific_text(event):
     changelog_text = """
 Changelog 07
 - Resize Display along with th windows
+- Added Option button for other features
+- Added Bulk Rename and Directory List
 
 Changelog 06
 - UI Overhaul
@@ -784,21 +803,22 @@ def optionmenu_callback(choice):
 
     if choice == "PDF/DWG List":
         # Do something for Option 1
-        print("Selected Option 1")
+        print("Selected PDF/DWG List")
         pdl.pdf_dwg_counter()
     elif choice == "Directory List":
         # Do something for Option 2
-        print("Selected Option 2")
+        print("Selected Directory Lis")
         dlist.generate_file_list_and_excel()
-    elif choice == "Bulk Renamer(WIP)":
+    elif choice == "Bulk Renamer":
         # Do something for Option 3
-        print("Selected Option 3")
+        print("Selected Bulk Renamer")
+        brn.bulk_rename_gui()
     else:
         # Handle other options
         print("Selected option:", choice)
 
 optionmenu_var = ctk.StringVar(value="Other Features")
-optionmenu = ctk.CTkOptionMenu(root,values=["PDF/DWG List", "Directory List", "Bulk Renamer(WIP)"],
+optionmenu = ctk.CTkOptionMenu(root,values=["PDF/DWG List", "Directory List", "Bulk Renamer"],
                                command=optionmenu_callback,
                                font=("Verdana",9),
                                dropdown_font=("Verdana",9),
