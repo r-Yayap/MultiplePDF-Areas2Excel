@@ -36,8 +36,6 @@ canvas = None  # Initialize canvas globally
 zoom_slider = None  # Initialize zoom_slider globally
 rectangle_list = []
 
-canvas_width = 1000
-canvas_height = 550
 current_zoom = 1.0
 
 class EditableTreeview(ttk.Treeview):
@@ -366,12 +364,15 @@ def update_display():
         update_rectangles_after_zoom()
 
 def on_windowresize(event):
-    # Update the display with the current zoom level
+    ows_start_time = time.time()
+    print(f'{root.winfo_width() - 30}, {root.winfo_height() - 135}')
     update_display()
-
+    ows_end_time = time.time()
+    elapsed_ows = ows_end_time - ows_start_time
+    print(f"Elapsed: {elapsed_ows}")
 
 def display_sample_pdf(pdf_path):
-    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, display_width, display_height, resize_binding_id
+    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, display_width, display_height
 
     # Define current_zoom as a global variable
     current_zoom = 1.0
@@ -620,11 +621,15 @@ def extract_text():
     #progress.destroy()
 
 
+def after_command():
+    
+    root.bind("<Configure>", on_windowresize)
+    canvas.bind("<MouseWheel>", on_mousewheel)
+    canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
+    
 # Create main window
 root = ctk.CTk()
 root.title("PDF Text Extractor")
-
-resize_binding_id = root.bind("<Configure>", on_windowresize)
 
 # Set initial window size
 initial_width = 965
@@ -633,6 +638,8 @@ initial_x_position = 0  # adjust this value according to your needs
 initial_y_position = 0 # adjust this value according to your needs
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
 
+canvas_width = 935
+canvas_height = 550
 
 # PDF Folder
 pdf_folder_entry = ctk.CTkEntry(root, width=270, height=20,font=("Verdana",9),placeholder_text="Select Folder with PDFs",
@@ -671,6 +678,15 @@ extract_button = ctk.CTkButton(root, text="EXTRACT",font=("Arial Black",12),
                                command=extract_text)
 extract_button.place(x=335, y=10)
 
+root.after(3000, after_command)
+
+def on_mousewheel(event):
+    if event.state & 0x1:  # Check if the Shift key is being held down
+        canvas.xview_scroll(-1 * int(event.delta / 120), "units")
+    else:
+        canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+    
+  
 #PDF Display
 canvas = ctk.CTkCanvas(root, width=canvas_width, height=canvas_height)
 canvas.place(x=10, y=100)
@@ -679,6 +695,7 @@ v_scrollbar = ctk.CTkScrollbar(root, orientation="vertical", command=canvas.yvie
 v_scrollbar.place(x=canvas_width + 14, y=100)
 h_scrollbar = ctk.CTkScrollbar(root, orientation="horizontal", command=canvas.xview, width=canvas_width)
 h_scrollbar.place(x=10, y=canvas_height + 105)
+
 
 
 # Areas Table
@@ -714,6 +731,7 @@ Changelog 07
 - Resize Display along with th windows
 - Added Option button for other features
 - Added Bulk Rename and Directory List
+- Scroll & Shift+Scroll on Canvas
 
 Changelog 06
 - UI Overhaul
