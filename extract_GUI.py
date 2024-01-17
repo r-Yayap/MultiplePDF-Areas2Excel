@@ -9,6 +9,7 @@ from PIL import Image, ImageTk
 from fitz.fitz import EmptyFileError
 from fitz.fitz import FileNotFoundError as FitzFileNotFoundError
 from openpyxl import Workbook
+from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 
@@ -580,8 +581,37 @@ def extract_text():
                     print(f"Error opening {pdf_path}: {e}")
                     # Log the information about the missing file in Excel
                     ws.append(
-                        [os.path.relpath(root_folder, pdf_folder), pdf_filename, "File Not Found"] + [""] * len(areas))
+                        [os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or file not found"] + [""] * len(areas))
 
+                except IllegalCharacterError as e:
+                    illegal_characters = e.args[0]
+                    print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
+
+                    # Remove or replace the illegal characters in the text
+                    cleaned_text = ''.join(char if char.isprintable() else ' ' for char in row_values[-1])
+
+                    # Append the cleaned text to the list
+                    row_values[-1] = cleaned_text
+
+                    # Append "Illegal Character Found" to a new column in the row
+                    row_values.append("Illegal Character Found")
+
+                    # Print sample extracted text after handling the illegal characters
+                    print(f"Page {page_number + 1}, Area {i} - Sample Extracted Text (After Handling): {cleaned_text}")
+
+                    # Add the row to the Excel sheet
+                    ws.append(row_values)
+
+                    # Add hyperlink to the PDF filename in the Excel sheet for each page
+                    pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
+                    pdf_filename_cell.value = pdf_filename
+
+                    # Set font color for the PDF filename cell
+                    pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue
+
+                    # Add hyperlink to the PDF filename cell
+                    pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
+                    
                 processed_files += 1
                 if processed_files % update_interval == 0:
                     # Update the progress bar after processing the specified number of files
