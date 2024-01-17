@@ -1,7 +1,7 @@
 import shutil
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
 import fitz  # PyMuPDF
 from PIL import Image, ImageTk
@@ -11,13 +11,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 
+import pdf_dwg_list as pdl
+import dir_list as dlist
+
 # Global variables
 ws = None
 pdf_folder = ''
 output_excel_path = ''
 areas = []
-display_width = 1000
-display_height = 550
 areas_tree = None
 img_label = None
 canvas = None
@@ -29,10 +30,13 @@ pdf_count_label = None
 include_dwg_directory_var = None  # Variable to track whether to include DWG directory
 include_dwg_directory_checkbox = None  # Global variable for the checkbox
 
-current_zoom = 1.0
 canvas = None  # Initialize canvas globally
 zoom_slider = None  # Initialize zoom_slider globally
 rectangle_list = []
+
+canvas_width = 1000
+canvas_height = 550
+current_zoom = 1.0
 
 class EditableTreeview(ttk.Treeview):
     def __init__(self, *args, **kwargs):
@@ -209,6 +213,9 @@ def open_sample_pdf():
     # Ask user to choose a sample PDF file
     sample_pdf_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
 
+    # Bind the on_windowresize function to the <Configure> event
+    resize_binding_id = root.bind("<Configure>", on_windowresize)
+
     if sample_pdf_path:
         print(f"Opening Sample PDF: {sample_pdf_path}")
 
@@ -299,7 +306,19 @@ def on_zoom_slider_change(value):
     update_display()
 
 def update_display():
-    global current_zoom, canvas
+    global root, canvas, pdf_width, pdf_height, current_zoom, v_scrollbar, h_scrollbar
+
+    # Set canvas dimensions based on aspect ratio and desired size
+    canvas_width = root.winfo_width() - 30
+    canvas_height =  root.winfo_height() - 135
+
+    # Resize the canvas
+    canvas.config(width=canvas_width, height=canvas_height)
+
+    v_scrollbar.configure(command=canvas.yview, height=canvas_height)
+    h_scrollbar.configure(command=canvas.xview, width=canvas_width)
+    v_scrollbar.place_configure(x=canvas_width + 14, y=100)
+    h_scrollbar.place_configure(x=10, y=canvas_height + 107)
 
     # Get the currently displayed image on the canvas
     current_image = getattr(canvas, 'pdf_image', None)
@@ -322,12 +341,20 @@ def update_display():
         # Adjust the canvas scroll region
         zoomed_width = int(pdf_width * current_zoom)
         zoomed_height = int(pdf_height * current_zoom)
-        canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height))
+
+        # Configure canvas to use scrollbars
+        canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set,
+                      scrollregion=(0, 0, zoomed_width, zoomed_height))
 
         update_rectangles_after_zoom()
 
+def on_windowresize(event):
+    # Update the display with the current zoom level
+    update_display()
+
+
 def display_sample_pdf(pdf_path):
-    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height
+    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, display_width, display_height, resize_binding_id
 
     # Define current_zoom as a global variable
     current_zoom = 1.0
@@ -341,22 +368,11 @@ def display_sample_pdf(pdf_path):
     # Get the size of the PDF page and round to the nearest integer
     pdf_width, pdf_height = int(round(page.rect.width)), int(round(page.rect.height))
 
-    # Calculate the zoomed dimensions
-    zoomed_width = int(pdf_width * current_zoom)
-    zoomed_height = int(pdf_height * current_zoom)
-
     # Get the page rotation angle
     rotation_angle = page.rotation
 
     # Calculate the aspect ratio of the original PDF page
     aspect_ratio = pdf_width / pdf_height
-
-    # Set canvas dimensions based on aspect ratio and desired size
-    canvas_width = 1000
-    canvas_height = 550
-
-    # Resize the canvas to fit the fixed window size
-    canvas.config(scrollregion=(0, 0, zoomed_width, zoomed_height), width=canvas_width, height=canvas_height)
 
     # Render the PDF page onto a PIL image
     pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom))
@@ -367,14 +383,6 @@ def display_sample_pdf(pdf_path):
 
     # If img_label is None, create a new PhotoImage on the canvas
     if not hasattr(canvas, 'pdf_image'):
-        # Vertical Scrollbar
-        v_scrollbar = ctk.CTkScrollbar(root, orientation="vertical", command=canvas.yview, height=canvas_height)
-        v_scrollbar.place(x=canvas_width + 14, y=100)
-
-        # Horizontal Scrollbar
-        h_scrollbar = ctk.CTkScrollbar(root, orientation="horizontal", command=canvas.xview, width=canvas_width)
-        h_scrollbar.place(x=10, y=canvas_height + 107)
-
         # Create a zoom slider
         zoom_slider = ctk.CTkSlider(root, from_=0.5, to=3.5, command=on_zoom_slider_change,
                                     height=10,
@@ -395,9 +403,6 @@ def display_sample_pdf(pdf_path):
         canvas.bind("<B1-Motion>", draw_rectangle)
         canvas.bind("<ButtonRelease-1>", end_rectangle)
 
-        # Configure canvas to use scrollbars
-        canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set,
-                      scrollregion=(0, 0, zoomed_width, zoomed_height))
 
     # Display the image on the canvas
     canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
@@ -413,10 +418,10 @@ def display_sample_pdf(pdf_path):
                                    width=25, height=10)
     clear_areas_button.place(x=650, y=75)
 
+
     pdf_document.close()
     print(f"Displayed PDF: {pdf_path}")
 
-    # Return the dimensions of the first page in the PDF
     return pdf_width, pdf_height
 
 def clear_all_areas():
@@ -454,6 +459,7 @@ def extract_text():
 
     # Check if there are areas defined
     if not areas:
+        no_areas = messagebox.showwarning("Error","No areas defined. Please draw rectangles.")
         print("No areas defined. Please draw rectangles.")
         return
 
@@ -596,160 +602,20 @@ def extract_text():
     # Destroy the progress bar
     #progress.destroy()
 
-'''
-The next lines are codes for PDF and DWG Counter
-'''
-import os
-import pandas as pd
-from tkinter import Tk, filedialog
-from openpyxl import load_workbook
-
-
-def choose_directory(title="Select Directory"):
-    root = Tk()
-    root.withdraw()  # Hide the main window
-    selected_path = filedialog.askdirectory(title=title)
-    root.destroy()  # Close the main window
-    return selected_path
-
-
-def choose_file_save_location(title="Save Excel File As"):
-    root = Tk()
-    root.withdraw()  # Hide the main window
-    file_path = filedialog.asksaveasfilename(
-        defaultextension=".xlsx",
-        filetypes=[("Excel files", "*.xlsx")],
-        title=title
-    )
-    root.destroy()  # Close the main window
-    return file_path
-
-def list_files(start_path):
-    file_dict = {'PDF': {}, 'DWG': {}}
-    for root, dirs, files in os.walk(start_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            directory = os.path.relpath(root, start_path)
-            file_name, file_extension = os.path.splitext(file)
-            file_type = 'PDF' if file_extension.lower() == '.pdf' else 'DWG' if file_extension.lower() == '.dwg' else 'Other'
-
-            # Exclude 'Other' file types
-            if file_type in ['PDF', 'DWG']:
-                # Use the full path as the key in the dictionary
-                file_dict[file_type][file_path] = file_name
-
-    return file_dict
-
-def export_to_excel(file_dict, selected_folder, excel_file):
-    pdf_dict = file_dict['PDF']
-    dwg_dict = file_dict['DWG']
-
-    # Combine PDF and DWG dictionaries
-    combined_dict = {}
-
-    # Helper function to add or update entries in the combined_dict
-    def update_combined_dict(file_name, pdf_path, dwg_path):
-        if file_name not in combined_dict:
-            combined_dict[file_name] = {'File': file_name, 'PDF': None, 'DWG': None, 'FolderPDF': [], 'FolderDWG': [],
-                                        'PDFHasDuplicate': None, 'DWGHasDuplicate': None}
-
-        # Add PDF information
-        if pdf_path:
-            pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
-            combined_dict[file_name]['PDF'] = pdf_name
-
-            # Check for duplicate entries and add square brackets to FolderPDF
-            pdf_folder = os.path.relpath(os.path.dirname(pdf_path), selected_folder) if os.path.dirname(
-                pdf_path) and selected_folder else ''
-            combined_dict[file_name]['FolderPDF'].append(pdf_folder)
-            combined_dict[file_name]['PDFHasDuplicate'] = len(combined_dict[file_name]['FolderPDF']) if len(
-                combined_dict[file_name]['FolderPDF']) > 1 else None
-
-        # Add DWG information
-        if dwg_path:
-            dwg_name = os.path.splitext(os.path.basename(dwg_path))[0]
-            combined_dict[file_name]['DWG'] = dwg_name
-
-            # Check for duplicate entries and add square brackets to FolderDWG
-            dwg_folder = os.path.relpath(os.path.dirname(dwg_path), selected_folder) if os.path.dirname(
-                dwg_path) and selected_folder else ''
-            combined_dict[file_name]['FolderDWG'].append(dwg_folder)
-            combined_dict[file_name]['DWGHasDuplicate'] = len(combined_dict[file_name]['FolderDWG']) if len(
-                combined_dict[file_name]['FolderDWG']) > 1 else None
-
-    # Process PDF files
-    for pdf_path, pdf_name in pdf_dict.items():
-        dwg_path = dwg_dict.get(pdf_path, '')
-        file_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        update_combined_dict(file_name, pdf_path, dwg_path)
-
-    # Process DWG files
-    for dwg_path, dwg_name in dwg_dict.items():
-        pdf_path = pdf_dict.get(dwg_path, '')
-        file_name = os.path.splitext(os.path.basename(dwg_path))[0]
-        update_combined_dict(file_name, pdf_path, dwg_path)
-
-    # Check for duplicate entries and update 'HasDuplicate' column
-    for file_name, data in combined_dict.items():
-        pdf_duplicate = any(entry['PDF'] == data['PDF'] for entry in combined_dict.values() if entry != data)
-        dwg_duplicate = any(entry['DWG'] == data['DWG'] for entry in combined_dict.values() if entry != data)
-        combined_dict[file_name]['HasDuplicate'] = not (pdf_duplicate or dwg_duplicate)
-
-    # Create a DataFrame from the combined dictionary
-    df = pd.DataFrame.from_dict(combined_dict, orient='index').reset_index()
-
-    # Sort the DataFrame alphabetically by File name
-    df = df.sort_values(by='File')
-
-    # Drop the first column created by reset_index()
-    df = df.drop(columns=[df.columns[0], 'File', 'HasDuplicate'])  # Drop the first column and 'HasDuplicate'
-
-    # Save the final DataFrame to Excel
-    df.to_excel(excel_file, index=False)
-
-    # Apply conditional formatting for duplicates
-    wb = load_workbook(excel_file)
-    ws = wb.active
-
-    # Save the workbook
-    wb.save(excel_file)
-
-    print(f"Directory listing exported to {excel_file}")
-
-
-def pdf_dwg_counter():
-    # Choose the directory using a dialog box
-    directory_path = choose_directory()
-
-    if directory_path:
-        # Get the dictionary of files in the directory
-        file_dict = list_files(directory_path)
-
-        # Choose where to save the Excel file
-        excel_file_path = choose_file_save_location()
-
-        if excel_file_path:
-            # Export the dictionary to the specified Excel file
-            export_to_excel(file_dict, directory_path, excel_file_path)
-        else:
-            print("No file location selected.")
-    else:
-        print("No directory selected.")
-
-'''
-End of Counter functions
-'''
 
 # Create main window
 root = ctk.CTk()
 root.title("PDF Text Extractor")
 
+resize_binding_id = root.bind("<Configure>", on_windowresize)
+
 # Set initial window size
-initial_width = 1028
+initial_width = 965
 initial_height = 685
 initial_x_position = 0  # adjust this value according to your needs
 initial_y_position = 0 # adjust this value according to your needs
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
+
 
 # PDF Folder
 pdf_folder_entry = ctk.CTkEntry(root, width=270, height=20,font=("Verdana",9),placeholder_text="Select Folder with PDFs",
@@ -788,9 +654,15 @@ extract_button = ctk.CTkButton(root, text="EXTRACT",font=("Arial Black",12),
                                command=extract_text)
 extract_button.place(x=335, y=10)
 
-# Display PDF
-canvas = ctk.CTkCanvas(root, width=display_width, height=display_height)
+#PDF Display
+canvas = ctk.CTkCanvas(root, width=canvas_width, height=canvas_height)
 canvas.place(x=10, y=100)
+
+v_scrollbar = ctk.CTkScrollbar(root, orientation="vertical", command=canvas.yview, height=canvas_height)
+v_scrollbar.place(x=canvas_width + 14, y=100)
+h_scrollbar = ctk.CTkScrollbar(root, orientation="horizontal", command=canvas.xview, width=canvas_width)
+h_scrollbar.place(x=10, y=canvas_height + 105)
+
 
 # Areas Table
 areas_frame = ctk.CTkFrame(root, height=1,width=200,
@@ -821,6 +693,9 @@ areas_tree.configure(yscrollcommand=scrollbar.set)
 
 def show_specific_text(event):
     changelog_text = """
+Changelog 07
+- Resize Display along with th windows
+
 Changelog 06
 - UI Overhaul
 - Zoom implemented
@@ -893,21 +768,43 @@ Changelog 01
     window.grab_set()
 
 # Label to display version
-version_label = ctk.CTkLabel(root, text="Version 0.231219-06 | Changelog",
+version_label = ctk.CTkLabel(root, text="Version 0.231219-07 | Changelog",
                              fg_color="transparent",
                              text_color="gray59",
                              padx=0,pady=0,
-                             compound="bottom",
-                             font=("Verdana",6))
-version_label.place(x=913, y=665)
+                             anchor="nw",
+                             font=("Verdana",7))
+version_label.place(x=845, y=30)
 version_label.bind("<Button-1>", show_specific_text)
 
-# PDF DWG COUNTER/LIST BUTTON
-counter_button = ctk.CTkButton(root, text="PDF DWG List", command=pdf_dwg_counter,font=("Verdana",9),
-                                  fg_color="#B30B00",
-                                  hover_color="#860A00",
-                                  width=25, height=10)
-counter_button.place(x=940, y=10)
+
+#Other Options
+def optionmenu_callback(choice):
+    print("optionmenu dropdown clicked:", choice)
+
+    if choice == "PDF/DWG List":
+        # Do something for Option 1
+        print("Selected Option 1")
+        pdl.pdf_dwg_counter()
+    elif choice == "Directory List":
+        # Do something for Option 2
+        print("Selected Option 2")
+        dlist.generate_file_list_and_excel()
+    elif choice == "Bulk Renamer(WIP)":
+        # Do something for Option 3
+        print("Selected Option 3")
+    else:
+        # Handle other options
+        print("Selected option:", choice)
+
+optionmenu_var = ctk.StringVar(value="Other Features")
+optionmenu = ctk.CTkOptionMenu(root,values=["PDF/DWG List", "Directory List", "Bulk Renamer(WIP)"],
+                               command=optionmenu_callback,
+                               font=("Verdana",9),
+                               dropdown_font=("Verdana",9),
+                               dynamic_resizing=False,
+                               variable=optionmenu_var,width=105, height=15)
+optionmenu.place(x=850, y=10)
 
 # Run the main loop
 root.mainloop()
