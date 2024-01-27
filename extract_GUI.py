@@ -1,6 +1,7 @@
 import shutil
 import time
 import os
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
@@ -13,6 +14,7 @@ from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 
+#Importing python files
 import pdf_dwg_list as pdl
 import dir_list as dlist
 import bulk_rename as brn
@@ -23,21 +25,19 @@ pdf_folder = ''
 output_excel_path = ''
 areas = []
 areas_tree = None
-img_label = None
-canvas = None
 rectangle = None  # Define rectangle globally
-pdf_height = 0  # Initialize pdf_height as a global variable
 include_subfolders = False
-dwg_folder = ''  # Added variable for DWG folder
-pdf_count_label = None
-include_dwg_directory_var = None  # Variable to track whether to include DWG directory
-include_dwg_directory_checkbox = None  # Global variable for the checkbox
 
 canvas = None  # Initialize canvas globally
 zoom_slider = None  # Initialize zoom_slider globally
 rectangle_list = []
 
-current_zoom = 1.0
+#for Windows Resize Function
+prev_width = None
+prev_height = None
+
+current_zoom = 2.0
+
 
 class EditableTreeview(ttk.Treeview):
     def __init__(self, *args, **kwargs):
@@ -328,13 +328,14 @@ def update_display():
     canvas_width = root.winfo_width() - 30
     canvas_height =  root.winfo_height() - 135
 
-    # Resize the canvas
-    canvas.config(width=canvas_width, height=canvas_height)
-
+    #Scrollbar reposition
     v_scrollbar.configure(command=canvas.yview, height=canvas_height)
     h_scrollbar.configure(command=canvas.xview, width=canvas_width)
     v_scrollbar.place_configure(x=canvas_width + 14, y=100)
     h_scrollbar.place_configure(x=10, y=canvas_height + 107)
+
+    # Resize the canvas
+    canvas.config(width=canvas_width, height=canvas_height)
 
     # Get the currently displayed image on the canvas
     current_image = getattr(canvas, 'pdf_image', None)
@@ -365,18 +366,25 @@ def update_display():
         update_rectangles_after_zoom()
 
 def on_windowresize(event):
-    ows_start_time = time.time()
-    print(f'{root.winfo_width() - 30}, {root.winfo_height() - 135}')
-    update_display()
-    ows_end_time = time.time()
-    elapsed_ows = ows_end_time - ows_start_time
-    print(f"Elapsed: {elapsed_ows}")
+    global prev_width, prev_height
+
+    current_width = root.winfo_width()
+    current_height = root.winfo_height()
+
+    if current_width != prev_width or current_height != prev_height:
+        print("Window size changed.")
+        prev_width = current_width
+        prev_height = current_height
+
+        print(f'Display Resized: {root.winfo_width() - 30}, {root.winfo_height() - 135}')
+        update_display()
+
 
 def display_sample_pdf(pdf_path):
-    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, display_width, display_height
+    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height
 
     # Define current_zoom as a global variable
-    current_zoom = 1.0
+    #current_zoom = 1.0
 
     pdf_document = fitz.open(pdf_path)
     page = pdf_document[0]  # Access the first page
@@ -400,7 +408,6 @@ def display_sample_pdf(pdf_path):
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     img_tk = ImageTk.PhotoImage(img)
 
-    # If img_label is None, create a new PhotoImage on the canvas
     if not hasattr(canvas, 'pdf_image'):
         # Create a zoom slider
         zoom_slider = ctk.CTkSlider(root, from_=0.5, to=3.5, command=on_zoom_slider_change,
@@ -411,7 +418,7 @@ def display_sample_pdf(pdf_path):
                                     #button_color="#B30B00",
                                     #button_hover_color="#860A00",
                                     orientation="horizontal")
-        zoom_slider.set(1.0)  # Initial zoom level
+        zoom_slider.set(current_zoom)  # Initial zoom level
         zoom_slider.place(x=800,y=80)
 
         zoom_slider_label = ctk.CTkLabel(root, text="Zoom:",font=("Verdana",9))
@@ -440,6 +447,12 @@ def display_sample_pdf(pdf_path):
 
     pdf_document.close()
     print(f"Displayed PDF: {pdf_path}")
+
+
+    update_display()
+
+    canvas.yview_moveto(1.0)
+    canvas.xview_moveto(1.0)
 
     return pdf_width, pdf_height
 
@@ -472,13 +485,22 @@ def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width
         x0, y0, x1, y1 = coordinates
         return [pdf_height - y1, x0, pdf_height - y0, x1]
 
+
+def start_extraction_thread():
+    # Create a new thread for the extraction process
+    extraction_thread = threading.Thread(target=extract_text)
+
+    # Start the thread
+    extraction_thread.start()
+
+
 def extract_text():
     start_time = time.time()
     global areas, ws, pdf_height, pdf_width, include_subfolders
 
     # Check if there are areas defined
     if not areas:
-        no_areas = messagebox.showwarning("Error","No areas defined. Please draw rectangles.")
+        no_areas = messagebox.showwarning("Error", "No areas defined. Please draw rectangles.")
         print("No areas defined. Please draw rectangles.")
         return
 
@@ -492,24 +514,51 @@ def extract_text():
         return
 
     # Determine the total number of iterations (PDF files)
-    total_files = sum(len(files) for _, _, files in os.walk(pdf_folder))
-
-    # Create a progress bar
-    #progress = ctk.CTkProgressBar(root, orientation="horizontal",
-    #                              mode="determinate",
-    #                              width=150)
-    #progress.place(x=450, y=40)
+    if include_subfolders:
+        total_files = sum(1 for root, _, files in os.walk(pdf_folder) for file in files if file.endswith('.pdf'))
+    else:
+        _, _, files = next(os.walk(pdf_folder))
+        total_files = sum(1 for file in files if file.endswith('.pdf'))
 
     # Initialize Excel workbook and sheet
     wb = Workbook()
     ws = wb.active
     ws.append(["Folder", "PDF Filename"] + [f"Extracted Text {i + 1}" for i in range(len(areas))])
 
+    # Create a new window to display progress
+    progress_window = ctk.CTkToplevel(root)
+    progress_window.title("Extracting Text Progress")
+    progress_window.geometry("300x90")
+
+    progress_window.attributes('-topmost', True)  # Add this line to bring the window to the top
+    progress_window.lift()
+
+    # Label to display current progress
+    progress_label = ctk.CTkLabel(progress_window, text="Extracting Texts in PDFs...")
+    progress_label.pack()
+
+    # Create a progress bar
+    progress = ctk.CTkProgressBar(progress_window, orientation="horizontal", mode="determinate",
+                                  progress_color='limegreen',
+                                  width=150, height=10)
+    progress.pack()
+
+    # Label to display total number of PDFs
+    total_label = ctk.CTkLabel(progress_window, text=f"Stretch for a bit or get a cup of tea!",
+                               #fg_color="transparent",
+                               #text_color="gray59",
+                               padx=0, pady=13,
+                               anchor="nw",
+                               font=("Helvetica", 12))
+
+    total_label.pack()
+
     # Define the number of files to process before updating the progress bar
     update_interval = 1  # Adjust this value as needed
 
     # Iterate through PDFs in the folder and its subfolders
     processed_files = 0
+
     for root_folder, subfolders, files in os.walk(pdf_folder):
         # Check if subfolders should be included
         if not include_subfolders:
@@ -524,6 +573,7 @@ def extract_text():
                     # Extract text from each defined area using PyMuPDF (fitz)
                     pdf_document = fitz.open(pdf_path)
 
+                    processed_files += 1
 
                     for page_number in range(pdf_document.page_count):
                         # Get the current page
@@ -531,6 +581,8 @@ def extract_text():
 
                         # Create a list to store extracted text for each area on the same row
                         row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
+
+                        print(f'PDF Rotation: {page.rotation}')
 
                         # Iterate through areas
                         for i, area_coordinates in enumerate(areas, start=1):
@@ -562,8 +614,7 @@ def extract_text():
                         ws.append(row_values)
 
                         # Add hyperlink to the PDF filename in the Excel sheet for each page
-                        pdf_filename_cell = ws.cell(row=ws.max_row,
-                                                    column=2)  # Assuming PDF Filename is in the second column (column B)
+                        pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
                         pdf_filename_cell.value = pdf_filename
 
                         # Set font color for the PDF filename cell
@@ -572,6 +623,11 @@ def extract_text():
                         # Add hyperlink to the PDF filename cell
                         pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
 
+                        # Update progress labels
+                        progress_label.configure(text=f"Extracting Texts in PDFs... ({processed_files}/{total_files})")
+                        progress.set(processed_files / total_files)
+                        progress_window.update_idletasks()
+
                 except EmptyFileError as e:
                     print(f"Error extracting text from {pdf_path}: {e}")
                     # Log the information about the corrupted file in Excel
@@ -579,6 +635,7 @@ def extract_text():
                         [os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(areas))
                 except FitzFileNotFoundError as e:
                     print(f"Error opening {pdf_path}: {e}")
+
                     # Log the information about the missing file in Excel
                     ws.append(
                         [os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or file not found"] + [""] * len(areas))
@@ -602,29 +659,10 @@ def extract_text():
                     # Add the row to the Excel sheet
                     ws.append(row_values)
 
-                    # Add hyperlink to the PDF filename in the Excel sheet for each page
-                    pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
-                    pdf_filename_cell.value = pdf_filename
-
-                    # Set font color for the PDF filename cell
-                    pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue
-
-                    # Add hyperlink to the PDF filename cell
-                    pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
-                    
-                processed_files += 1
-                if processed_files % update_interval == 0:
-                    # Update the progress bar after processing the specified number of files
-                    #progress["value"] = processed_files
-                    root.update_idletasks()
-
-    # Complete the progress bar to 100%
-    #progress["value"] = total_files
-    root.update_idletasks()
-
     # Save Excel file
     try:
         wb.save(output_excel_path)
+
     except PermissionError:
         # Handle the case where the file is currently opened
         print(f"Error: The Excel file '{output_excel_path}' is currently opened.")
@@ -647,12 +685,11 @@ def extract_text():
     if open_file:
         os.startfile(output_excel_path)
 
-    # Destroy the progress bar
-    #progress.destroy()
+    # Close the progress window
+    progress_window.destroy()
 
 
 def after_command():
-    
     root.bind("<Configure>", on_windowresize)
     canvas.bind("<MouseWheel>", on_mousewheel)
     canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
@@ -705,7 +742,7 @@ extract_button = ctk.CTkButton(root, text="EXTRACT",font=("Arial Black",12),
                                #fg_color="#217346",
                                #hover_color="#6AD49A",
                                width=75, height=70,
-                               command=extract_text)
+                               command=start_extraction_thread)
 extract_button.place(x=335, y=10)
 
 root.after(3000, after_command)
@@ -757,6 +794,10 @@ areas_tree.configure(yscrollcommand=scrollbar.set)
 
 def show_specific_text(event):
     changelog_text = """
+Changelog 08
+- Optimized-ish? XD
+- Progress Bar (at last!)
+
 Changelog 07
 - Resize Display along with th windows
 - Added Option button for other features
@@ -834,14 +875,17 @@ Changelog 01
     # Bring the specific text window to the front
     window.grab_set()
 
+
 # Label to display version
-version_label = ctk.CTkLabel(root, text="Version 0.231219-07 | Changelog",
+version_txt = "Version 0.231219-08"
+
+version_label = ctk.CTkLabel(root, text=version_txt,
                              fg_color="transparent",
                              text_color="gray59",
                              padx=0,pady=0,
                              anchor="nw",
-                             font=("Verdana",7))
-version_label.place(x=845, y=30)
+                             font=("Verdana",8.5))
+version_label.place(x=855, y=30)
 version_label.bind("<Button-1>", show_specific_text)
 
 
