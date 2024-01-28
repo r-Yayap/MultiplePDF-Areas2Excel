@@ -27,15 +27,19 @@ areas = []
 areas_tree = None
 rectangle = None  # Define rectangle globally
 include_subfolders = False
-
 canvas = None  # Initialize canvas globally
 zoom_slider = None  # Initialize zoom_slider globally
 rectangle_list = []
-
-#for Windows Resize Function
-prev_width = None
+prev_width = None #for Windows Resize Function
 prev_height = None
 
+# Initial Window and Display settings
+initial_width = 965
+initial_height = 685
+initial_x_position = 0
+initial_y_position = 0
+canvas_width = 935
+canvas_height = 550
 current_zoom = 2.0
 
 
@@ -128,7 +132,6 @@ class EditableTreeview(ttk.Treeview):
             self._entry.destroy()
             self._entry = None
             self._col = None
-
 
 def browse_pdf_folder():
     global pdf_folder, include_subfolders, include_subfolders_var
@@ -372,7 +375,6 @@ def on_windowresize(event):
     current_height = root.winfo_height()
 
     if current_width != prev_width or current_height != prev_height:
-        print("Window size changed.")
         prev_width = current_width
         prev_height = current_height
 
@@ -444,10 +446,8 @@ def display_sample_pdf(pdf_path):
                                    width=25, height=10)
     clear_areas_button.place(x=650, y=75)
 
-
     pdf_document.close()
     print(f"Displayed PDF: {pdf_path}")
-
 
     update_display()
 
@@ -471,7 +471,6 @@ def clear_all_areas():
     print("Cleared All Areas")
 
 def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width):
-    # Adjust coordinates based on rotation
 
     if rotation == 0:
         return coordinates
@@ -485,14 +484,9 @@ def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width
         x0, y0, x1, y1 = coordinates
         return [pdf_height - y1, x0, pdf_height - y0, x1]
 
-
 def start_extraction_thread():
-    # Create a new thread for the extraction process
     extraction_thread = threading.Thread(target=extract_text)
-
-    # Start the thread
     extraction_thread.start()
-
 
 def extract_text():
     start_time = time.time()
@@ -513,6 +507,11 @@ def extract_text():
         print("Please enter values in both Entry fields.")
         return
 
+    # Check if the folder path is valid
+    if not os.path.isdir(pdf_folder_value):
+        messagebox.showerror("Invalid Folder", "The specified folder does not exist.")
+        return
+
     # Determine the total number of iterations (PDF files)
     if include_subfolders:
         total_files = sum(1 for root, _, files in os.walk(pdf_folder) for file in files if file.endswith('.pdf'))
@@ -523,14 +522,13 @@ def extract_text():
     # Initialize Excel workbook and sheet
     wb = Workbook()
     ws = wb.active
-    ws.append(["Folder", "PDF Filename"] + [f"Extracted Text {i + 1}" for i in range(len(areas))])
+    ws.append(["Folder", "Filename"] + [f"Area {i + 1}" for i in range(len(areas))])
 
     # Create a new window to display progress
     progress_window = ctk.CTkToplevel(root)
-    progress_window.title("Extracting Text Progress")
+    progress_window.title("Extraction in Progress...")
     progress_window.geometry("300x90")
-
-    progress_window.attributes('-topmost', True)  # Add this line to bring the window to the top
+    progress_window.attributes('-topmost', True)
     progress_window.lift()
 
     # Label to display current progress
@@ -540,17 +538,15 @@ def extract_text():
     # Create a progress bar
     progress = ctk.CTkProgressBar(progress_window, orientation="horizontal", mode="determinate",
                                   progress_color='limegreen',
-                                  width=150, height=10)
+                                  width=150, height=15)
     progress.pack()
 
-    # Label to display total number of PDFs
     total_label = ctk.CTkLabel(progress_window, text=f"Stretch for a bit or get a cup of tea!",
                                #fg_color="transparent",
                                #text_color="gray59",
                                padx=0, pady=13,
                                anchor="nw",
                                font=("Helvetica", 12))
-
     total_label.pack()
 
     # Define the number of files to process before updating the progress bar
@@ -582,7 +578,8 @@ def extract_text():
                         # Create a list to store extracted text for each area on the same row
                         row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
 
-                        print(f'PDF Rotation: {page.rotation}')
+                        print(f'Page Rotation: {page.rotation}')
+                        print(f'Page Dimension: {page.rect.width} x {page.rect.height}')
 
                         # Iterate through areas
                         for i, area_coordinates in enumerate(areas, start=1):
@@ -590,8 +587,7 @@ def extract_text():
                             pdf_width, pdf_height = page.rect.width, page.rect.height
 
                             # Adjust coordinates based on rotation
-                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation,
-                                                                                   pdf_height, pdf_width)
+                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation, pdf_height, pdf_width)
 
                             # Attempt to read text from the specified area
                             try:
@@ -693,20 +689,21 @@ def after_command():
     root.bind("<Configure>", on_windowresize)
     canvas.bind("<MouseWheel>", on_mousewheel)
     canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
-    
+
+def update_pdf_folder(event):
+    global pdf_folder
+    pdf_folder = pdf_folder_entry.get()
+    print(f"PDF root path: {pdf_folder}")
+
+def update_output_path(event):
+    global output_excel_path
+    output_excel_path = output_path_entry.get()
+    print(f"output path: {output_excel_path}")
+
 # Create main window
 root = ctk.CTk()
 root.title("PDF Text Extractor")
-
-# Set initial window size
-initial_width = 965
-initial_height = 685
-initial_x_position = 0  # adjust this value according to your needs
-initial_y_position = 0 # adjust this value according to your needs
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
-
-canvas_width = 935
-canvas_height = 550
 
 # PDF Folder
 pdf_folder_entry = ctk.CTkEntry(root, width=270, height=20,font=("Verdana",9),placeholder_text="Select Folder with PDFs",
@@ -737,15 +734,21 @@ output_path_button = ctk.CTkButton(root, text="...", command=browse_output_path,
                                    width=25, height=10)
 output_path_button.place(x=20, y=60)
 
+# Bind events to the pdf_folder_entry and output_path_entry widgets
+pdf_folder_entry.bind("<KeyRelease>", update_pdf_folder)
+output_path_entry.bind("<KeyRelease>", update_output_path)
+
+
 # Extract Text Button
 extract_button = ctk.CTkButton(root, text="EXTRACT",font=("Arial Black",12),
                                #fg_color="#217346",
                                #hover_color="#6AD49A",
+                                corner_radius=10,
                                width=75, height=70,
                                command=start_extraction_thread)
-extract_button.place(x=335, y=10)
+extract_button.place(x=330, y=10)
 
-root.after(3000, after_command)
+root.after(2500, after_command)
 
 def on_mousewheel(event):
     if event.state & 0x1:  # Check if the Shift key is being held down
@@ -762,7 +765,6 @@ v_scrollbar = ctk.CTkScrollbar(root, orientation="vertical", command=canvas.yvie
 v_scrollbar.place(x=canvas_width + 14, y=100)
 h_scrollbar = ctk.CTkScrollbar(root, orientation="horizontal", command=canvas.xview, width=canvas_width)
 h_scrollbar.place(x=10, y=canvas_height + 105)
-
 
 
 # Areas Table
@@ -792,7 +794,7 @@ scrollbar = ctk.CTkScrollbar(areas_frame, orientation="vertical", command=areas_
 scrollbar.pack(side="right", fill="y")
 areas_tree.configure(yscrollcommand=scrollbar.set)
 
-def show_specific_text(event):
+def changelog_text(event):
     changelog_text = """
 Changelog 08
 - Optimized-ish? XD
@@ -875,7 +877,6 @@ Changelog 01
     # Bring the specific text window to the front
     window.grab_set()
 
-
 # Label to display version
 version_txt = "Version 0.231219-08"
 
@@ -886,8 +887,7 @@ version_label = ctk.CTkLabel(root, text=version_txt,
                              anchor="nw",
                              font=("Verdana",8.5))
 version_label.place(x=855, y=30)
-version_label.bind("<Button-1>", show_specific_text)
-
+version_label.bind("<Button-1>", changelog_text)
 
 #Other Options
 def optionmenu_callback(choice):
@@ -899,7 +899,7 @@ def optionmenu_callback(choice):
         pdl.pdf_dwg_counter()
     elif choice == "Directory List":
         # Do something for Option 2
-        print("Selected Directory Lis")
+        print("Selected Directory List")
         dlist.generate_file_list_and_excel()
     elif choice == "Bulk Renamer":
         # Do something for Option 3

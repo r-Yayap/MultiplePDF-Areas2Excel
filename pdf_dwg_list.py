@@ -134,7 +134,3 @@ def pdf_dwg_counter():
             print("No file location selected.")
     else:
         print("No directory selected.")
-
-'''
-End of Counter functions
-'''
