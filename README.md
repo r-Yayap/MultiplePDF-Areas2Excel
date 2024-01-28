@@ -1,11 +1,11 @@
 # PDF-Text-Extractor
 A PDF text extractor built using python to extract text on specific areas for multiple files.
 
-This code as mentioned above can read texts (using [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module) in a PDF file by specifically selecting an area in a pdf through a Graphical User Interface then extract the texts on that area/s for multiple PDFs. The output would then be saved as an Excel file. It works great on multiple PDF with the same PDF dimensions.
+This tool utilizes [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module to read text in a PDF file, allowing users to select specific areas via a Graphical User Interface for extraction. The extracted text is then saved as an Excel file. It performs efficiently, particularly on multiple PDFs with identical dimensions.
 
 Built with the help of ChatGPT, Google, and Youtube, this is a simple tool to help me and my team in our daily tasks of scanning through PDFs. I am not really a coder so the code might look messy in the eyes of a coder. Regardless, the current capability of this code would suffice for what I had in mind when this was still an idea. It has helped me save a lot of time and be more efficient, and I hope for those who will use this would also feel the same.
 
-For the meantime, it cannot extract texts in an image due to limited time for coding. This might be done in future development propably by using pytesseract or other OCR modules available. There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
+Currently, the tool does not support text extraction from images due to time constraints. However, future development may include this feature, possibly integrating pytesseract or other OCR modules. There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
 
 ## Installation
 Install the dependencies stated in requirements.txt
@@ -46,3 +46,7 @@ pip install PyMuPDF==1.23.11
 - Coordinates are edittable, double click the table beside the Extract button to edit it.
   
 - "Clear Areas" deletes all rendered rectangles/areas
+
+## LinkedIn
+
+[LinkedIn Profile](https://github.com/pymupdf/PyMuPDF)
