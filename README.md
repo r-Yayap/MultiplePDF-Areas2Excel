@@ -47,6 +47,6 @@ pip install PyMuPDF==1.23.11
   
 - "Clear Areas" deletes all rendered rectangles/areas
 
-## LinkedIn
+## Links
 
 [LinkedIn Profile](https://github.com/pymupdf/PyMuPDF)
