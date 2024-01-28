@@ -5,7 +5,10 @@ This tool utilizes [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module to read 
 
 Built with the help of ChatGPT, Google, and Youtube, this is a simple tool to help me and my team in our daily tasks of scanning through PDFs. I am not really a coder so the code might look messy in the eyes of a coder. Regardless, the current capability of this code would suffice for what I had in mind when this was still an idea. It has helped me save a lot of time and be more efficient, and I hope for those who will use this would also feel the same.
 
-Currently, the tool does not support text extraction from images due to time constraints. However, future development may include this feature, possibly integrating pytesseract or other OCR modules. There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
+There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
+
+### Limitation
+Currently, the tool does not support text extraction from images due to time constraints. However, future development may include this feature, possibly integrating pytesseract or other OCR modules. 
 
 ## Installation
 Install the dependencies stated in requirements.txt
