@@ -15,9 +15,9 @@ from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 
 #Importing python files
-import pdf_dwg_list as pdl
-import dir_list as dlist
-import bulk_rename as brn
+import sc_pdf_dwg_list as pdl
+import sc_dir_list as dlist
+import sc_bulk_rename as brn
 
 # Global variables
 ws = None
