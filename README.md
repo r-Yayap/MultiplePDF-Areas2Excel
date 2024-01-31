@@ -1,4 +1,4 @@
-# Multiple PDF Text to Excel
+# Multiple PDF Text Areas to Excel
 A PDF text extractor built using python to extract text on specific areas for multiple files.
 
 This tool utilizes [PyMuPDF](https://github.com/pymupdf/PyMuPDF) module to read text in a PDF file, allowing users to select specific areas via a Graphical User Interface for extraction. The extracted text is then saved as an Excel file. It performs efficiently, particularly on multiple PDFs with identical dimensions.
