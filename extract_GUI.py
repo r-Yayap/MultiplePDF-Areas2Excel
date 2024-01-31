@@ -18,6 +18,8 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 import sc_pdf_dwg_list as pdl
 import sc_dir_list as dlist
 import sc_bulk_rename as brn
+from appdirs import user_data_dir
+
 
 # Global variables
 ws = None
@@ -32,6 +34,7 @@ zoom_slider = None  # Initialize zoom_slider globally
 rectangle_list = []
 prev_width = None #for Windows Resize Function
 prev_height = None
+pix = None
 
 # Initial Window and Display settings
 initial_width = 965
@@ -42,6 +45,7 @@ canvas_width = 935
 canvas_height = 550
 current_zoom = 2.0
 
+tessdata_folder = None
 
 class EditableTreeview(ttk.Treeview):
     def __init__(self, *args, **kwargs):
@@ -325,7 +329,7 @@ def on_zoom_slider_change(value):
     update_display()
 
 def update_display():
-    global root, canvas, pdf_width, pdf_height, current_zoom, v_scrollbar, h_scrollbar
+    global root, canvas, pdf_width, pdf_height, current_zoom, v_scrollbar, h_scrollbar, page, pix
 
     # Set canvas dimensions based on aspect ratio and desired size
     canvas_width = root.winfo_width() - 30
@@ -348,7 +352,10 @@ def update_display():
         canvas.delete("all")
 
         # Render the PDF page with the updated zoom level
-        pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom))
+        #    pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom)) #Error in Fitz 1.23.18 omnwards
+
+        #pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom))
+
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         img_tk = ImageTk.PhotoImage(img)
 
@@ -383,7 +390,7 @@ def on_windowresize(event):
 
 
 def display_sample_pdf(pdf_path):
-    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height
+    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, pix
 
     # Define current_zoom as a global variable
     #current_zoom = 1.0
@@ -490,7 +497,7 @@ def start_extraction_thread():
 
 def extract_text():
     start_time = time.time()
-    global areas, ws, pdf_height, pdf_width, include_subfolders
+    global areas, ws, pdf_height, pdf_width, include_subfolders, enable_ocr, tessdata_folder
 
     # Check if there are areas defined
     if not areas:
@@ -591,8 +598,18 @@ def extract_text():
 
                             # Attempt to read text from the specified area
                             try:
-                                # Read text using PyMuPDF (fitz)
+                                # Try regular text extraction
                                 text_area = page.get_text("text", clip=adjusted_coordinates)
+
+                                if enable_ocr == "on":
+
+                                    # If no text is extracted, fallback to OCR
+                                    if not text_area.strip():
+                                        pix = page.get_pixmap(clip=adjusted_coordinates, dpi=150)
+                                        pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
+                                        clipdoc = fitz.open("pdf", pdfdata)  # OCRed 1-page
+                                        text_area = "_OCR_" + clipdoc[0].get_text()
+
 
                                 # Replace '\n' with a space
                                 text_area = text_area.replace('\n', ' ').strip()
@@ -657,6 +674,16 @@ def extract_text():
 
     # Save Excel file
     try:
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for cell in row:
+                # Check if the cell contains "_OCR_"
+                if "_OCR_" in str(cell.value):
+                    # Remove "_OCR_" and update the cell value
+                    cell.value = cell.value.replace("_OCR_", "")
+
+                    # Set font color for the updated cell to dark orange
+                    cell.font = Font(color="FF3300")
+
         wb.save(output_excel_path)
 
     except PermissionError:
@@ -699,6 +726,70 @@ def update_output_path(event):
     global output_excel_path
     output_excel_path = output_path_entry.get()
     print(f"output path: {output_excel_path}")
+
+def find_tessdata():
+    global tessdata_folder  # Use the global variable
+
+    # Define the subdirectories
+    tesseract_subdirectory = "Tesseract-OCR"
+    tessdata_subdirectory = "tessdata"
+
+    # Get the local application data directory
+    local_programs_dir = os.path.join(os.getenv("LOCALAPPDATA"), "Programs")
+
+    # Search in the local Programs directory
+    local_programs_path = os.path.join(local_programs_dir, tesseract_subdirectory, tessdata_subdirectory)
+    if os.path.exists(local_programs_path):
+        tessdata_folder = local_programs_path
+        os.environ["TESSDATA_PREFIX"] = local_programs_path
+        return tessdata_folder
+
+    # Get the platform-independent local application data directory
+    app_data_dir = os.path.join(os.getenv("APPDATA"), tesseract_subdirectory, tessdata_subdirectory)
+
+    # Create the full path to the tessdata folder
+    tessdata_path = os.path.join(app_data_dir)
+
+    # Check if the folder exists
+    if os.path.exists(tessdata_path):
+        tessdata_folder = tessdata_path
+        os.environ["TESSDATA_PREFIX"] = tessdata_path
+        return tessdata_folder
+    else:
+        # If not found, prompt the user to browse manually
+        manual_path = filedialog.askdirectory(title="Select Tesseract TESSDATA folder manually")
+
+        if os.path.exists(manual_path):
+            tessdata_folder = manual_path
+            os.environ["TESSDATA_PREFIX"] = manual_path
+            return tessdata_folder
+        else:
+            print("Invalid path. Tesseract tessdata folder not found.")
+            return None
+
+def ocr_switch_event():
+    global ocr_switch_var, enable_ocr
+    switch_value = ocr_switch_var.get()
+    print("Switch toggled, current value:", switch_value)
+
+    if switch_value == "on":
+        # Switch is on, enable OCR (call find_tessdata function)
+        found_tesseract_path = find_tessdata()
+
+        if found_tesseract_path:
+            print(f"TessData found at: {found_tesseract_path}")
+            # Do further processing or enable OCR as needed
+        else:
+            print("OCR cannot be enabled. Tesseract not found.")
+            ocr_switch_var = ctk.StringVar(value="off")
+            # Handle the case when Tesseract is not found or take appropriate action
+
+    elif switch_value == "off":
+        # Switch is off, disable OCR or take other action
+        print("OCR is disabled.")
+        # Do further processing or disable OCR as needed
+
+    enable_ocr = ocr_switch_var.get()
 
 # Create main window
 root = ctk.CTk()
@@ -765,6 +856,18 @@ v_scrollbar = ctk.CTkScrollbar(root, orientation="vertical", command=canvas.yvie
 v_scrollbar.place(x=canvas_width + 14, y=100)
 h_scrollbar = ctk.CTkScrollbar(root, orientation="horizontal", command=canvas.xview, width=canvas_width)
 h_scrollbar.place(x=10, y=canvas_height + 105)
+
+
+#OCR Switch
+ocr_switch_var = ctk.StringVar(value="off")
+ocr_switch = ctk.CTkSwitch(root, text="OCR", command=ocr_switch_event,
+                            switch_width=35,
+                            switch_height=20,
+                            font=("Verdana",10),
+                            variable=ocr_switch_var, onvalue="on", offvalue="off")
+ocr_switch.place(x=100, y=34)
+
+enable_ocr = ocr_switch_var.get()
 
 
 # Areas Table
