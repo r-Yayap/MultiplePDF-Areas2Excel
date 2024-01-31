@@ -8,7 +8,9 @@ Built with the help of ChatGPT, Google, and Youtube, this is a simple tool to he
 There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
 
 ### Limitation
-Currently, the tool does not support text extraction from images due to time constraints and avoiding unnecessary OCR conflicts. However, future development may include this feature, possibly integrating pytesseract or other OCR modules. 
+~~Currently, the tool does not support text extraction from images due to time constraints and avoiding unnecessary OCR conflicts. However, future development may include this feature, possibly integrating pytesseract or other OCR modules. 
+~~
+
 
 ## Installation
 Install the dependencies stated in requirements.txt
@@ -22,7 +24,7 @@ pip install matplotlib==3.8.2
 pip install openpyxl==3.2.0b1
 pip install pandas==2.1.4
 pip install pillow==10.2.0
-pip install PyMuPDF==1.23.11
+pip install PyMuPDF==1.23.20
 ```
 ## Usage
 1. Run Extract_GUI.py ( or you could also just make an .exe through pyinstaller, then run it )
