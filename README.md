@@ -25,6 +25,9 @@ pip install pandas==2.1.4
 pip install pillow==10.2.0
 pip install PyMuPDF==1.23.20
 ```
+
+If you are gonna use OCR, then you need to also install Tesseract-OCR to get its tessdata folder.
+
 ## Usage
 1. Run Extract_GUI.py ( or you could also just make an .exe through pyinstaller, then run it )
 2. Then:
