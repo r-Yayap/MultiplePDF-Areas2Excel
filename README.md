@@ -8,7 +8,7 @@ Built with the help of ChatGPT, Google, and Youtube, this is a simple tool to he
 There is a quick guide on how to use it though I hope the UI would be easy to understand to those who would use this.
 
 ### PDF
-- PDFs must have the same border/dimensions for same-area extraction to work. It will still scan the PDFs with different dimension, however, the extraction would be out opf place for that particular PDF/page.
+- PDFs must have the same border/dimensions for same-area extraction to work. It will still scan the PDFs with different dimension, however, the extraction would be out of place for that particular PDF/page.
 - Preferrably texts are not images but OCR can be used for images
 - Can work for single page or multiple page PDFs
 
