@@ -589,7 +589,7 @@ def extract_text():
 
                             # Attempt to read text from the specified area
                             try:
-                                print(dpi_value)
+
                                 if enable_ocr == "Text-first":
                                     # Try regular text extraction
                                     text_area = page.get_text("text", clip=adjusted_coordinates)
@@ -750,7 +750,7 @@ def find_tessdata():
     local_programs_dir = os.path.join(os.getenv("LOCALAPPDATA"), "Programs")
 
     # Search in the local Programs directory
-    local_programs_path = os.path.join(local_programs_dir, tessdata_subdirectory)
+    local_programs_path = os.path.join(local_programs_dir, tesseract_subdirectory, tessdata_subdirectory)
     if os.path.exists(local_programs_path):
         tessdata_folder = local_programs_path
         os.environ["TESSDATA_PREFIX"] = local_programs_path
@@ -778,7 +778,6 @@ def find_tessdata():
         else:
             print("Invalid path. Tesseract tessdata folder not found.")
             return None
-
 
 # Create main window
 root = ctk.CTk()
