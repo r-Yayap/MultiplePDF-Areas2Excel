@@ -1,3 +1,50 @@
+'''
+Changelog 09
+- Fixed Zoom
+- OCR options and DPI options
+
+Changelog 08
+- Optimized-ish? XD
+- Progress Bar (at last!)
+
+Changelog 07
+- Resize Display along with th windows
+- Added Option button for other features
+- Added Bulk Rename and Directory List
+- Scroll & Shift+Scroll on Canvas
+
+Changelog 06
+- UI Overhaul
+- Zoom implemented
+- Rectangles stays when zoomed
+- Removed progress bar
+- Can now edit coordinates
+
+Changelog 05
+-  time lapsed counter
+-  Progress bar during extraction
+-  List files on a table (DWG and PDf counter) [INTEGRATED!!!]
+-  excel output: add time created on filename
+-  open generated excel file (or directory)
+-  Includes all pages
+
+Changelog 04
+- added DWG and PDF counter (numbers only)
+- include subfolder
+
+Changelog 03
+- coordinates based on pdf's rotation
+- can now read text regardless of pdf inherent rotation
+
+Changelog 02
+- scrollbar (not placed well, but working)
+- area selection now working (coordinates are now correct)
+- text extraction is now working
+
+Changelog 01
+- scrollbar (not placed well, but working)
+- area selection in display (areas not fixed yet)
+'''
 import shutil
 import time
 import os
@@ -19,21 +66,26 @@ import sc_dir_list as dlist
 import sc_bulk_rename as brn
 from appdirs import user_data_dir
 
+# Label to display version
+version_txt = "Version 0.231219-09"
+
 # Global variables
-ws = None
+include_subfolders = False
 pdf_folder = ''
 output_excel_path = ''
 areas = []
+rectangle_list = []
+ws = None
 areas_tree = None
 rectangle = None  # Define rectangle globally
-include_subfolders = False
 canvas = None  # Initialize canvas globally
 zoom_slider = None  # Initialize zoom_slider globally
-rectangle_list = []
 prev_width = None  # for Windows Resize Function
 prev_height = None
 pix = None
 page = None
+enable_ocr = None
+tessdata_folder = None
 
 # Initial Window and Display settings
 initial_width = 965
@@ -44,8 +96,27 @@ canvas_width = 935
 canvas_height = 550
 current_zoom = 2.0
 
-tessdata_folder = None
 
+#Buttons/Widgets Styling
+button_font = "Verdana"
+
+# Define DPI options globally
+dpi_options = {
+    "150": 150,
+    "300": 300,
+    "450": 450,
+    "600": 600,
+    "750": 750,
+    "900": 900,
+    "1200": 1200
+}
+
+# Define the option menu choices and their corresponding actions
+option_actions = {
+    "PDF/DWG List": pdl.pdf_dwg_counter,
+    "Directory List": dlist.generate_file_list_and_excel,
+    "Bulk Renamer": brn.bulk_rename_gui
+}
 
 class EditableTreeview(ttk.Treeview):
     def __init__(self, *args, **kwargs):
@@ -93,6 +164,7 @@ class EditableTreeview(ttk.Treeview):
                 current_values = list(self.item(item, "values"))
                 current_values[col_index] = new_value
                 self.item(item, values=tuple(current_values))
+                self.update_areas_list()  # Update areas list when cell is edited
             top.destroy()
 
         bbox = self.bbox(item, col)
@@ -106,7 +178,7 @@ class EditableTreeview(ttk.Treeview):
         entry_var.set(self.item(item, "values")[col_index])
 
         entry = ctk.CTkEntry(top, justify="center", textvariable=entry_var,
-                             width=100, height=20, font=("Verdana", 9),
+                             width=100, height=20, font=(button_font, 9),
                              border_width=1,
                              corner_radius=3)
 
@@ -132,73 +204,72 @@ class EditableTreeview(ttk.Treeview):
                 current_values = self.item(item, "values")
                 updated_values = [new_value if i == 0 else val for i, val in enumerate(current_values)]
                 self.item(item, values=updated_values)
+                self.update_areas_list()  # Update areas list when cell is edited
 
             self._entry.destroy()
             self._entry = None
             self._col = None
 
+    def update_areas_list(self):
+        global areas
+
+        # Clear the existing areas list
+        areas.clear()
+
+        # Iterate through items in the EditableTreeview and update areas
+        for item in self.get_children():
+            values = self.item(item, "values")
+            areas.append([float(value) for value in values])
+
 
 def browse_pdf_folder():
-    global pdf_folder, include_subfolders, include_subfolders_var
+    global pdf_folder
 
     pdf_folder = filedialog.askdirectory()
     pdf_folder_entry.delete(0, ctk.END)
     pdf_folder_entry.insert(0, pdf_folder)
 
     print(f"Selected PDF Folder: {pdf_folder}")
-    print(f"Include Subfolders: {include_subfolders}")
 
-    # Function to toggle the state of include_subfolders
-    include_subfolders_var = ctk.IntVar()
 
-    def toggle_include_subfolders():
-        global include_subfolders  # Add this line to use the global variable
-        include_subfolders = include_subfolders_var.get()
-
-        # Check if include_subfolders has a valid value (1 for True, 0 for False)
-        if include_subfolders in {0, 1}:
-            print(f"Include Subfolders: {bool(include_subfolders)}")
-        else:
-            print("Include Subfolders: Invalid value")
-
-    include_subfolders_checkbox = ctk.CTkCheckBox(root, text="Include Subfolders?", variable=include_subfolders_var,
-                                                  command=toggle_include_subfolders,
-                                                  checkbox_width=17,
-                                                  checkbox_height=17,
-                                                  border_width=1,
-                                                  # fg_color="#B30B00",hover_color="#860A00",
-                                                  font=("Verdana", 9))
-
-    include_subfolders_checkbox.place(x=196, y=34)  # Adjusted the y-coordinate
-
-    # Initialize include_subfolders
+def toggle_include_subfolders():
+    global include_subfolders
     include_subfolders = include_subfolders_var.get()
+
+    # Check if include_subfolders has a valid value (1 for True, 0 for False)
+    if include_subfolders in {0, 1}:
+        print(f"Include Subfolders: {bool(include_subfolders)}")
+    else:
+        print("Include Subfolders: Invalid value")
 
 
 def H7354():
-    # with H7354 as my inspiration and motivation
     H7354 = "mi amor"
 
 
-def edit_areas(areas_tree_ref):
+def edit_areas(event, areas_tree_ref):
     global areas
 
     # Create a new window for editing areas
     edit_window = ctk.CTkToplevel(root)
     edit_window.title("Edit Areas")
 
+    # Define column names and headings
+    column_headings = ["X0", "Y0", "X1", "Y1"]
+
     # Create an EditableTreeview widget
-    areas_tree2 = EditableTreeview(edit_window, columns=("X0", "Y0", "X1", "Y1"), show="headings")
-    areas_tree2.heading("X0", text="X0")
-    areas_tree2.heading("Y0", text="Y0")
-    areas_tree2.heading("X1", text="X1")
-    areas_tree2.heading("Y1", text="Y1")
+    editable_treeview = EditableTreeview(edit_window, columns=column_headings, show="headings")
+
+    # Set column headings
+    for col, heading in enumerate(column_headings, start=1):
+        editable_treeview.heading(f"#{col}", text=heading)
 
     # Insert existing areas into the EditableTreeview
     for idx, area in enumerate(areas, start=1):
-        areas_tree2.insert("", idx, values=(area[0], area[1], area[2], area[3]))
+        values = [area[i] for i in range(len(column_headings))]
+        editable_treeview.insert("", idx, values=values)
 
-    areas_tree2.pack(padx=10, pady=10)
+    editable_treeview.pack(padx=10, pady=10)
 
     def save_changes():
         global areas
@@ -207,8 +278,8 @@ def edit_areas(areas_tree_ref):
         areas = []
 
         # Iterate through items in the EditableTreeview and update areas
-        for item in areas_tree2.get_children():
-            values = areas_tree2.item(item, "values")
+        for item in editable_treeview.get_children():
+            values = editable_treeview.item(item, "values")
             areas.append([float(value) for value in values])
 
         # Close the edit window
@@ -221,6 +292,7 @@ def edit_areas(areas_tree_ref):
         areas_tree_ref.delete(*areas_tree_ref.get_children())
         for idx, area in enumerate(areas, start=1):
             areas_tree_ref.insert("", idx, values=(area[0], area[1], area[2], area[3]))
+
 
     # Create a Save button
     save_button = ctk.CTkButton(edit_window, text="Save Changes", command=save_changes)
@@ -241,15 +313,11 @@ def open_sample_pdf():
     # Ask user to choose a sample PDF file
     sample_pdf_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
 
-    # Bind the on_windowresize function to the <Configure> event
-    resize_binding_id = root.bind("<Configure>", on_windowresize)
-
     if sample_pdf_path:
         print(f"Opening Sample PDF: {sample_pdf_path}")
 
         # Display the sample PDF and get its dimensions
         display_sample_pdf(sample_pdf_path)
-
 
 
 def start_rectangle(event):
@@ -278,30 +346,35 @@ def end_rectangle(event):
         canvas.coords(current_rectangle, original_coordinates[0], original_coordinates[1], x, y)
 
         # Add the adjusted rectangle coordinates to the area table
-        x0, y0, x1, y1 = canvas.bbox(current_rectangle)
+        bbox = canvas.bbox(current_rectangle)
+        if bbox is not None:
+            x0, y0, x1, y1 = bbox
 
-        # Adjust coordinates based on zoom level
-        adjusted_coordinates = [
-            x0 / current_zoom,
-            y0 / current_zoom,
-            x1 / current_zoom,
-            y1 / current_zoom
-        ]
+            # Adjust coordinates based on zoom level
+            adjusted_coordinates = [
+                x0 / current_zoom,
+                y0 / current_zoom,
+                x1 / current_zoom,
+                y1 / current_zoom
+            ]
 
-        # append to areas
-        areas.append(adjusted_coordinates)
+            # append to areas
+            areas.append(adjusted_coordinates)
 
-        print("Updated Areas List:", areas)  # Print the areas list for debugging
+            print("Updated Areas List:", areas)  # Print the areas list for debugging
 
-        # Store the rectangle ID in the rectangle_list
-        rectangle_list.append(current_rectangle)
-        print("Updated Rectangle List:", rectangle_list)
+            # Store the rectangle ID in the rectangle_list
+            rectangle_list.append(current_rectangle)
+            print("Updated Rectangle List:", rectangle_list)
 
-        # Update the Treeview widget with the rectangle coordinates
-        areas_tree.insert("", ctk.END, values=(adjusted_coordinates[0], adjusted_coordinates[1],
-                                               adjusted_coordinates[2], adjusted_coordinates[3]))
+            # Update the Treeview widget with the rectangle coordinates
+            areas_tree.insert("", ctk.END, values=(adjusted_coordinates[0], adjusted_coordinates[1],
+                                                   adjusted_coordinates[2], adjusted_coordinates[3]))
+        else:
+            print("Error: Failed to retrieve bounding box coordinates for current_rectangle")
     else:
         print("Error: 'current_rectangle' is None in end_rectangle")
+
 
 
 def update_rectangles():
@@ -339,18 +412,38 @@ def on_zoom_slider_change(value):
     update_display()
 
 
-def on_windowresize(event):
-    global prev_width, prev_height
+last_resize_time = 0 # Global variable to hold the time of the last resize event
+resize_delay = 0.35  # Delay in seconds before the function is called after the last resize event
+
+def check_resize(event):
+    global last_resize_time, resize_delay
+    # Get the current time
+    current_time = time.time()
+
+    # Calculate the time elapsed since the last resize event
+    time_elapsed = current_time - last_resize_time
+
+    if time_elapsed >= resize_delay:
+        # Execute the function if the delay has passed since the last resize event
+        # print("No resize event for the past", resize_delay, "seconds.")
+        on_windowresize()
+
+
+def on_windowresize(event=None):
+    global prev_width, prev_height, last_resize_time, resize_delay
 
     current_width = root.winfo_width()
     current_height = root.winfo_height()
+
 
     if current_width != prev_width or current_height != prev_height:
         prev_width = current_width
         prev_height = current_height
 
         print(f'Display Resized: {root.winfo_width() - 30}, {root.winfo_height() - 135}')
+        last_resize_time = time.time()
         update_display()
+
 
 
 def update_display():
@@ -422,7 +515,7 @@ def display_sample_pdf(pdf_path):
         zoom_slider.set(current_zoom)  # Initial zoom level
         zoom_slider.place(x=800, y=80)
 
-        zoom_slider_label = ctk.CTkLabel(root, text="Zoom:", font=("Verdana", 9))
+        zoom_slider_label = ctk.CTkLabel(root, text="Zoom:", font=(button_font, 9))
         zoom_slider_label.place(x=760, y=70)
 
         # Bind events to handle rectangle drawing
@@ -432,7 +525,7 @@ def display_sample_pdf(pdf_path):
 
 
     # Clear Areas Button
-    clear_areas_button = ctk.CTkButton(root, text="Clear Areas", command=clear_all_areas, font=("Verdana", 9),
+    clear_areas_button = ctk.CTkButton(root, text="Clear Areas", command=clear_all_areas, font=(button_font, 9),
                                        # text_color="#B30B00",
                                        fg_color=("gray29", "gray39"),
                                        # hover_color="#860A00",
@@ -447,6 +540,7 @@ def display_sample_pdf(pdf_path):
     canvas.xview_moveto(1.0)
 
     print(f"PDF Dimensions: {pdf_width} x {pdf_height}")
+    print(f"PDF Rotation: {page.rotation} x {page.rotation_matrix}")
 
     return pdf_width, pdf_height, page
 
@@ -529,7 +623,7 @@ def extract_text():
     progress_window.lift()
 
     # Label to display current progress
-    progress_label = ctk.CTkLabel(progress_window, text="Extracting Texts in PDFs...")
+    progress_label = ctk.CTkLabel(progress_window, text="Loading PDFs...")
     progress_label.pack()
 
     # Create a progress bar
@@ -592,7 +686,7 @@ def extract_text():
 
                                 if enable_ocr == "Text-first":
                                     # Try regular text extraction
-                                    text_area = page.get_text("text", clip=adjusted_coordinates)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=True)
 
                                     # If no text is extracted, fallback to OCR
                                     if not text_area.strip():
@@ -609,7 +703,7 @@ def extract_text():
 
                                 else:
                                     # Try regular text extraction
-                                    text_area = page.get_text("text", clip=adjusted_coordinates)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=True)
 
                                 # Replace '\n' with a space
                                 text_area = text_area.replace('\n', ' ').strip()
@@ -651,9 +745,7 @@ def extract_text():
                     print(f"Error opening {pdf_path}: {e}")
 
                     # Log the information about the missing file in Excel
-                    ws.append(
-                        [os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or file not found"] + [
-                            ""] * len(areas))
+                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or File not found"] + [""] * len(areas))
 
                 except IllegalCharacterError as e:
                     illegal_characters = e.args[0]
@@ -715,9 +807,12 @@ def extract_text():
 
 
 def after_command():
-    root.bind("<Configure>", on_windowresize)
+    #root.bind("<Configure>", on_windowresize)
+    root.bind("<Configure>", check_resize)
     canvas.bind("<MouseWheel>", on_mousewheel)
     canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
+    pdf_folder_entry.bind("<KeyRelease>", update_pdf_folder)
+    output_path_entry.bind("<KeyRelease>", update_output_path)
 
 
 def update_pdf_folder(event):
@@ -759,180 +854,75 @@ def find_tessdata():
     # Get the platform-independent local application data directory
     app_data_dir = os.path.join(os.getenv("APPDATA"), tesseract_subdirectory, tessdata_subdirectory)
 
-    # Create the full path to the tessdata folder
-    tessdata_path = os.path.join(app_data_dir)
-
     # Check if the folder exists
-    if os.path.exists(tessdata_path):
-        tessdata_folder = tessdata_path
-        os.environ["TESSDATA_PREFIX"] = tessdata_path
+    if os.path.exists(app_data_dir):
+        tessdata_folder = app_data_dir
+        os.environ["TESSDATA_PREFIX"] = app_data_dir
+        return tessdata_folder
+
+    # If not found, prompt the user to browse manually
+    manual_path = filedialog.askdirectory(title="Select Tesseract TESSDATA folder manually")
+
+    if os.path.exists(manual_path):
+        tessdata_folder = manual_path
+        os.environ["TESSDATA_PREFIX"] = manual_path
         return tessdata_folder
     else:
-        # If not found, prompt the user to browse manually
-        manual_path = filedialog.askdirectory(title="Select Tesseract TESSDATA folder manually")
+        print("Invalid path. Tesseract tessdata folder not found.")
+        return None
 
-        if os.path.exists(manual_path):
-            tessdata_folder = manual_path
-            os.environ["TESSDATA_PREFIX"] = manual_path
-            return tessdata_folder
-        else:
-            print("Invalid path. Tesseract tessdata folder not found.")
-            return None
 
-# Create main window
-root = ctk.CTk()
-root.title("PDF Text Extractor")
-root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
-
-# ocr_menu Options
 def ocr_menu_callback(choice):
-    global ocr_menu_var, enable_ocr
-    print("ocr menu dropdown clicked:", choice)
+    global enable_ocr
 
-    def green_menu():
-        print(f"TessData found at: {found_tesseract_path}")
-        # Do further processing or enable OCR as needed
-        ocr_menu.configure(fg_color="green4", button_color="green4")
-        dpi_menu.configure(state="normal",fg_color="green4", button_color="green4")
+    print("OCR menu dropdown clicked:", choice)
 
-    def gray_menu():
-        print("OCR disabled.")
-        ocr_menu_var = ctk.StringVar(value="Off")
-        # Handle the case when Tesseract is not found or take appropriate action
-        ocr_menu.configure(button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"))
-        dpi_menu.configure(state="disabled", button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"))
+    def enable_ocr_menu(enabled):
+        color = "green4" if enabled else "gray29"
+        ocr_menu.configure(fg_color=color, button_color=color)
+        dpi_menu.configure(state="normal" if enabled else "disabled", fg_color=color, button_color=color)
 
     if choice == "Off":
-        gray_menu()
+        enable_ocr_menu(False)
+        print("OCR disabled.")
 
-    elif choice == "Text-first":
+    elif choice in ("Text-first", "OCR-All"):
         found_tesseract_path = find_tessdata()
 
         if found_tesseract_path:
-            green_menu()
-            print("OCR will start if no text are extracted.")
-
+            enable_ocr_menu(True)
+            if choice == "Text-first":
+                print("OCR will start if no text are extracted.")
+            else:
+                print("OCR will be enabled for every area.")
         else:
-            gray_menu()
-
-    elif choice == "OCR-All":
-        found_tesseract_path = find_tessdata()
-
-        if found_tesseract_path:
-            green_menu()
-            print("OCR will be enabled for every area.")
-
-        else:
-            gray_menu()
+            enable_ocr_menu(False)
 
     else:
         # Handle other options
         print("Selected option:", choice)
 
-    enable_ocr = ocr_menu_var.get()
-    print(enable_ocr)
+    enable_ocr = choice
+    print("OCR mode:", enable_ocr)
 
 
-ocr_menu_var = ctk.StringVar(value="OCR Mode")
-ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All"],
-                               command=ocr_menu_callback,
-                               font=("Verdana Bold", 9),
-                               button_color=("gray29", "gray39"),
-                               fg_color=("gray29", "gray39"),
-                               dropdown_font=("Verdana", 9),
-                               dynamic_resizing=False,
-                               variable=ocr_menu_var, width=85, height=18)
-ocr_menu.place(x=330, y=10)
-
-enable_ocr = None
-
-#DPI Settings
 def dpi_callback(choice):
     global dpi_value
-    print("DPI:", choice)
-
-    if choice == "1200":
-        dpi_value = 1200
-    elif choice == "900":
-        dpi_value = 900
-    elif choice == "750":
-        dpi_value = 750
-    elif choice == "600":
-        dpi_value = 600
-    elif choice == "450":
-        dpi_value = 450
-    elif choice == "300":
-        dpi_value = 300
-    else:
-        dpi_value = 150
-
+    dpi_value = dpi_options.get(choice, 150)
+    print("DPI:", dpi_value)
     return dpi_value
 
-dpi_var = ctk.IntVar(value=150)
-dpi_value = 150
-dpi_menu = ctk.CTkOptionMenu(root, values=["150","300","450","600","750","900","1200"],
-                               command=dpi_callback,
-                               font=("Verdana Bold", 7),
-                               button_color=("gray29", "gray39"),
-                               fg_color=("gray29", "gray39"),
-                               state="disabled",
-                               dropdown_font=("Verdana", 8),
-                               dynamic_resizing=False,
-                               variable=dpi_var, width=43, height=14)
-dpi_menu.place(x=372, y=30)
 
-dpi_label = ctk.CTkLabel(root, text="DPI:",
-                             text_color="gray59",
-                             padx=0, pady=0,
-                             anchor="nw",
-                             font=("Verdana Bold", 8))
-dpi_label.place(x=348, y=32)
+# Callback function for the option menu
+def optionmenu_callback(choice):
+    print("Option:", choice)
 
-# PDF Folder
-pdf_folder_entry = ctk.CTkEntry(root, width=270, height=20, font=("Verdana", 9),
-                                placeholder_text="Select Folder with PDFs",
-                                border_width=1,
-                                corner_radius=3)
-pdf_folder_entry.place(x=50, y=10)
-pdf_folder_button = ctk.CTkButton(root, text="...", command=browse_pdf_folder, font=("Verdana", 9),
-                                  # fg_color="#B30B00",
-                                  # hover_color="#860A00",
-                                  width=25, height=10)
-pdf_folder_button.place(x=20, y=10)
-
-# Open Sample PDF Button
-open_sample_button = ctk.CTkButton(root, text="Open PDF", command=open_sample_pdf, font=("Verdana", 9),
-                                   # fg_color="#B30B00",
-                                   # hover_color="#860A00",
-                                   width=25, height=10)
-open_sample_button.place(x=20, y=35)
-
-# Output Excel Path
-output_path_entry = ctk.CTkEntry(root, width=270, height=20, font=("Verdana", 9),
-                                 placeholder_text="Select Folder for Excel output",
-                                 border_width=1,
-                                 corner_radius=3)
-output_path_entry.place(x=50, y=60)
-output_path_button = ctk.CTkButton(root, text="...", command=browse_output_path, font=("Verdana", 9),
-                                   fg_color="#217346",
-                                   hover_color="#6AD49A",
-                                   width=25, height=10)
-output_path_button.place(x=20, y=60)
-
-# Bind events to the pdf_folder_entry and output_path_entry widgets
-pdf_folder_entry.bind("<KeyRelease>", update_pdf_folder)
-output_path_entry.bind("<KeyRelease>", update_output_path)
-
-# Extract Text Button
-extract_button = ctk.CTkButton(root, text="EXTRACT", font=("Arial Black", 12),
-                               # fg_color="#217346",
-                               # hover_color="#6AD49A",
-                               corner_radius=10,
-                               width=75, height=30,
-                               command=start_extraction_thread)
-extract_button.place(x=330, y=55)
-
-root.after(2500, after_command)
+    # Retrieve the corresponding action from the dictionary and execute it
+    action = option_actions.get(choice)
+    if action:
+        action()
+    else:
+        print("Selected option:", choice)
 
 
 def on_mousewheel(event):
@@ -940,6 +930,101 @@ def on_mousewheel(event):
         canvas.xview_scroll(-1 * int(event.delta / 120), "units")
     else:
         canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+
+
+# Create main window
+root = ctk.CTk()
+root.title("PDF Text Extractor")
+root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
+
+#OCR Widgets
+ocr_menu_var = ctk.StringVar(value="OCR Mode")
+ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All"],
+                               command=ocr_menu_callback, font=("Verdana Bold", 9),
+                               button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
+                               dropdown_font=(button_font, 9), dynamic_resizing=False,
+                               variable=ocr_menu_var, width=85, height=18)
+ocr_menu.place(x=330, y=10)
+
+
+#DPI Widgets
+dpi_var = ctk.IntVar(value=150)
+dpi_value = 150
+dpi_menu_values = list(dpi_options.keys())  # Use dpi_options here
+dpi_menu = ctk.CTkOptionMenu(root, values=dpi_menu_values,
+                               command=dpi_callback, font=("Verdana Bold", 7),
+                               button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
+                               state="disabled", dropdown_font=(button_font, 8),
+                               dynamic_resizing=False, variable=dpi_var, width=43, height=14)
+dpi_menu.place(x=372, y=30)
+
+dpi_label = ctk.CTkLabel(root, text="DPI:", text_color="gray59",
+                             padx=0, pady=0, anchor="nw",
+                             font=("Verdana Bold", 8))
+dpi_label.place(x=348, y=32)
+
+
+# PDF Folder
+pdf_folder_entry = ctk.CTkEntry(root, width=270, height=20, font=(button_font, 9),
+                                placeholder_text="Select Folder with PDFs", border_width=1,
+                                corner_radius=3)
+pdf_folder_entry.place(x=50, y=10)
+pdf_folder_button = ctk.CTkButton(root, text="...", command=browse_pdf_folder, font=(button_font, 9),
+                                  # fg_color="#B30B00", # hover_color="#860A00",
+                                  width=25, height=10)
+pdf_folder_button.place(x=20, y=10)
+
+
+# Open Sample PDF Button
+open_sample_button = ctk.CTkButton(root, text="Open PDF", command=open_sample_pdf, font=(button_font, 9),
+                                   # fg_color="#B30B00", # hover_color="#860A00",
+                                   width=25, height=10)
+open_sample_button.place(x=20, y=35)
+
+
+# Output Excel Path
+output_path_entry = ctk.CTkEntry(root, width=270, height=20, font=(button_font, 9),
+                                 placeholder_text="Select Folder for Excel output",
+                                 border_width=1, corner_radius=3)
+output_path_entry.place(x=50, y=60)
+output_path_button = ctk.CTkButton(root, text="...", command=browse_output_path, font=(button_font, 9),
+                                   fg_color="#217346", hover_color="#6AD49A",
+                                   width=25, height=10)
+output_path_button.place(x=20, y=60)
+
+
+# Bind events to the pdf_folder_entry and output_path_entry widgets
+pdf_folder_entry.bind("<KeyRelease>", update_pdf_folder)
+output_path_entry.bind("<KeyRelease>", update_output_path)
+
+
+#
+include_subfolders_var = ctk.IntVar()
+
+include_subfolders_checkbox = ctk.CTkCheckBox(root, text="Include Subfolders?", variable=include_subfolders_var,
+                                              command=toggle_include_subfolders,
+                                              checkbox_width=17,
+                                              checkbox_height=17,
+                                              border_width=1,
+                                              # fg_color="#B30B00",hover_color="#860A00",
+                                              font=(button_font, 9))
+
+include_subfolders_checkbox.place(x=196, y=34)  # Adjusted the y-coordinate
+
+# Initialize include_subfolders
+include_subfolders = include_subfolders_var.get()
+
+
+# Extract Text Button
+extract_button = ctk.CTkButton(root, text="EXTRACT", font=("Arial Black", 12),
+                               # fg_color="#217346",
+                               # hover_color="#6AD49A",
+                               corner_radius=10,
+                               width=75, height=30, command=start_extraction_thread)
+extract_button.place(x=330, y=55)
+
+root.after(2500, after_command)
+
 
 
 # PDF Display
@@ -955,7 +1040,7 @@ h_scrollbar.place(x=10, y=canvas_height + 105)
 
 # Areas Table
 areas_frame = ctk.CTkFrame(root, height=1, width=200,
-                           # label_font=("Verdana",8),
+                           # label_font=(button_font,8),
                            border_width=0)
 areas_frame.place(x=425, y=10)
 areas_frame.bind("<Double-Button-1>", lambda event: edit_areas())
@@ -963,79 +1048,41 @@ areas_frame.bind("<Double-Button-1>", lambda event: edit_areas())
 style = ttk.Style()
 style.configure("mystyle.Treeview", bd=0, font=('Verdana', 5))
 style.configure("mystyle.Treeview.Heading", font=('Verdana', 6, 'bold'))
-areas_tree = ttk.Treeview(areas_frame, columns=("x0", "y0", "x1", "y1"), show="headings", style="mystyle.Treeview",
-                          height=3)
-areas_tree.heading("x0", text="x0")
-areas_tree.column("x0", minwidth=0, width=50)
-areas_tree.heading("y0", text="y0")
-areas_tree.column("y0", minwidth=0, width=50)
-areas_tree.heading("x1", text="x1")
-areas_tree.column("x1", minwidth=0, width=50)
-areas_tree.heading("y1", text="y1")
-areas_tree.column("y1", minwidth=0, width=50)
+
+
+# Areas Table Treeview
+area_columns_data = [("x0", "x0"),
+                     ("y0", "y0"),
+                     ("x1", "x1"),
+                     ("y1", "y1")]
+
+areas_tree = ttk.Treeview(areas_frame, columns=[column[0] for column in area_columns_data], show="headings", style="mystyle.Treeview", height=3)
+
+for heading, column_id in area_columns_data:
+    areas_tree.heading(column_id, text=heading)
+    areas_tree.column(column_id, minwidth=0, width=50)
+
 areas_tree.pack(side="left")
-areas_tree.bind("<Double-Button-1>", lambda event, areas_tree_ref=areas_tree: edit_areas(areas_tree_ref))
+areas_tree.bind("<Double-Button-1>", lambda event, areas_tree_ref=areas_tree, areas=areas: edit_areas(event, areas_tree_ref))
+
 
 # scrollbar for table
-scrollbar = ctk.CTkScrollbar(areas_frame, orientation="vertical", command=areas_tree.yview, minimum_pixel_length=3,
-                             height=20)
-scrollbar.pack(side="right", fill="y")
-areas_tree.configure(yscrollcommand=scrollbar.set)
+tree_scrollbar = ctk.CTkScrollbar(areas_frame, orientation="vertical", command=areas_tree.yview, minimum_pixel_length=3, height=20)
+tree_scrollbar.pack(side="right", fill="y")
+areas_tree.configure(yscrollcommand=tree_scrollbar.set)
 
 
-def changelog_text(event):
-    changelog_text = """
-Changelog 09
-- Fixed Zoom
-- OCR options and DPI options
+# Create the option menu
+optionmenu_var = ctk.StringVar(value="Other Features")
+optionmenu = ctk.CTkOptionMenu(root, values=list(option_actions.keys()),
+                               command=optionmenu_callback,
+                               font=(button_font, 9), dropdown_font=(button_font, 9),
+                               dynamic_resizing=False,
+                               variable=optionmenu_var, width=105, height=15)
+optionmenu.place(x=850, y=10)
 
-Changelog 08
-- Optimized-ish? XD
-- Progress Bar (at last!)
-
-Changelog 07
-- Resize Display along with th windows
-- Added Option button for other features
-- Added Bulk Rename and Directory List
-- Scroll & Shift+Scroll on Canvas
-
-Changelog 06
-- UI Overhaul
-- Zoom implemented
-- Rectangles stays when zoomed
-- Removed progress bar
-- Can now edit coordinates
-
-Changelog 05
--  time lapsed counter
--  Progress bar during extraction
--  List files on a table (DWG and PDf counter) [INTEGRATED!!!]
--  excel output: add time created on filename
--  open generated excel file (or directory)
--  Includes all pages
-
-Changelog 04
-- added DWG and PDF counter (numbers only)
-- include subfolder
-
-Changelog 03
-- coordinates based on pdf's rotation
-- can now read text regardless of pdf inherent rotation
-
-Changelog 02
-- scrollbar (not placed well, but working)
-- area selection now working (coordinates are now correct)
-- text extraction is now working
-
-Changelog 01
-- scrollbar (not placed well, but working)
-- area selection in display (areas not fixed yet)
-
-
-
-
-
-
+def version_text(event):
+    version_text = """
         What should I write?
 
         An admiration for your existence,
@@ -1052,17 +1099,11 @@ Changelog 01
 
     # Create a Toplevel window
     window = ctk.CTkToplevel(root)
-    window.title("Changelog")
+    window.title("---")
 
     # Create a Text widget
     text_widget = ctk.CTkTextbox(window, wrap="word", width=300, height=300)
-    text_widget.insert(tk.END, changelog_text)
-
-    # Apply italic style to specific lines using tags
-    for line_number, line in enumerate(changelog_text.split('\n'), start=24):
-        if line.startswith('-'):
-            text_widget.tag_add(f"italic_line_{line_number}", f"{line_number}.0", f"{line_number}.end")
-            text_widget.configure(f"italic_line_{line_number}", font=("Helvetica", 10, "italic"))
+    text_widget.insert(tk.END, version_text)
 
     # Pack the Text widget and scrollbar
     text_widget.pack(padx=10, pady=10, side="left")
@@ -1071,51 +1112,9 @@ Changelog 01
     window.grab_set()
 
 
-# Label to display version
-version_txt = "Version 0.231219-09"
-
-version_label = ctk.CTkLabel(root, text=version_txt,
-                             fg_color="transparent",
-                             text_color="gray59",
-                             padx=0, pady=0,
-                             anchor="nw",
-                             font=("Verdana", 8.5))
+version_label = ctk.CTkLabel(root, text=version_txt, fg_color="transparent", text_color="gray59", padx=0, pady=0,anchor="nw", font=(button_font, 8.5))
 version_label.place(x=855, y=30)
-version_label.bind("<Button-1>", changelog_text)
-
-
-# Other Options
-def optionmenu_callback(choice):
-    print("optionmenu dropdown clicked:", choice)
-
-    if choice == "PDF/DWG List":
-        # Do something for Option 1
-        print("Selected PDF/DWG List")
-        pdl.pdf_dwg_counter()
-    elif choice == "Directory List":
-        # Do something for Option 2
-        print("Selected Directory List")
-        dlist.generate_file_list_and_excel()
-    elif choice == "Bulk Renamer":
-        # Do something for Option 3
-        print("Selected Bulk Renamer")
-        brn.bulk_rename_gui()
-    else:
-        # Handle other options
-        print("Selected option:", choice)
-
-
-optionmenu_var = ctk.StringVar(value="Other Features")
-optionmenu = ctk.CTkOptionMenu(root, values=["PDF/DWG List", "Directory List", "Bulk Renamer"],
-                               command=optionmenu_callback,
-                               font=("Verdana", 9),
-                               dropdown_font=("Verdana", 9),
-                               dynamic_resizing=False,
-                               variable=optionmenu_var, width=105, height=15)
-optionmenu.place(x=850, y=10)
-
-
-
+version_label.bind("<Double-Button-1>", version_text)
 
 
 # Run the main loop
