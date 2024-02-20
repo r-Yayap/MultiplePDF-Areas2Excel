@@ -605,10 +605,11 @@ def extract_text():
 
     # Determine the total number of iterations (PDF files)
     if include_subfolders:
-        total_files = sum(1 for root, _, files in os.walk(pdf_folder) for file in files if file.endswith('.pdf'))
+        total_files = sum(
+            1 for root, _, files in os.walk(pdf_folder) for file in files if file.lower().endswith('.pdf'))
     else:
         _, _, files = next(os.walk(pdf_folder))
-        total_files = sum(1 for file in files if file.endswith('.pdf'))
+        total_files = sum(1 for file in files if file.lower().endswith('.pdf'))
 
     # Initialize Excel workbook and sheet
     wb = Workbook()
@@ -653,7 +654,7 @@ def extract_text():
 
         for pdf_filename in files:
             pdf_path = os.path.join(root_folder, pdf_filename)
-            if pdf_filename.endswith('.pdf'):
+            if pdf_filename.lower().endswith('.pdf'):
                 pdf_path = os.path.join(root_folder, pdf_filename)
 
                 try:
@@ -1083,18 +1084,7 @@ optionmenu.place(x=850, y=10)
 
 def version_text(event):
     version_text = """
-        What should I write?
-
-        An admiration for your existence,
-        or the existence of my admiration?
-        Would these satisfy my longing for you,
-        or would it somehow make you long for me?
-        Could these words even describe you,
-        or could it just show the scarcity of words?
-
-
-                from Yayap        
-                for H7354
+        And now she knows, and now it ends.
     """
 
     # Create a Toplevel window
