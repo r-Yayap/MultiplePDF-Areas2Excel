@@ -1,4 +1,7 @@
 '''
+Changelog 10
+- Fixed OCR
+
 Changelog 09
 - Fixed Zoom
 - OCR options and DPI options
@@ -59,6 +62,7 @@ from openpyxl import Workbook
 from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
+# from PIL import Image #for Debugging only
 
 # Importing python files
 import sc_pdf_dwg_list as pdl
@@ -67,7 +71,7 @@ import sc_bulk_rename as brn
 from appdirs import user_data_dir
 
 # Label to display version
-version_txt = "Version 0.231219-09"
+version_txt = "Version 0.231219-10"
 
 # Global variables
 include_subfolders = False
@@ -90,8 +94,8 @@ tessdata_folder = None
 # Initial Window and Display settings
 initial_width = 965
 initial_height = 685
-initial_x_position = 0
-initial_y_position = 0
+initial_x_position = 75
+initial_y_position = 75
 canvas_width = 935
 canvas_height = 550
 current_zoom = 2.0
@@ -670,6 +674,7 @@ def extract_text():
                         # Create a list to store extracted text for each area on the same row
                         row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
 
+                        print(f'PDF: {pdf_filename}')
                         print(f'Page Rotation: {page.rotation}')
                         print(f'Page Dimension: {page.rect.width} x {page.rect.height}')
 
@@ -681,25 +686,30 @@ def extract_text():
                             # Adjust coordinates based on rotation
                             adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation,
                                                                                    pdf_height, pdf_width)
+                            print(f"adjusted coordinates: {adjusted_coordinates}")
 
                             # Attempt to read text from the specified area
                             try:
 
                                 if enable_ocr == "Text-first":
                                     # Try regular text extraction
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=True)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=false)
 
                                     # If no text is extracted, fallback to OCR
                                     if not text_area.strip():
-                                        pix = page.get_pixmap(clip=adjusted_coordinates, dpi=dpi_value)
+                                        pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
-                                        clipdoc = fitz.open("pdf", pdfdata)  # OCRed 1-page
+                                        clipdoc = fitz.open("pdf", pdfdata) # OCRed 1-page
                                         text_area = "_OCR_" + clipdoc[0].get_text()
 
                                 elif enable_ocr == "OCR-All":
-                                    pix = page.get_pixmap(clip=adjusted_coordinates, dpi=dpi_value)
-                                    pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
-                                    clipdoc = fitz.open("pdf", pdfdata)  # OCRed 1-page
+
+                                    pix = page.get_pixmap(clip=area_coordinates)
+                                    img = pix.tobytes("ppm")  # extremely fast!
+                                    pix = fitz.Pixmap(img)
+
+                                    pdfdata = pix.pdfocr_tobytes(language='eng',tessdata=tessdata_folder)
+                                    clipdoc = fitz.open("pdf", pdfdata) # OCRed 1-page
                                     text_area = "_OCR_" + clipdoc[0].get_text()
 
                                 else:
@@ -748,6 +758,11 @@ def extract_text():
                     # Log the information about the missing file in Excel
                     ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or File not found"] + [""] * len(areas))
 
+                except RuntimeError as e:
+                    # Log the information about the missing file in Excel
+                    print(e)
+                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error Loading page"] + [""] * len(areas))
+
                 except IllegalCharacterError as e:
                     illegal_characters = e.args[0]
                     print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
@@ -766,6 +781,10 @@ def extract_text():
 
                     # Add the row to the Excel sheet
                     ws.append(row_values)
+
+                except Exception as e:
+                    # Handle the exception here
+                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Unidentified Error"] + [""] * len(areas))
 
     # Save Excel file
     try:
@@ -808,7 +827,6 @@ def extract_text():
 
 
 def after_command():
-    #root.bind("<Configure>", on_windowresize)
     root.bind("<Configure>", check_resize)
     canvas.bind("<MouseWheel>", on_mousewheel)
     canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
@@ -939,11 +957,12 @@ root.title("PDF Text Extractor")
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
 
 #OCR Widgets
-ocr_menu_var = ctk.StringVar(value="OCR Mode")
+ocr_menu_var = ctk.StringVar(value="OCR-OFF") #OCR Mode currently disabled
 ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All"],
                                command=ocr_menu_callback, font=("Verdana Bold", 9),
                                button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
                                dropdown_font=(button_font, 9), dynamic_resizing=False,
+                               #state="disabled", #OCR Mode currently disabled
                                variable=ocr_menu_var, width=85, height=18)
 ocr_menu.place(x=330, y=10)
 
@@ -1084,6 +1103,16 @@ optionmenu.place(x=850, y=10)
 
 def version_text(event):
     version_text = """
+    Created by:
+    Rei Raphael Reveral
+    
+    Links:
+    https://github.com/r-Yayap/MultiplePDF-Areas2Excel
+    https://www.linkedin.com/in/rei-raphael-reveral
+    
+    
+    
+    
         And now she knows, and now it ends.
     """
 
@@ -1102,8 +1131,8 @@ def version_text(event):
     window.grab_set()
 
 
-version_label = ctk.CTkLabel(root, text=version_txt, fg_color="transparent", text_color="gray59", padx=0, pady=0,anchor="nw", font=(button_font, 8.5))
-version_label.place(x=855, y=30)
+version_label = ctk.CTkLabel(root, text=version_txt, fg_color="transparent", text_color="gray59", padx=0, pady=0,anchor="nw", font=(button_font, 9.5))
+version_label.place(x=848, y=30)
 version_label.bind("<Double-Button-1>", version_text)
 
 
