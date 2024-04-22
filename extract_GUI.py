@@ -48,7 +48,6 @@ Changelog 01
 - scrollbar (not placed well, but working)
 - area selection in display (areas not fixed yet)
 '''
-import shutil
 import time
 import os
 import threading
@@ -94,8 +93,8 @@ tessdata_folder = None
 # Initial Window and Display settings
 initial_width = 965
 initial_height = 685
-initial_x_position = 75
-initial_y_position = 75
+initial_x_position = 100
+initial_y_position = 100
 canvas_width = 935
 canvas_height = 550
 current_zoom = 2.0
@@ -686,7 +685,7 @@ def extract_text():
                             # Adjust coordinates based on rotation
                             adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation,
                                                                                    pdf_height, pdf_width)
-                            print(f"adjusted coordinates: {adjusted_coordinates}")
+                            # print(f"adjusted coordinates: {adjusted_coordinates}")
 
                             # Attempt to read text from the specified area
                             try:
@@ -803,13 +802,13 @@ def extract_text():
     except PermissionError:
         # Handle the case where the file is currently opened
         print(f"Error: The Excel file '{output_excel_path}' is currently opened.")
-
-        # Create a copy of the file with a timestamp in the filename
         timestamp = time.strftime("%Y%m%d%H%M%S")
-        backup_path = f"{os.path.splitext(output_excel_path)[0]}_{timestamp}.xlsx"
-        shutil.copy(output_excel_path, backup_path)
 
-        print(f"A backup copy has been created: {backup_path}")
+        # Save the workbook with the timestamp appended to the filename
+        timestamped_output_path = f"{os.path.splitext(output_excel_path)[0]}_{timestamp}.xlsx"
+        wb.save(timestamped_output_path)
+
+        print(f"A copy has been created: {timestamped_output_path}")
 
     end_time = time.time()
     elapsed_time = end_time - start_time
