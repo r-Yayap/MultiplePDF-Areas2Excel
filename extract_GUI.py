@@ -1,4 +1,8 @@
 '''
+Changelog 11
+- Fixed "Illegal Text" error
+- Text sorting hotfix
+
 Changelog 10
 - Fixed OCR
 
@@ -687,12 +691,20 @@ def extract_text():
                                                                                    pdf_height, pdf_width)
                             # print(f"adjusted coordinates: {adjusted_coordinates}")
 
+                            print(f"Debug - AAA")
+
                             # Attempt to read text from the specified area
                             try:
+                                print(f"Debug - aaa")
+
+                                if page.rotation == 0:
+                                    sort_val = False
+                                else:
+                                    sort_val = True
 
                                 if enable_ocr == "Text-first":
                                     # Try regular text extraction
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=false)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
 
                                     # If no text is extracted, fallback to OCR
                                     if not text_area.strip():
@@ -713,10 +725,13 @@ def extract_text():
 
                                 else:
                                     # Try regular text extraction
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=True)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
 
                                 # Replace '\n' with a space
                                 text_area = text_area.replace('\n', ' ').strip()
+
+                                # Replace double space with a space
+                                text_area = text_area.replace('  ', ' ').strip()
 
                                 # Append the extracted text to the list
                                 row_values.append(text_area)
@@ -727,30 +742,16 @@ def extract_text():
                             except FitzFileNotFoundError as e:
                                 print(f"Error extracting text from area {i} in {pdf_path}, Page {page_number + 1}: {e}")
 
+                        print(f"Debug - BBB")
+
                         # Add a new row to the Excel sheet
                         ws.append(row_values)
-
-                        # Add hyperlink to the PDF filename in the Excel sheet for each page
-                        pdf_filename_cell = ws.cell(row=ws.max_row,
-                                                    column=2)  # Assuming PDF Filename is in the second column (column B)
-                        pdf_filename_cell.value = pdf_filename
-
-                        # Set font color for the PDF filename cell
-                        pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue
-
-                        # Add hyperlink to the PDF filename cell
-                        pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
-
-                        # Update progress labels
-                        progress_label.configure(text=f"Extracting Texts in PDFs... ({processed_files}/{total_files})")
-                        progress.set(processed_files / total_files)
-                        progress_window.update_idletasks()
+                        print(f"Debug - bbb")
 
                 except EmptyFileError as e:
                     print(f"Error extracting text from {pdf_path}: {e}")
                     # Log the information about the corrupted file in Excel
-                    ws.append(
-                        [os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(areas))
+                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(areas))
                 except FitzFileNotFoundError as e:
                     print(f"Error opening {pdf_path}: {e}")
 
@@ -763,27 +764,41 @@ def extract_text():
                     ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error Loading page"] + [""] * len(areas))
 
                 except IllegalCharacterError as e:
+
+                    print(f"Debug - CCC")
                     illegal_characters = e.args[0]
                     print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
 
-                    # Remove or replace the illegal characters in the text
-                    cleaned_text = ''.join(char if char.isprintable() else ' ' for char in row_values[-1])
+                    # Define a function to clean the text
+                    def clean_text(text):
+                        # Replace illegal characters with a placeholder
+                        cleaned_text = ''.join(char if char.isprintable() else '�' for char in text)
+                        return cleaned_text.strip()
 
-                    # Append the cleaned text to the list
-                    row_values[-1] = cleaned_text
+                    # Clean each element in row_values
+                    cleaned_row_values = [clean_text(value) for value in row_values]
 
-                    # Append "Illegal Character Found" to a new column in the row
-                    row_values.append("Illegal Character Found")
-
-                    # Print sample extracted text after handling the illegal characters
-                    print(f"Page {page_number + 1}, Area {i} - Sample Extracted Text (After Handling): {cleaned_text}")
-
-                    # Add the row to the Excel sheet
-                    ws.append(row_values)
+                    # Append the cleaned row to the Excel sheet
+                    ws.append(cleaned_row_values)
 
                 except Exception as e:
                     # Handle the exception here
                     ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Unidentified Error"] + [""] * len(areas))
+
+                # Add hyperlink to the PDF filename in the Excel sheet for each page
+                pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
+                pdf_filename_cell.value = pdf_filename
+
+                # Set font color for the PDF filename cell
+                pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue
+
+                # Add hyperlink to the PDF filename cell
+                pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
+
+                # Update progress labels
+                progress_label.configure(text=f"Extracting Texts in PDFs... ({processed_files}/{total_files})")
+                progress.set(processed_files / total_files)
+                progress_window.update_idletasks()
 
     # Save Excel file
     try:
@@ -956,7 +971,7 @@ root.title("PDF Text Extractor")
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
 
 #OCR Widgets
-ocr_menu_var = ctk.StringVar(value="OCR-OFF") #OCR Mode currently disabled
+ocr_menu_var = ctk.StringVar(value="OCR-OFF")
 ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All"],
                                command=ocr_menu_callback, font=("Verdana Bold", 9),
                                button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
