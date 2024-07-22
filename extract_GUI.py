@@ -1,4 +1,7 @@
 '''
+Changelog 12
+- added Image extraction
+
 Changelog 11
 - Fixed "Illegal Text" error
 - Text sorting hotfix
@@ -52,6 +55,7 @@ Changelog 01
 - scrollbar (not placed well, but working)
 - area selection in display (areas not fixed yet)
 '''
+
 import time
 import os
 import threading
@@ -65,7 +69,8 @@ from openpyxl import Workbook
 from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
-# from PIL import Image #for Debugging only
+from openpyxl.drawing.image import Image as ExcelImage
+from openpyxl.utils import get_column_letter
 
 # Importing python files
 import sc_pdf_dwg_list as pdl
@@ -74,7 +79,7 @@ import sc_bulk_rename as brn
 from appdirs import user_data_dir
 
 # Label to display version
-version_txt = "Version 0.231219-10"
+version_txt = "Version 0.231219-12"
 
 # Global variables
 include_subfolders = False
@@ -383,7 +388,6 @@ def end_rectangle(event):
         print("Error: 'current_rectangle' is None in end_rectangle")
 
 
-
 def update_rectangles():
     global areas, current_zoom, canvas, rectangle_list
 
@@ -566,6 +570,12 @@ def clear_all_areas():
 
     print("Cleared All Areas")
 
+# Define the helper function
+def get_cell_dimensions(sheet, cell):
+    col_letter = get_column_letter(cell.column)
+    col_width = sheet.column_dimensions[col_letter].width or 8.43  # Default width if not set
+    row_height = sheet.row_dimensions[cell.row].height or 15  # Default height if not set
+    return col_width * 7, row_height  # Approximate width in pixels
 
 def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width):
     if rotation == 0:
@@ -654,6 +664,8 @@ def extract_text():
     # Iterate through PDFs in the folder and its subfolders
     processed_files = 0
 
+    temp_image_paths = []
+
     for root_folder, subfolders, files in os.walk(pdf_folder):
         # Check if subfolders should be included
         if not include_subfolders:
@@ -670,16 +682,28 @@ def extract_text():
 
                     processed_files += 1
 
+                    # Create a list to store extracted text for each area on the same row
+                    row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
+                    img_cell_row = ws.cell(row=ws.max_row, column=len(row_values))
+
                     for page_number in range(pdf_document.page_count):
                         # Get the current page
                         page = pdf_document[page_number]
 
-                        # Create a list to store extracted text for each area on the same row
-                        row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
+
 
                         print(f'PDF: {pdf_filename}')
                         print(f'Page Rotation: {page.rotation}')
                         print(f'Page Dimension: {page.rect.width} x {page.rect.height}')
+
+                        #Test
+                        if page.rotation == 0:
+                            sort_val = True
+                        else:
+                            sort_val = True
+
+                        print(f"Sort text: {sort_val}")
+
 
                         # Iterate through areas
                         for i, area_coordinates in enumerate(areas, start=1):
@@ -691,20 +715,16 @@ def extract_text():
                                                                                    pdf_height, pdf_width)
                             # print(f"adjusted coordinates: {adjusted_coordinates}")
 
-                            print(f"Debug - AAA")
 
                             # Attempt to read text from the specified area
                             try:
-                                print(f"Debug - aaa")
-
-                                if page.rotation == 0:
-                                    sort_val = False
-                                else:
-                                    sort_val = True
 
                                 if enable_ocr == "Text-first":
                                     # Try regular text extraction
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
+
+                                    #text_area = ["".join(s["text"]) for b in page.get_text("dict", clip=adjusted_coordinates)["blocks"] for l in sorted(b.get("lines", []), key=lambda l: (l["bbox"][3], l["bbox"][0])) for s in l.get("spans", [])]
+
 
                                     # If no text is extracted, fallback to OCR
                                     if not text_area.strip():
@@ -713,21 +733,67 @@ def extract_text():
                                         clipdoc = fitz.open("pdf", pdfdata) # OCRed 1-page
                                         text_area = "_OCR_" + clipdoc[0].get_text()
 
+
                                 elif enable_ocr == "OCR-All":
-
-                                    pix = page.get_pixmap(clip=area_coordinates)
-                                    img = pix.tobytes("ppm")  # extremely fast!
-                                    pix = fitz.Pixmap(img)
-
-                                    pdfdata = pix.pdfocr_tobytes(language='eng',tessdata=tessdata_folder)
-                                    clipdoc = fitz.open("pdf", pdfdata) # OCRed 1-page
+                                    pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
+                                    pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
+                                    clipdoc = fitz.open("pdf", pdfdata)  # OCRed 1-page
                                     text_area = "_OCR_" + clipdoc[0].get_text()
+
+                                elif enable_ocr == "Text+Image-beta":
+
+                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
+
+
+                                    # Get image from the specified area
+                                    pix = page.get_pixmap(clip=area_coordinates)
+                                    img_path = f'{pdf_filename}{page_number}{i}.png'  # Ensure unique path
+                                    pix.save(img_path)
+
+                                    # Append the image path to the list
+                                    temp_image_paths.append(img_path)
+
+
+                                    # Insert the image into the next cell
+                                    img = ExcelImage(img_path)
+
+                                    img_cell = ws.cell(row=ws.max_row, column=len(row_values)+1)
+
+                                    # Calculate the anchor for the image
+                                    col_letter = get_column_letter(img_cell.column)
+                                    img_anchor = f"{col_letter}{img_cell_row.row+1}"
+
+                                    # Adjust the image size to fit the cell dimensions
+                                    cell_width, cell_height = get_cell_dimensions(ws, img_cell)
+
+                                    # Check which dimension (width or height) needs adjustment
+                                    if (img.width) > cell_width:
+                                        ws.column_dimensions[col_letter].width = int(img.width)
+
+                                    if img.height > cell_height:
+                                        if ws.max_row == 1:
+                                            ws.row_dimensions[img_cell_row.row+1].height = int(img.height)
+                                        else:
+                                            ws.row_dimensions[img_cell_row.row].height = int(img.height)
+
+
+
+
+                                    # Set the image anchor and add the image to the worksheet
+                                    img.anchor = img_anchor
+                                    ws.add_image(img)
+
 
                                 else:
                                     # Try regular text extraction
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
 
-                                # Replace '\n' with a space
+                                    #text_area = ["".join(s["text"]) for b in page.get_text("dict", clip=adjusted_coordinates)["blocks"] for l in sorted(b.get("lines", []), key=lambda l: (l["bbox"][3], l["bbox"][0])) for s in l.get("spans", [])]
+
+                                    print(text_area)
+
+
+                                # Replace newline characters with spaces and strip leading/trailing spaces
                                 text_area = text_area.replace('\n', ' ').strip()
 
                                 # Replace double space with a space
@@ -742,11 +808,9 @@ def extract_text():
                             except FitzFileNotFoundError as e:
                                 print(f"Error extracting text from area {i} in {pdf_path}, Page {page_number + 1}: {e}")
 
-                        print(f"Debug - BBB")
 
                         # Add a new row to the Excel sheet
                         ws.append(row_values)
-                        print(f"Debug - bbb")
 
                 except EmptyFileError as e:
                     print(f"Error extracting text from {pdf_path}: {e}")
@@ -765,7 +829,6 @@ def extract_text():
 
                 except IllegalCharacterError as e:
 
-                    print(f"Debug - CCC")
                     illegal_characters = e.args[0]
                     print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
 
@@ -781,9 +844,9 @@ def extract_text():
                     # Append the cleaned row to the Excel sheet
                     ws.append(cleaned_row_values)
 
-                except Exception as e:
-                    # Handle the exception here
-                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Unidentified Error"] + [""] * len(areas))
+                # except Exception as e:
+                #     # Handle the exception here
+                #     ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Unidentified Error"] + [""] * len(areas))
 
                 # Add hyperlink to the PDF filename in the Excel sheet for each page
                 pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
@@ -807,12 +870,20 @@ def extract_text():
                 # Check if the cell contains "_OCR_"
                 if "_OCR_" in str(cell.value):
                     # Remove "_OCR_" and update the cell value
-                    cell.value = cell.value.replace("_OCR_", "")
+                    cell.value = cell.value.replace("_OCR_","")
 
                     # Set font color for the updated cell to dark orange
                     cell.font = Font(color="FF3300")
 
         wb.save(output_excel_path)
+
+        # Delete all temporary image files
+        for temp_img_path in temp_image_paths:
+            try:
+                os.remove(temp_img_path)
+            except OSError as e:
+                print(f"Error: {temp_img_path} : {e.strerror}")
+
 
     except PermissionError:
         # Handle the case where the file is currently opened
@@ -825,6 +896,9 @@ def extract_text():
 
         print(f"A copy has been created: {timestamped_output_path}")
 
+
+
+
     end_time = time.time()
     elapsed_time = end_time - start_time
 
@@ -836,8 +910,10 @@ def extract_text():
     if open_file:
         os.startfile(output_excel_path)
 
+
     # Close the progress window
     progress_window.destroy()
+
 
 
 def after_command():
@@ -972,7 +1048,7 @@ root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y
 
 #OCR Widgets
 ocr_menu_var = ctk.StringVar(value="OCR-OFF")
-ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All"],
+ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All","Text+Image-beta"],
                                command=ocr_menu_callback, font=("Verdana Bold", 9),
                                button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
                                dropdown_font=(button_font, 9), dynamic_resizing=False,
