@@ -1,6 +1,8 @@
 '''
 Changelog 12
-- added Image extraction
+- added Image extraction (would not work for PDFs with multiple pages)
+- added Last Modified Date and Size for Extractor and other features
+- updated to pymupdf v 1.24.10
 
 Changelog 11
 - Fixed "Illegal Text" error
@@ -62,15 +64,16 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
-import fitz  # PyMuPDF
-from fitz.fitz import EmptyFileError
-from fitz.fitz import FileNotFoundError as FitzFileNotFoundError
+import pymupdf  as fitz# PyMuPDF
+from pymupdf import EmptyFileError
+from pymupdf import FileNotFoundError as FitzFileNotFoundError
 from openpyxl import Workbook
 from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
+from datetime import datetime
 
 # Importing python files
 import sc_pdf_dwg_list as pdl
@@ -596,6 +599,8 @@ def start_extraction_thread():
     extraction_thread.start()
 
 
+
+
 def extract_text():
     start_time = time.time()
     global areas, ws, pdf_height, pdf_width, include_subfolders, enable_ocr, tessdata_folder, dpi_value
@@ -622,8 +627,7 @@ def extract_text():
 
     # Determine the total number of iterations (PDF files)
     if include_subfolders:
-        total_files = sum(
-            1 for root, _, files in os.walk(pdf_folder) for file in files if file.lower().endswith('.pdf'))
+        total_files = sum(1 for root, _, files in os.walk(pdf_folder) for file in files if file.lower().endswith('.pdf'))
     else:
         _, _, files = next(os.walk(pdf_folder))
         total_files = sum(1 for file in files if file.lower().endswith('.pdf'))
@@ -631,9 +635,10 @@ def extract_text():
     # Initialize Excel workbook and sheet
     wb = Workbook()
     ws = wb.active
-    ws.append(["Folder", "Filename"] + [f"Area {i + 1}" for i in range(len(areas))])
+    # Add headers for Folder, Filename, Size, Date Modified, and areas
+    ws.append(["Size (Bytes)", "Date Last Modified", "Folder", "Filename"] + [f"Area {i + 1}" for i in range(len(areas))])
 
-    # Create a new window to display progress
+    # Progress window
     progress_window = ctk.CTkToplevel(root)
     progress_window.title("Extraction in Progress...")
     progress_window.geometry("300x90")
@@ -646,24 +651,15 @@ def extract_text():
 
     # Create a progress bar
     progress = ctk.CTkProgressBar(progress_window, orientation="horizontal", mode="determinate",
-                                  progress_color='limegreen',
-                                  width=150, height=15)
+                                  progress_color='limegreen', width=150, height=15)
     progress.pack()
 
     total_label = ctk.CTkLabel(progress_window, text=f"Stretch for a bit or get a cup of tea!",
-                               # fg_color="transparent",
-                               # text_color="gray59",
-                               padx=0, pady=13,
-                               anchor="nw",
-                               font=("Helvetica", 12))
+                               padx=0, pady=13, anchor="nw", font=("Helvetica", 12))
     total_label.pack()
 
-    # Define the number of files to process before updating the progress bar
-    update_interval = 1  # Adjust this value as needed
-
-    # Iterate through PDFs in the folder and its subfolders
+    # Iterate through PDFs
     processed_files = 0
-
     temp_image_paths = []
 
     for root_folder, subfolders, files in os.walk(pdf_folder):
@@ -672,163 +668,107 @@ def extract_text():
             subfolders.clear()
 
         for pdf_filename in files:
-            pdf_path = os.path.join(root_folder, pdf_filename)
             if pdf_filename.lower().endswith('.pdf'):
                 pdf_path = os.path.join(root_folder, pdf_filename)
 
                 try:
-                    # Extract text from each defined area using PyMuPDF (fitz)
-                    pdf_document = fitz.open(pdf_path)
+                    # Extract file size and last modified date
+                    file_size = os.path.getsize(pdf_path)  # File size in bytes
+                    last_modified_timestamp = os.path.getmtime(pdf_path)
+                    last_modified_date = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
+                    # Open PDF file using PyMuPDF
+                    pdf_document = fitz.open(pdf_path)
                     processed_files += 1
 
-                    # Create a list to store extracted text for each area on the same row
-                    row_values = [os.path.relpath(root_folder, pdf_folder), pdf_filename]
-                    img_cell_row = ws.cell(row=ws.max_row, column=len(row_values))
+                    # Create a list to store extracted text and metadata for the row
+                    row_values = [
+                        file_size,  # Size (Bytes)
+                        last_modified_date,  # Date Last Modified
+                        os.path.relpath(root_folder, pdf_folder),  # Folder
+                        pdf_filename  # Filename
+                    ]
 
                     for page_number in range(pdf_document.page_count):
-                        # Get the current page
                         page = pdf_document[page_number]
-
-
-
                         print(f'PDF: {pdf_filename}')
                         print(f'Page Rotation: {page.rotation}')
                         print(f'Page Dimension: {page.rect.width} x {page.rect.height}')
 
-                        #Test
-                        if page.rotation == 0:
-                            sort_val = True
-                        else:
-                            sort_val = True
+                        sort_val = False if page.rotation == 0 else False  # Example handling rotation
 
-                        print(f"Sort text: {sort_val}")
-
-
-                        # Iterate through areas
+                        # Iterate through areas to extract text
                         for i, area_coordinates in enumerate(areas, start=1):
-                            # Get the size of the PDF page
                             pdf_width, pdf_height = page.rect.width, page.rect.height
+                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation, pdf_height, pdf_width)
 
-                            # Adjust coordinates based on rotation
-                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation,
-                                                                                   pdf_height, pdf_width)
-                            # print(f"adjusted coordinates: {adjusted_coordinates}")
-
-
-                            # Attempt to read text from the specified area
                             try:
-
+                                # Extract text or apply OCR
                                 if enable_ocr == "Text-first":
-                                    # Try regular text extraction
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
-
-                                    #text_area = ["".join(s["text"]) for b in page.get_text("dict", clip=adjusted_coordinates)["blocks"] for l in sorted(b.get("lines", []), key=lambda l: (l["bbox"][3], l["bbox"][0])) for s in l.get("spans", [])]
-
-
-                                    # If no text is extracted, fallback to OCR
                                     if not text_area.strip():
                                         pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
-                                        clipdoc = fitz.open("pdf", pdfdata) # OCRed 1-page
+                                        clipdoc = fitz.open("pdf", pdfdata)
                                         text_area = "_OCR_" + clipdoc[0].get_text()
-
 
                                 elif enable_ocr == "OCR-All":
                                     pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                     pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
-                                    clipdoc = fitz.open("pdf", pdfdata)  # OCRed 1-page
+                                    clipdoc = fitz.open("pdf", pdfdata)
                                     text_area = "_OCR_" + clipdoc[0].get_text()
 
                                 elif enable_ocr == "Text+Image-beta":
-
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
-
-
-                                    # Get image from the specified area
                                     pix = page.get_pixmap(clip=area_coordinates)
-                                    img_path = f'{pdf_filename}{page_number}{i}.png'  # Ensure unique path
+                                    img_path = f'{pdf_filename}{page_number}{i}.png'
                                     pix.save(img_path)
-
-                                    # Append the image path to the list
                                     temp_image_paths.append(img_path)
 
-
-                                    # Insert the image into the next cell
                                     img = ExcelImage(img_path)
-
-                                    img_cell = ws.cell(row=ws.max_row, column=len(row_values)+1)
-
-                                    # Calculate the anchor for the image
-                                    col_letter = get_column_letter(img_cell.column)
-                                    img_anchor = f"{col_letter}{img_cell_row.row+1}"
-
-                                    # Adjust the image size to fit the cell dimensions
-                                    cell_width, cell_height = get_cell_dimensions(ws, img_cell)
-
-                                    # Check which dimension (width or height) needs adjustment
-                                    if (img.width) > cell_width:
-                                        ws.column_dimensions[col_letter].width = int(img.width)
-
-                                    if img.height > cell_height:
-                                        if ws.max_row == 1:
-                                            ws.row_dimensions[img_cell_row.row+1].height = int(img.height)
-                                        else:
-                                            ws.row_dimensions[img_cell_row.row].height = int(img.height)
-
-
-
-
-                                    # Set the image anchor and add the image to the worksheet
+                                    img_cell = ws.cell(row=ws.max_row, column=len(row_values) + 1)
+                                    img_anchor = f"{get_column_letter(img_cell.column)}{img_cell.row}"
                                     img.anchor = img_anchor
                                     ws.add_image(img)
 
 
                                 else:
-                                    # Try regular text extraction
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
 
-                                    #text_area = ["".join(s["text"]) for b in page.get_text("dict", clip=adjusted_coordinates)["blocks"] for l in sorted(b.get("lines", []), key=lambda l: (l["bbox"][3], l["bbox"][0])) for s in l.get("spans", [])]
-
-                                    print(text_area)
-
-
-                                # Replace newline characters with spaces and strip leading/trailing spaces
-                                text_area = text_area.replace('\n', ' ').strip()
-
-                                # Replace double space with a space
-                                text_area = text_area.replace('  ', ' ').strip()
-
-                                # Append the extracted text to the list
+                                # Clean and append extracted text
+                                text_area = text_area.replace('\n', ' ').strip().replace('  ', ' ')
                                 row_values.append(text_area)
 
-                                # Print sample extracted text for each page
                                 print(f"Page {page_number + 1}, Area {i} - Sample Extracted Text: {text_area}")
 
-                            except FitzFileNotFoundError as e:
+                            except Exception as e:
                                 print(f"Error extracting text from area {i} in {pdf_path}, Page {page_number + 1}: {e}")
 
+                    # Append the extracted data to the worksheet
+                    ws.append(row_values)
 
-                        # Add a new row to the Excel sheet
-                        ws.append(row_values)
+
 
                 except EmptyFileError as e:
                     print(f"Error extracting text from {pdf_path}: {e}")
-                    # Log the information about the corrupted file in Excel
-                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(areas))
+                    # Log the information about the corrupted file in Excel with placeholders for Size and Date Modified
+                    ws.append(
+                        ["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(
+                            areas))
+
                 except FitzFileNotFoundError as e:
                     print(f"Error opening {pdf_path}: {e}")
-
-                    # Log the information about the missing file in Excel
-                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Long File Name or File not found"] + [""] * len(areas))
+                    # Log the information about the missing file in Excel with placeholders for Size and Date Modified
+                    ws.append(["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename,
+                               "Long File Name or File not found"] + [""] * len(areas))
 
                 except RuntimeError as e:
-                    # Log the information about the missing file in Excel
                     print(e)
-                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error Loading page"] + [""] * len(areas))
+                    # Log the information about the error in Excel with placeholders for Size and Date Modified
+                    ws.append(["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error Loading page"] + [
+                        ""] * len(areas))
 
                 except IllegalCharacterError as e:
-
                     illegal_characters = e.args[0]
                     print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
 
@@ -838,81 +778,66 @@ def extract_text():
                         cleaned_text = ''.join(char if char.isprintable() else '�' for char in text)
                         return cleaned_text.strip()
 
-                    # Clean each element in row_values
-                    cleaned_row_values = [clean_text(value) for value in row_values]
+                    # Clean each element in row_values and add placeholders for Size and Date Modified
+                    cleaned_row_values = ["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename] + [
+                        clean_text(value) for value in row_values[4:]]
 
                     # Append the cleaned row to the Excel sheet
                     ws.append(cleaned_row_values)
 
-                # except Exception as e:
-                #     # Handle the exception here
-                #     ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Unidentified Error"] + [""] * len(areas))
+                except Exception as e:
+                    print(f"Error processing {pdf_path}: {e}")
+                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error"] + [""] * len(areas))
 
-                # Add hyperlink to the PDF filename in the Excel sheet for each page
-                pdf_filename_cell = ws.cell(row=ws.max_row, column=2)  # Assuming PDF Filename is in the second column (column B)
-                pdf_filename_cell.value = pdf_filename
 
-                # Set font color for the PDF filename cell
-                pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue
+                # After appending, add hyperlink to the PDF filename cell in the Excel sheet
+                pdf_filename_cell = ws.cell(row=ws.max_row, column=4)  # Assuming PDF Filename is in the second column (column B)
+                pdf_filename_cell.value = pdf_filename  # Ensure the filename is still there
+                pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue for the hyperlink
 
-                # Add hyperlink to the PDF filename cell
+                # Add the hyperlink after appending row data
                 pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
 
-                # Update progress labels
+                # Update progress
                 progress_label.configure(text=f"Extracting Texts in PDFs... ({processed_files}/{total_files})")
                 progress.set(processed_files / total_files)
                 progress_window.update_idletasks()
 
-    # Save Excel file
+    # Save the Excel file
     try:
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
             for cell in row:
-                # Check if the cell contains "_OCR_"
                 if "_OCR_" in str(cell.value):
-                    # Remove "_OCR_" and update the cell value
-                    cell.value = cell.value.replace("_OCR_","")
-
-                    # Set font color for the updated cell to dark orange
+                    cell.value = cell.value.replace("_OCR_", "")
                     cell.font = Font(color="FF3300")
 
-        wb.save(output_excel_path)
+        wb.save(output_path_value)
 
-        # Delete all temporary image files
+        # Delete temporary images
         for temp_img_path in temp_image_paths:
             try:
                 os.remove(temp_img_path)
             except OSError as e:
                 print(f"Error: {temp_img_path} : {e.strerror}")
 
-
     except PermissionError:
-        # Handle the case where the file is currently opened
-        print(f"Error: The Excel file '{output_excel_path}' is currently opened.")
         timestamp = time.strftime("%Y%m%d%H%M%S")
-
-        # Save the workbook with the timestamp appended to the filename
-        timestamped_output_path = f"{os.path.splitext(output_excel_path)[0]}_{timestamp}.xlsx"
+        timestamped_output_path = f"{os.path.splitext(output_path_value)[0]}_{timestamp}.xlsx"
         wb.save(timestamped_output_path)
-
         print(f"A copy has been created: {timestamped_output_path}")
-
-
-
 
     end_time = time.time()
     elapsed_time = end_time - start_time
-
     print(f"Text extraction completed in {elapsed_time:.2f} seconds.")
 
     # Prompt to open the Excel file
-    open_file = messagebox.askyesno("Open Excel File",
-                                    f"Elapsed Time: {elapsed_time:.2f} seconds\n\nDo you want to open the Excel file now?")
+    open_file = messagebox.askyesno("Open Excel File", f"Elapsed Time: {elapsed_time:.2f} seconds\n\nDo you want to open the Excel file now?")
     if open_file:
-        os.startfile(output_excel_path)
+        os.startfile(output_path_value)
 
-
-    # Close the progress window
+    # Close progress window
     progress_window.destroy()
+
 
 
 

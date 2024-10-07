@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from tkinter import Tk, filedialog
 from openpyxl import load_workbook
+from datetime import datetime
 
 
 def choose_directory(title="Select Directory"):
@@ -23,6 +24,7 @@ def choose_file_save_location(title="Save Excel File As"):
     root.destroy()  # Close the main window
     return file_path
 
+
 def list_files(start_path):
     file_dict = {'PDF': {}, 'DWG': {}}
     for root, dirs, files in os.walk(start_path):
@@ -31,13 +33,21 @@ def list_files(start_path):
             directory = os.path.relpath(root, start_path)
             file_name, file_extension = os.path.splitext(file)
             file_type = 'PDF' if file_extension.lower() == '.pdf' else 'DWG' if file_extension.lower() == '.dwg' else 'Other'
+            file_size = os.path.getsize(file_path)  # Get file size in bytes
+            file_modified_time = os.path.getmtime(file_path)  # Get file modification time
+            file_modified_date = datetime.fromtimestamp(file_modified_time).strftime('%Y-%m-%d %H:%M:%S')  # Convert to readable format
 
             # Exclude 'Other' file types
             if file_type in ['PDF', 'DWG']:
-                # Use the full path as the key in the dictionary
-                file_dict[file_type][file_path] = file_name
+                # Store file name, size, and date modified in the dictionary
+                file_dict[file_type][file_path] = {
+                    'name': file_name,
+                    'size': file_size,
+                    'modified': file_modified_date
+                }
 
     return file_dict
+
 
 def export_to_excel(file_dict, selected_folder, excel_file):
     pdf_dict = file_dict['PDF']
@@ -47,52 +57,61 @@ def export_to_excel(file_dict, selected_folder, excel_file):
     combined_dict = {}
 
     # Helper function to add or update entries in the combined_dict
-    def update_combined_dict(file_name, pdf_path, dwg_path):
+    def update_combined_dict(file_name, pdf_data, dwg_data):
         if file_name not in combined_dict:
-            combined_dict[file_name] = {'File': file_name, 'PDF': None, 'DWG': None, 'FolderPDF': [], 'FolderDWG': [],
-                                        'PDFHasDuplicate': None, 'DWGHasDuplicate': None}
+            combined_dict[file_name] = {
+                'File': file_name,
+                'PDF': None,
+                'DWG': None,
+                'FolderPDF': [],
+                'FolderDWG': [],
+                'PDFSize': None,
+                'DWGSize': None,
+                'PDFModified': None,
+                'DWGModified': None,
+                'PDFHasDuplicate': None,
+                'DWGHasDuplicate': None
+            }
 
         # Add PDF information
-        if pdf_path:
-            pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        if pdf_data:
+            pdf_name = pdf_data['name']
             combined_dict[file_name]['PDF'] = pdf_name
+            combined_dict[file_name]['PDFSize'] = pdf_data['size']  # Add file size
+            combined_dict[file_name]['PDFModified'] = pdf_data['modified']  # Add modified date
 
             # Check for duplicate entries and add square brackets to FolderPDF
-            pdf_folder = os.path.relpath(os.path.dirname(pdf_path), selected_folder) if os.path.dirname(
-                pdf_path) and selected_folder else ''
+            pdf_folder = os.path.relpath(os.path.dirname(pdf_data['path']), selected_folder) if os.path.dirname(
+                pdf_data['path']) and selected_folder else ''
             combined_dict[file_name]['FolderPDF'].append(pdf_folder)
             combined_dict[file_name]['PDFHasDuplicate'] = len(combined_dict[file_name]['FolderPDF']) if len(
                 combined_dict[file_name]['FolderPDF']) > 1 else None
 
         # Add DWG information
-        if dwg_path:
-            dwg_name = os.path.splitext(os.path.basename(dwg_path))[0]
+        if dwg_data:
+            dwg_name = dwg_data['name']
             combined_dict[file_name]['DWG'] = dwg_name
+            combined_dict[file_name]['DWGSize'] = dwg_data['size']  # Add file size
+            combined_dict[file_name]['DWGModified'] = dwg_data['modified']  # Add modified date
 
             # Check for duplicate entries and add square brackets to FolderDWG
-            dwg_folder = os.path.relpath(os.path.dirname(dwg_path), selected_folder) if os.path.dirname(
-                dwg_path) and selected_folder else ''
+            dwg_folder = os.path.relpath(os.path.dirname(dwg_data['path']), selected_folder) if os.path.dirname(
+                dwg_data['path']) and selected_folder else ''
             combined_dict[file_name]['FolderDWG'].append(dwg_folder)
             combined_dict[file_name]['DWGHasDuplicate'] = len(combined_dict[file_name]['FolderDWG']) if len(
                 combined_dict[file_name]['FolderDWG']) > 1 else None
 
     # Process PDF files
-    for pdf_path, pdf_name in pdf_dict.items():
-        dwg_path = dwg_dict.get(pdf_path, '')
+    for pdf_path, pdf_info in pdf_dict.items():
+        dwg_info = dwg_dict.get(pdf_path, None)
         file_name = os.path.splitext(os.path.basename(pdf_path))[0]
-        update_combined_dict(file_name, pdf_path, dwg_path)
+        update_combined_dict(file_name, {'path': pdf_path, **pdf_info}, dwg_info)
 
     # Process DWG files
-    for dwg_path, dwg_name in dwg_dict.items():
-        pdf_path = pdf_dict.get(dwg_path, '')
+    for dwg_path, dwg_info in dwg_dict.items():
+        pdf_info = pdf_dict.get(dwg_path, None)
         file_name = os.path.splitext(os.path.basename(dwg_path))[0]
-        update_combined_dict(file_name, pdf_path, dwg_path)
-
-    # Check for duplicate entries and update 'HasDuplicate' column
-    for file_name, data in combined_dict.items():
-        pdf_duplicate = any(entry['PDF'] == data['PDF'] for entry in combined_dict.values() if entry != data)
-        dwg_duplicate = any(entry['DWG'] == data['DWG'] for entry in combined_dict.values() if entry != data)
-        combined_dict[file_name]['HasDuplicate'] = not (pdf_duplicate or dwg_duplicate)
+        update_combined_dict(file_name, pdf_info, {'path': dwg_path, **dwg_info})
 
     # Create a DataFrame from the combined dictionary
     df = pd.DataFrame.from_dict(combined_dict, orient='index').reset_index()
@@ -101,7 +120,7 @@ def export_to_excel(file_dict, selected_folder, excel_file):
     df = df.sort_values(by='File')
 
     # Drop the first column created by reset_index()
-    df = df.drop(columns=[df.columns[0], 'File', 'HasDuplicate'])  # Drop the first column and 'HasDuplicate'
+    df = df.drop(columns=[df.columns[0], 'File'])
 
     # Save the final DataFrame to Excel
     df.to_excel(excel_file, index=False)
@@ -134,3 +153,4 @@ def pdf_dwg_counter():
             print("No file location selected.")
     else:
         print("No directory selected.")
+
