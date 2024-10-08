@@ -1,7 +1,9 @@
 import os
 import pandas as pd
-from tkinter import Tk, filedialog, Button, Label
+from tkinter import Tk, filedialog
 from datetime import datetime
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 
 def list_files_in_directory(selected_folder):
@@ -21,6 +23,7 @@ def list_files_in_directory(selected_folder):
             file_list.append({
                 'Folder': folder_name,
                 'Filename': filename,
+                'Full Path': full_path,  # Include the full path for hyperlink
                 'Format': file_format[1:],
                 'Size (Bytes)': file_size,
                 'Last Modified': last_modified_date
@@ -30,8 +33,31 @@ def list_files_in_directory(selected_folder):
 
 
 def create_excel_file(file_list, output_excel_path):
+    # Create a DataFrame from the file list
     df = pd.DataFrame(file_list)
-    df.to_excel(output_excel_path, index=False)
+
+    # Remove 'Full Path' before saving, since we will handle it separately for hyperlinks
+    df_without_path = df.drop(columns=['Full Path'])
+
+    # Save the DataFrame to an Excel file
+    with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
+        df_without_path.to_excel(writer, index=False, sheet_name='Files')
+        workbook = writer.book
+        worksheet = writer.sheets['Files']
+
+        # Add hyperlinks to the 'Filename' column
+        for row_idx, file_info in enumerate(file_list, start=2):  # Start from row 2 to skip the header
+            # Get the filename and its full path
+            filename = file_info['Filename']
+            full_path = file_info['Full Path']
+
+            # Create the hyperlink in the 'Filename' column (assumed to be column B)
+            col_letter = get_column_letter(df_without_path.columns.get_loc('Filename') + 1)
+            cell = worksheet[f"{col_letter}{row_idx}"]
+            cell.hyperlink = full_path  # Set the hyperlink
+            cell.style = "Hyperlink"  # Apply hyperlink style
+
+    print(f"Excel file with hyperlinks created at {output_excel_path}")
 
 
 def select_input_folder():

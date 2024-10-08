@@ -3,6 +3,8 @@ Changelog 12
 - added Image extraction (would not work for PDFs with multiple pages)
 - added Last Modified Date and Size for Extractor and other features
 - updated to pymupdf v 1.24.10
+- import/export areas
+- recent pdf/close pdf
 
 Changelog 11
 - Fixed "Illegal Text" error
@@ -62,6 +64,7 @@ import time
 import os
 import threading
 import tkinter as tk
+import json
 from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
 import pymupdf  as fitz# PyMuPDF
@@ -75,11 +78,15 @@ from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 
+
 # Importing python files
 import sc_pdf_dwg_list as pdl
 import sc_dir_list as dlist
 import sc_bulk_rename as brn
 from appdirs import user_data_dir
+
+
+
 
 # Label to display version
 version_txt = "Version 0.231219-12"
@@ -101,6 +108,7 @@ pix = None
 page = None
 enable_ocr = None
 tessdata_folder = None
+recent_pdf_path = None
 
 # Initial Window and Display settings
 initial_width = 965
@@ -117,6 +125,7 @@ button_font = "Verdana"
 
 # Define DPI options globally
 dpi_options = {
+    "75": 75,
     "150": 150,
     "300": 300,
     "450": 450,
@@ -323,7 +332,7 @@ def browse_output_path():
 
 
 def open_sample_pdf():
-    global areas_tree
+    global areas_tree, recent_pdf_path
 
     # Ask user to choose a sample PDF file
     sample_pdf_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
@@ -331,9 +340,24 @@ def open_sample_pdf():
     if sample_pdf_path:
         print(f"Opening Sample PDF: {sample_pdf_path}")
 
+        # Store the path of the recently opened PDF
+        recent_pdf_path = sample_pdf_path
+
         # Display the sample PDF and get its dimensions
         display_sample_pdf(sample_pdf_path)
 
+    # Button to open the most recent PDF
+    recent_pdf_button = ctk.CTkButton(root, text="Recent..", command=open_recent_pdf, font=(button_font, 9),
+                                      fg_color=("gray29", "gray39"),
+                                      #fg_color="#B30B00", # hover_color="#860A00",
+                                       width=25, height=10)
+    recent_pdf_button.place(x=87, y=35)  # Adjust the layout method as needed
+
+    # Button to open the most recent PDF
+    close_pdf_button = ctk.CTkButton(root, text="X", command=close_pdf, font=(button_font, 9),
+                                     fg_color="#B30B00", # hover_color="#860A00",
+                                       width=25, height=10)
+    close_pdf_button.place(x=143, y=35)  # Adjust the layout method as needed
 
 def start_rectangle(event):
     global original_coordinates, current_rectangle
@@ -392,15 +416,19 @@ def end_rectangle(event):
 
 
 def update_rectangles():
-    global areas, current_zoom, canvas, rectangle_list
+    global areas, current_zoom, canvas, rectangle_list, areas_tree
 
     # Delete existing rectangles on the canvas
     for rectangle_id in rectangle_list:
         canvas.delete(rectangle_id)
+    rectangle_list.clear()
+
+    # Clear the areas_tree
+    for item in areas_tree.get_children():
+        areas_tree.delete(item)
 
     # Update rectangles based on the new zoom level
     for stored_coords in areas:
-        # Get the original coordinates
         x0, y0, x1, y1 = stored_coords
 
         # Adjust coordinates based on the current zoom level
@@ -412,12 +440,18 @@ def update_rectangles():
         ]
 
         # Draw the rectangle on the canvas
-        rectangle_id = canvas.create_rectangle(adjusted_coords[0], adjusted_coords[1],
-                                               adjusted_coords[2], adjusted_coords[3],
-                                               outline="red", width=2)
+        rectangle_id = canvas.create_rectangle(
+            adjusted_coords[0], adjusted_coords[1],
+            adjusted_coords[2], adjusted_coords[3],
+            outline="red", width=2
+        )
 
         # Append the new rectangle ID to the rectangle_list
         rectangle_list.append(rectangle_id)
+
+        # Update the areas_tree with the adjusted coordinates
+        areas_tree.insert("", "end", values=(x0, y0, x1, y1))
+
 
 
 def on_zoom_slider_change(value):
@@ -488,7 +522,7 @@ def update_display():
     img_tk = tk.PhotoImage(data=img)
 
     # Display the updated image on the canvas
-    canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+    canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
 
     # Update the image reference in the canvas
     canvas.pdf_image = img_tk
@@ -536,15 +570,6 @@ def display_sample_pdf(pdf_path):
         canvas.bind("<ButtonPress-1>", start_rectangle)
         canvas.bind("<B1-Motion>", draw_rectangle)
         canvas.bind("<ButtonRelease-1>", end_rectangle)
-
-
-    # Clear Areas Button
-    clear_areas_button = ctk.CTkButton(root, text="Clear Areas", command=clear_all_areas, font=(button_font, 9),
-                                       # text_color="#B30B00",
-                                       fg_color=("gray29", "gray39"),
-                                       # hover_color="#860A00",
-                                       width=25, height=10)
-    clear_areas_button.place(x=650, y=75)
 
     print(f"Displayed PDF: {pdf_path}")
 
@@ -599,9 +624,28 @@ def start_extraction_thread():
     extraction_thread.start()
 
 
+def close_pdf():
+    global canvas, pdf_document
+
+    # Remove the PDF image using its tag or ID
+    canvas.delete("pdf_image")
+
+    # Close the PDF document if it's open
+    try:
+        if pdf_document:
+            pdf_document.close()
+            print("PDF document closed.")
+        else:
+            print("No PDF document to close.")
+    except Exception as e:
+        print(f"Error closing PDF: {e}")
+
+    # Reset the reference to the PDF document
+    pdf_document = None
 
 
 def extract_text():
+    close_pdf()
     start_time = time.time()
     global areas, ws, pdf_height, pdf_width, include_subfolders, enable_ocr, tessdata_folder, dpi_value
 
@@ -718,16 +762,22 @@ def extract_text():
                                     clipdoc = fitz.open("pdf", pdfdata)
                                     text_area = "_OCR_" + clipdoc[0].get_text()
 
-                                elif enable_ocr == "Text+Image-beta":
+                                elif enable_ocr == "Text1st+Image-beta":
                                     text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
-                                    pix = page.get_pixmap(clip=area_coordinates)
+
+                                    pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
+                                    if not text_area.strip():
+                                        pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
+                                        clipdoc = fitz.open("pdf", pdfdata)
+                                        text_area = "_OCR_" + clipdoc[0].get_text()
+
                                     img_path = f'{pdf_filename}{page_number}{i}.png'
                                     pix.save(img_path)
                                     temp_image_paths.append(img_path)
 
                                     img = ExcelImage(img_path)
                                     img_cell = ws.cell(row=ws.max_row, column=len(row_values) + 1)
-                                    img_anchor = f"{get_column_letter(img_cell.column)}{img_cell.row}"
+                                    img_anchor = f"{get_column_letter(img_cell.column)}{img_cell.row +1}"
                                     img.anchor = img_anchor
                                     ws.add_image(img)
 
@@ -839,8 +889,6 @@ def extract_text():
     progress_window.destroy()
 
 
-
-
 def after_command():
     root.bind("<Configure>", check_resize)
     canvas.bind("<MouseWheel>", on_mousewheel)
@@ -920,7 +968,7 @@ def ocr_menu_callback(choice):
         enable_ocr_menu(False)
         print("OCR disabled.")
 
-    elif choice in ("Text-first", "OCR-All"):
+    elif choice in ("Text-first", "OCR-All", "Text1st+Image-beta"):
         found_tesseract_path = find_tessdata()
 
         if found_tesseract_path:
@@ -966,14 +1014,81 @@ def on_mousewheel(event):
         canvas.yview_scroll(-1 * int(event.delta / 120), "units")
 
 
+def export_rectangles():
+    global areas
+
+    # Ask the user where to save the file
+    export_file_path = filedialog.asksaveasfilename(
+        title="Save Rectangles As",
+        defaultextension=".json",
+        filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+    )
+
+    if export_file_path:
+        try:
+            # Save the list of areas (rectangle coordinates) to a JSON file
+            with open(export_file_path, 'w') as json_file:
+                json.dump(areas, json_file)
+            print(f"Rectangles exported to {export_file_path}")
+        except Exception as e:
+            print(f"Error while exporting rectangles: {e}")
+    else:
+        print("Export canceled by the user.")
+
+def import_rectangles():
+    global areas, canvas, current_zoom, rectangle_list, areas_tree
+
+    # Ask the user to select the JSON file to import
+    import_file_path = filedialog.askopenfilename(
+        title="Import Rectangles",
+        filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+    )
+
+    if import_file_path:
+        try:
+            # Load the rectangles (areas) from the JSON file
+            with open(import_file_path, 'r') as json_file:
+                imported_areas = json.load(json_file)
+
+            areas = imported_areas  # Update the global areas list
+
+            # Clear existing rectangles and their IDs
+            for rectangle_id in rectangle_list:
+                canvas.delete(rectangle_id)
+            rectangle_list.clear()
+
+            # Clear the areas_tree
+            for item in areas_tree.get_children():
+                areas_tree.delete(item)
+
+            # Redraw rectangles on the canvas and update the areas_tree
+            update_rectangles()
+
+            print(f"Rectangles imported from {import_file_path}")
+        except Exception as e:
+            print(f"Error while importing rectangles: {e}")
+    else:
+        print("Import canceled by the user.")
+
+def open_recent_pdf():
+    global recent_pdf_path
+
+    if recent_pdf_path:
+        print(f"Re-opening Recent PDF: {recent_pdf_path}")
+        display_sample_pdf(recent_pdf_path)
+    else:
+        print("No recent PDF available to open.")
+
+
+
 # Create main window
 root = ctk.CTk()
-root.title("PDF Text Extractor")
+root.title("Xtractor by RRR")
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
 
 #OCR Widgets
 ocr_menu_var = ctk.StringVar(value="OCR-OFF")
-ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All","Text+Image-beta"],
+ocr_menu = ctk.CTkOptionMenu(root, values=["Off", "Text-first", "OCR-All","Text1st+Image-beta"],
                                command=ocr_menu_callback, font=("Verdana Bold", 9),
                                button_color=("gray29", "gray39"), fg_color=("gray29", "gray39"),
                                dropdown_font=(button_font, 9), dynamic_resizing=False,
@@ -1015,6 +1130,9 @@ open_sample_button = ctk.CTkButton(root, text="Open PDF", command=open_sample_pd
                                    # fg_color="#B30B00", # hover_color="#860A00",
                                    width=25, height=10)
 open_sample_button.place(x=20, y=35)
+
+
+
 
 
 # Output Excel Path
@@ -1107,6 +1225,24 @@ tree_scrollbar.pack(side="right", fill="y")
 areas_tree.configure(yscrollcommand=tree_scrollbar.set)
 
 
+
+# Import Rectangles Button
+import_button = ctk.CTkButton(root, text="Import Areas", command=import_rectangles,
+                              font=(button_font, 9), width=88, height=10)
+import_button.place(x=650, y=10)
+
+# Export Rectangles Button
+export_button = ctk.CTkButton(root, text="Export Areas", command=export_rectangles,
+                              font=(button_font, 9), width=88, height=10)
+export_button.place(x=650, y=35)
+
+# Clear Areas Button
+clear_areas_button = ctk.CTkButton(root, text="Clear Areas", command=clear_all_areas, font=(button_font, 9),
+                                   fg_color=("gray29", "gray39"), width=88, height=10)
+clear_areas_button.place(x=650, y=60)
+
+
+
 # Create the option menu
 optionmenu_var = ctk.StringVar(value="Other Features")
 optionmenu = ctk.CTkOptionMenu(root, values=list(option_actions.keys()),
@@ -1125,10 +1261,6 @@ def version_text(event):
     https://github.com/r-Yayap/MultiplePDF-Areas2Excel
     https://www.linkedin.com/in/rei-raphael-reveral
     
-    
-    
-    
-        And now she knows, and now it ends.
     """
 
     # Create a Toplevel window
@@ -1147,8 +1279,8 @@ def version_text(event):
 
 
 version_label = ctk.CTkLabel(root, text=version_txt, fg_color="transparent", text_color="gray59", padx=0, pady=0,anchor="nw", font=(button_font, 9.5))
-version_label.place(x=848, y=30)
-version_label.bind("<Double-Button-1>", version_text)
+version_label.place(x=835, y=30)
+version_label.bind("<Button-1>", version_text)
 
 
 # Run the main loop
