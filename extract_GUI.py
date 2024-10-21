@@ -1,4 +1,7 @@
 '''
+Changelog 13
+- Tooltips added
+
 Changelog 12
 - added Image extraction (would not work for PDFs with multiple pages)
 - added Last Modified Date and Size for Extractor and other features
@@ -77,7 +80,7 @@ from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
 from datetime import datetime
-
+from CTkToolTip import *
 
 # Importing python files
 import sc_pdf_dwg_list as pdl
@@ -85,11 +88,8 @@ import sc_dir_list as dlist
 import sc_bulk_rename as brn
 from appdirs import user_data_dir
 
-
-
-
 # Label to display version
-version_txt = "Version 0.231219-12"
+version_txt = "Version 0.231219-13"
 
 # Global variables
 include_subfolders = False
@@ -109,14 +109,15 @@ page = None
 enable_ocr = None
 tessdata_folder = None
 recent_pdf_path = None
+pdf_document = None
 
 # Initial Window and Display settings
 initial_width = 965
-initial_height = 685
+initial_height = initial_width / ((1 + 5 ** 0.5) / 2)
+canvas_width = initial_width - 30
+canvas_height = initial_height - 135
 initial_x_position = 100
 initial_y_position = 100
-canvas_width = 935
-canvas_height = 550
 current_zoom = 2.0
 
 
@@ -246,6 +247,25 @@ class EditableTreeview(ttk.Treeview):
             areas.append([float(value) for value in values])
 
 
+# Tooltips using the helper function
+def create_tooltip(widget, message,
+                        delay=0.3,
+                        font=("Verdana", 9),
+                        border_width=1,
+                        border_color="gray50",
+                        corner_radius=6,
+                        justify="left"):
+
+    return CTkToolTip(widget,
+                      delay=delay,
+                      justify=justify,
+                      font=font,
+                      border_width=border_width,
+                      border_color=border_color,
+                      corner_radius=corner_radius,
+                      message=message)
+
+
 def browse_pdf_folder():
     global pdf_folder
 
@@ -358,6 +378,10 @@ def open_sample_pdf():
                                      fg_color="#B30B00", # hover_color="#860A00",
                                        width=25, height=10)
     close_pdf_button.place(x=143, y=35)  # Adjust the layout method as needed
+
+    tooltip_recent_pdf_button = create_tooltip(recent_pdf_button, "Open most recent opened template")
+    tooltip_close_pdf_button = create_tooltip(close_pdf_button, "Close the PDF/remove PDF in the Display")
+
 
 def start_rectangle(event):
     global original_coordinates, current_rectangle
@@ -539,7 +563,7 @@ def update_display():
 
 
 def display_sample_pdf(pdf_path):
-    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, pix
+    global current_zoom, canvas, zoom_slider, page, pdf_width, pdf_height, pix, pdf_document
 
     pdf_document = fitz.open(pdf_path)
     page = pdf_document[0]  # Access the first page
@@ -583,6 +607,25 @@ def display_sample_pdf(pdf_path):
 
     return pdf_width, pdf_height, page
 
+def close_pdf():
+    global canvas, pdf_document
+
+    # Remove the PDF image using its tag or ID
+    canvas.delete("pdf_image")
+
+    # Close the PDF document if it's open
+    try:
+        if pdf_document:
+            pdf_document.close()
+            print("PDF document closed.")
+        else:
+            print("No PDF document to close.")
+    except Exception as e:
+        print(f"Error closing PDF: {e}")
+
+    # Reset the reference to the PDF document
+    pdf_document = None
+
 
 def clear_all_areas():
     global areas, areas_tree
@@ -624,24 +667,7 @@ def start_extraction_thread():
     extraction_thread.start()
 
 
-def close_pdf():
-    global canvas, pdf_document
 
-    # Remove the PDF image using its tag or ID
-    canvas.delete("pdf_image")
-
-    # Close the PDF document if it's open
-    try:
-        if pdf_document:
-            pdf_document.close()
-            print("PDF document closed.")
-        else:
-            print("No PDF document to close.")
-    except Exception as e:
-        print(f"Error closing PDF: {e}")
-
-    # Reset the reference to the PDF document
-    pdf_document = None
 
 
 def extract_text():
@@ -1073,11 +1099,11 @@ def import_rectangles():
 def open_recent_pdf():
     global recent_pdf_path
 
-    if recent_pdf_path:
-        print(f"Re-opening Recent PDF: {recent_pdf_path}")
+    if recent_pdf_path and os.path.exists(recent_pdf_path):
+        print(f"Opening recent PDF: {recent_pdf_path}")
         display_sample_pdf(recent_pdf_path)
     else:
-        print("No recent PDF available to open.")
+        print(f"File not found: {recent_pdf_path}")
 
 
 
@@ -1225,21 +1251,20 @@ tree_scrollbar.pack(side="right", fill="y")
 areas_tree.configure(yscrollcommand=tree_scrollbar.set)
 
 
-
 # Import Rectangles Button
 import_button = ctk.CTkButton(root, text="Import Areas", command=import_rectangles,
                               font=(button_font, 9), width=88, height=10)
-import_button.place(x=650, y=10)
+import_button.place(x=650, y=15)
 
 # Export Rectangles Button
 export_button = ctk.CTkButton(root, text="Export Areas", command=export_rectangles,
                               font=(button_font, 9), width=88, height=10)
-export_button.place(x=650, y=35)
+export_button.place(x=650, y=40)
 
 # Clear Areas Button
 clear_areas_button = ctk.CTkButton(root, text="Clear Areas", command=clear_all_areas, font=(button_font, 9),
                                    fg_color=("gray29", "gray39"), width=88, height=10)
-clear_areas_button.place(x=650, y=60)
+clear_areas_button.place(x=650, y=65)
 
 
 
@@ -1268,7 +1293,7 @@ def version_text(event):
     window.title("---")
 
     # Create a Text widget
-    text_widget = ctk.CTkTextbox(window, wrap="word", width=300, height=300)
+    text_widget = ctk.CTkTextbox(window, wrap="word", width=400, height=247)
     text_widget.insert(tk.END, version_text)
 
     # Pack the Text widget and scrollbar
@@ -1283,5 +1308,39 @@ version_label.place(x=835, y=30)
 version_label.bind("<Button-1>", version_text)
 
 
+# Tooltips using the helper function
+tooltip_ocr_menu = create_tooltip(ocr_menu, """Off                  -   no OCR
+Text-first       -   Will OCR if extracted is blank
+OCR-All         -   OCR all selected Areas
+Text-Image   -   Extract Text along and a clipped image""")
+
+tooltip_dpi_menu = create_tooltip(dpi_menu, "DPI/resolution", font=("Verdana", 8))
+
+tooltip_pdf_folder_entry = create_tooltip(pdf_folder_entry, "Main folder where all PDF files are located")
+tooltip_pdf_folder_button = create_tooltip(pdf_folder_button, "Select the Main folder where all PDF files are located")
+
+tooltip_open_sample_button = create_tooltip(open_sample_button, "Open a PDF with the Title Block Template")
+
+tooltip_output_path_entry = create_tooltip(output_path_entry, "Folder where result will be saved")
+tooltip_output_path_button = create_tooltip(output_path_button, "Choose the folder where result will be saved")
+
+tooltip_include_subfolders_checkbox = create_tooltip(include_subfolders_checkbox,
+                                                     "If your Main Folder contains PDF in its subfolders then tick the box")
+
+tooltip_extract_button = create_tooltip(extract_button, "Start Extraction")
+
+tooltip_import_button = create_tooltip(import_button, "Load a saved Template of selected areas")
+tooltip_export_button = create_tooltip(export_button, "Save a Template of the selected areas")
+tooltip_clear_areas_button = create_tooltip(clear_areas_button, "Clear all selected areas")
+
+tooltip_optionmenu = create_tooltip(optionmenu, """Features:
+
+PDF/DWG List   -   List all PDF and DWG side by side to check if they have the same filename
+Directory List    -   List all files in the selected directory
+Bulk Renamer    -   Bulk rename all files with CSV - Column A: old names, Column B: new names""", font=("Verdana", 10))
+
+tooltip_version_label = create_tooltip(version_label, version_txt, font=("Verdana", 12))
+
 # Run the main loop
 root.mainloop()
+
