@@ -1,6 +1,7 @@
 '''
 Changelog 13
 - Tooltips added
+- Fixed updating rectangles
 
 Changelog 12
 - added Image extraction (would not work for PDFs with multiple pages)
@@ -119,6 +120,9 @@ canvas_height = initial_height - 135
 initial_x_position = 100
 initial_y_position = 100
 current_zoom = 2.0
+
+last_resize_time = 0 # Global variable to hold the time of the last resize event
+resize_delay = 0.35  # Delay in seconds before the function is called after the last resize event
 
 
 #Buttons/Widgets Styling
@@ -484,8 +488,6 @@ def on_zoom_slider_change(value):
     update_display()
 
 
-last_resize_time = 0 # Global variable to hold the time of the last resize event
-resize_delay = 0.35  # Delay in seconds before the function is called after the last resize event
 
 def check_resize(event):
     global last_resize_time, resize_delay
@@ -521,43 +523,52 @@ def on_windowresize(event=None):
 def update_display():
     global root, canvas, pdf_width, pdf_height, current_zoom, v_scrollbar, h_scrollbar, pix, page
 
-
     # Set canvas dimensions based on aspect ratio and desired size
     canvas_width = root.winfo_width() - 30
     canvas_height = root.winfo_height() - 135
 
     # Scrollbar reposition
     v_scrollbar.configure(command=canvas.yview, height=canvas_height)
+    h_scrollbar.place_configure(x=canvas_width + 14, y=100)
     h_scrollbar.configure(command=canvas.xview, width=canvas_width)
-    v_scrollbar.place_configure(x=canvas_width + 14, y=100)
     h_scrollbar.place_configure(x=10, y=canvas_height + 107)
 
     # Resize the canvas
     canvas.config(width=canvas_width, height=canvas_height)
 
-    # Get the currently displayed image on the canvas
-    current_image = getattr(canvas, 'pdf_image', None)
+    # Check if `page` is valid before continuing
+    if page is None:
+        print("No valid page to display.")
+        return
 
-    # Clear the existing image on the canvas
-    canvas.delete("all")
+    try:
+        # Get the currently displayed image on the canvas
+        current_image = getattr(canvas, 'pdf_image', None)
 
-    pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom))
-    img = pix.tobytes("ppm")  # extremely fast!
-    img_tk = tk.PhotoImage(data=img)
+        # Clear the existing image on the canvas
+        canvas.delete("all")
 
-    # Display the updated image on the canvas
-    canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
+        # Get the pixmap from the page
+        pix = page.get_pixmap(matrix=fitz.Matrix(current_zoom, current_zoom))
+        img = pix.tobytes("ppm")
+        img_tk = tk.PhotoImage(data=img)
 
-    # Update the image reference in the canvas
-    canvas.pdf_image = img_tk
+        # Display the updated image on the canvas
+        canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
 
-    # Adjust the canvas scroll region
-    zoomed_width = int(pdf_width * current_zoom)
-    zoomed_height = int(pdf_height * current_zoom)
+        # Update the image reference in the canvas
+        canvas.pdf_image = img_tk
 
-    # Configure canvas to use scrollbars
-    canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set,
-                  scrollregion=(0, 0, zoomed_width, zoomed_height))
+        # Adjust the canvas scroll region
+        zoomed_width = int(pdf_width * current_zoom)
+        zoomed_height = int(pdf_height * current_zoom)
+
+        # Configure canvas to use scrollbars
+        canvas.config(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set,
+                      scrollregion=(0, 0, zoomed_width, zoomed_height))
+
+    except ValueError as e:
+        print(f"Error updating display: {e}")
 
     update_rectangles()
 
@@ -665,9 +676,6 @@ def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width
 def start_extraction_thread():
     extraction_thread = threading.Thread(target=extract_text)
     extraction_thread.start()
-
-
-
 
 
 def extract_text():

@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from tkinter import Tk, filedialog
+from tkinter import Tk, filedialog,messagebox
 from openpyxl import load_workbook
 from datetime import datetime
 
@@ -46,7 +46,8 @@ def list_files(start_path):
 
     return file_dict
 
-def export_to_excel(file_dict, selected_folder, excel_file):
+
+def prepare_data_for_export(file_dict, selected_folder):
     pdf_dict = file_dict['PDF']
     dwg_dict = file_dict['DWG']
 
@@ -56,17 +57,19 @@ def export_to_excel(file_dict, selected_folder, excel_file):
     # Helper function to add or update entries in the combined_dict
     def update_combined_dict(file_name, pdf_data=None, dwg_data=None):
         if file_name not in combined_dict:
-            combined_dict[file_name] = {'File': file_name, 'PDF': None, 'DWG': None,
-                                        'FolderPDF': [], 'FolderDWG': [], 'PDFSize': None, 'DWGSize': None,
-                                        'PDFModified': None, 'DWGModified': None, 'PDFHasDuplicate': None,
-                                        'DWGHasDuplicate': None}
+            combined_dict[file_name] = {
+                'File': file_name, 'PDF': None, 'DWG': None,
+                'FolderPDF': [], 'FolderDWG': [], 'PDFSize': None, 'DWGSize': None,
+                'PDFModified': None, 'DWGModified': None, 'PDFHasDuplicate': None,
+                'DWGHasDuplicate': None
+            }
 
         # Add PDF information
         if pdf_data:
             pdf_name = pdf_data['name']
             combined_dict[file_name]['PDF'] = pdf_name
-            combined_dict[file_name]['PDFSize'] = pdf_data['size']  # Add file size
-            combined_dict[file_name]['PDFModified'] = pdf_data['modified']  # Add date modified
+            combined_dict[file_name]['PDFSize'] = pdf_data['size']
+            combined_dict[file_name]['PDFModified'] = pdf_data['modified']
 
             # Append the folder path to FolderPDF without overwriting
             pdf_folder = os.path.relpath(os.path.dirname(pdf_data['path']), selected_folder)
@@ -77,8 +80,8 @@ def export_to_excel(file_dict, selected_folder, excel_file):
         if dwg_data:
             dwg_name = dwg_data['name']
             combined_dict[file_name]['DWG'] = dwg_name
-            combined_dict[file_name]['DWGSize'] = dwg_data['size']  # Add file size
-            combined_dict[file_name]['DWGModified'] = dwg_data['modified']  # Add date modified
+            combined_dict[file_name]['DWGSize'] = dwg_data['size']
+            combined_dict[file_name]['DWGModified'] = dwg_data['modified']
 
             # Append the folder path to FolderDWG without overwriting
             dwg_folder = os.path.relpath(os.path.dirname(dwg_data['path']), selected_folder)
@@ -97,13 +100,17 @@ def export_to_excel(file_dict, selected_folder, excel_file):
         pdf_info = pdf_dict.get(dwg_path, None)
         update_combined_dict(file_name, pdf_info, {'path': dwg_path, **dwg_info})
 
-    # Create a DataFrame from the combined dictionary
+    # Create and return a DataFrame from the combined dictionary
     df = pd.DataFrame.from_dict(combined_dict, orient='index').reset_index(drop=True)
 
     # Flatten folder lists into a readable format for Excel
     df['FolderPDF'] = df['FolderPDF'].apply(lambda x: ', '.join(x) if x else None)
     df['FolderDWG'] = df['FolderDWG'].apply(lambda x: ', '.join(x) if x else None)
 
+    return df
+
+
+def save_to_excel(df, excel_file):
     # Save the final DataFrame to Excel
     df.to_excel(excel_file, index=False)
 
@@ -115,6 +122,7 @@ def export_to_excel(file_dict, selected_folder, excel_file):
     wb.save(excel_file)
 
     print(f"Directory listing exported to {excel_file}")
+
 
 def pdf_dwg_counter():
     # Choose the directory using a dialog box
@@ -128,8 +136,16 @@ def pdf_dwg_counter():
         excel_file_path = choose_file_save_location()
 
         if excel_file_path:
-            # Export the dictionary to the specified Excel file
-            export_to_excel(file_dict, directory_path, excel_file_path)
+            # Prepare the data
+            df = prepare_data_for_export(file_dict, directory_path)
+
+            # Save the data to the specified Excel file
+            save_to_excel(df, excel_file_path)
+
+            # Prompt to open the Excel file
+            open_file = messagebox.askyesno("Open Excel File", f"Do you want to open the Excel file now?")
+            if open_file:
+                os.startfile(excel_file_path)
         else:
             print("No file location selected.")
     else:
