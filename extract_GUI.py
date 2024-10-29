@@ -2,6 +2,8 @@
 Changelog 13
 - Tooltips added
 - Fixed updating rectangles
+- Autoscroll
+- Right Click to Delete Rectangle
 
 Changelog 12
 - added Image extraction (would not work for PDFs with multiple pages)
@@ -111,6 +113,7 @@ enable_ocr = None
 tessdata_folder = None
 recent_pdf_path = None
 pdf_document = None
+selected_rectangle_id = None
 
 # Initial Window and Display settings
 initial_width = 965
@@ -258,7 +261,8 @@ def create_tooltip(widget, message,
                         border_width=1,
                         border_color="gray50",
                         corner_radius=6,
-                        justify="left"):
+                        justify="left"
+                   ):
 
     return CTkToolTip(widget,
                       delay=delay,
@@ -395,6 +399,62 @@ def start_rectangle(event):
     current_rectangle = canvas.create_rectangle(x, y, x, y, outline="red", width=2)
 
 
+def auto_scroll_canvas(x, y):
+    scroll_margin = 20  # Distance from the canvas edge to start scrolling
+    scroll_speed = 1  # Smaller increments for smoother scrolling
+
+    # Check if the mouse is close to the edges and scroll in small increments
+    if x >= canvas.winfo_width() - scroll_margin:
+        canvas.xview_scroll(scroll_speed, "units")
+    elif x <= scroll_margin:
+        canvas.xview_scroll(-scroll_speed, "units")
+
+    if y >= canvas.winfo_height() - scroll_margin:
+        canvas.yview_scroll(scroll_speed, "units")
+    elif y <= scroll_margin:
+        canvas.yview_scroll(-scroll_speed, "units")
+
+
+def delete_rectangle():
+    global selected_rectangle_id, areas, rectangle_list, areas_tree
+
+    if selected_rectangle_id and selected_rectangle_id in rectangle_list:
+        # Get the index of the rectangle in rectangle_list
+        rect_index = rectangle_list.index(selected_rectangle_id)
+
+        # Delete the rectangle from canvas
+        canvas.delete(selected_rectangle_id)
+
+        # Remove the rectangle data from areas and rectangle_list
+        del areas[rect_index]
+        del rectangle_list[rect_index]
+
+        # Update the Treeview to reflect the deletion
+        areas_tree.delete(areas_tree.get_children()[rect_index])
+
+        # Clear the selected rectangle ID
+        selected_rectangle_id = None
+        print(f"Deleted rectangle at index {rect_index}")
+    else:
+        print("No rectangle selected for deletion.")
+
+
+def show_popup_menu(event):
+    global selected_rectangle_id
+
+    # Get coordinates where right-click occurred
+    x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+
+    # Find the closest rectangle item at the clicked coordinates
+    item = canvas.find_closest(x, y)
+    if item and item[0] in rectangle_list:
+        # Only show the menu if a rectangle is clicked
+        selected_rectangle_id = item[0]
+        popup_menu.post(event.x_root, event.y_root)  # Show the popup menu at mouse position
+    else:
+        selected_rectangle_id = None  # Clear selection if not clicking a rectangle
+
+
 def draw_rectangle(event):
     global original_coordinates, current_rectangle
     # Check if there's a current rectangle
@@ -402,6 +462,9 @@ def draw_rectangle(event):
         # Update the rectangle coordinates as the mouse is dragged
         x, y = canvas.canvasx(event.x), canvas.canvasy(event.y)
         canvas.coords(current_rectangle, original_coordinates[0], original_coordinates[1], x, y)
+
+        # Call the auto-scroll function with the mouse coordinates (no other replacements here)
+        auto_scroll_canvas(event.x, event.y)
 
 
 def end_rectangle(event):
@@ -481,12 +544,10 @@ def update_rectangles():
         areas_tree.insert("", "end", values=(x0, y0, x1, y1))
 
 
-
 def on_zoom_slider_change(value):
     global current_zoom
     current_zoom = float(value)
     update_display()
-
 
 
 def check_resize(event):
@@ -517,7 +578,6 @@ def on_windowresize(event=None):
         print(f'Display Resized: {root.winfo_width() - 30}, {root.winfo_height() - 135}')
         last_resize_time = time.time()
         update_display()
-
 
 
 def update_display():
@@ -618,6 +678,7 @@ def display_sample_pdf(pdf_path):
 
     return pdf_width, pdf_height, page
 
+
 def close_pdf():
     global canvas, pdf_document
 
@@ -652,12 +713,13 @@ def clear_all_areas():
 
     print("Cleared All Areas")
 
-# Define the helper function
+
 def get_cell_dimensions(sheet, cell):
     col_letter = get_column_letter(cell.column)
     col_width = sheet.column_dimensions[col_letter].width or 8.43  # Default width if not set
     row_height = sheet.row_dimensions[cell.row].height or 15  # Default height if not set
     return col_width * 7, row_height  # Approximate width in pixels
+
 
 def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width):
     if rotation == 0:
@@ -927,6 +989,8 @@ def after_command():
     root.bind("<Configure>", check_resize)
     canvas.bind("<MouseWheel>", on_mousewheel)
     canvas.bind("<Shift-MouseWheel>", on_mousewheel)  # Shift + Scroll
+    # Bind right-click on the canvas to display the popup menu
+    canvas.bind("<Button-3>", show_popup_menu)
     pdf_folder_entry.bind("<KeyRelease>", update_pdf_folder)
     output_path_entry.bind("<KeyRelease>", update_output_path)
 
@@ -1029,7 +1093,6 @@ def dpi_callback(choice):
     return dpi_value
 
 
-# Callback function for the option menu
 def optionmenu_callback(choice):
     print("Option:", choice)
 
@@ -1069,6 +1132,7 @@ def export_rectangles():
     else:
         print("Export canceled by the user.")
 
+
 def import_rectangles():
     global areas, canvas, current_zoom, rectangle_list, areas_tree
 
@@ -1104,6 +1168,7 @@ def import_rectangles():
     else:
         print("Import canceled by the user.")
 
+
 def open_recent_pdf():
     global recent_pdf_path
 
@@ -1119,6 +1184,10 @@ def open_recent_pdf():
 root = ctk.CTk()
 root.title("Xtractor by RRR")
 root.geometry(f"{initial_width}x{initial_height}+{initial_x_position}+{initial_y_position}")
+
+# Create the popup menu
+popup_menu = tk.Menu(root, tearoff=0)
+popup_menu.add_command(label="Delete Rectangle", command=lambda: delete_rectangle())
 
 #OCR Widgets
 ocr_menu_var = ctk.StringVar(value="OCR-OFF")
