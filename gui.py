@@ -352,14 +352,13 @@ class XtractorGUI:
 
         # Gather necessary data and start extraction
         extractor = TextExtractor(
-            root=self.root,
             pdf_folder=self.pdf_folder,
             output_excel_path=self.output_excel_path,
             areas=self.pdf_viewer.areas,
             ocr_settings=self.ocr_settings,
             include_subfolders=self.include_subfolders
         )
-        extractor.start_extraction_thread()
+        extractor.start_extraction()
 
     def optionmenu_callback(self, choice):
         if choice == "PDF/DWG List":
