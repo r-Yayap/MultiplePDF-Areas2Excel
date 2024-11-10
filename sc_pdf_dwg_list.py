@@ -150,3 +150,7 @@ def pdf_dwg_counter():
             print("No file location selected.")
     else:
         print("No directory selected.")
+
+
+if __name__ == "__main__":
+    pdf_dwg_counter()

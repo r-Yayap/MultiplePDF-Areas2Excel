@@ -90,3 +90,7 @@ def generate_file_list_and_excel():
             output_excel_path = os.path.join(os.path.dirname(output_file_name), output_file_name)
             create_excel_file(files, output_excel_path)
             print(f"Excel file created at {output_excel_path}")
+
+
+if __name__ == "__main__":
+    generate_file_list_and_excel()

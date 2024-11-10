@@ -1,16 +1,24 @@
 # gui.py
 
+import importlib
 import json
-import customtkinter as ctk
+import multiprocessing
+import os
+import time
 from tkinter import filedialog, messagebox, StringVar
+
+import customtkinter as ctk
+
 from constants import *
-from utils import create_tooltip, EditableTreeview
-from pdf_viewer import PDFViewer
 from extractor import TextExtractor
-from sc_pdf_dwg_list import pdf_dwg_counter
-from sc_dir_list import generate_file_list_and_excel
-from sc_bulk_rename import bulk_rename_gui
+from pdf_viewer import PDFViewer
+from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
+
+import sc_bulk_rename
+import sc_dir_list
+import sc_merger
+import sc_pdf_dwg_list
 
 
 class XtractorGUI:
@@ -241,7 +249,7 @@ class XtractorGUI:
 
         # Option Menu for Other Features
         self.optionmenu_var = StringVar(value="Other Features")
-        self.optionmenu = ctk.CTkOptionMenu(self.root, values=["PDF/DWG List", "Directory List", "Bulk Renamer"],
+        self.optionmenu = ctk.CTkOptionMenu(self.root, values=list(OPTION_ACTIONS.keys()),
                                             command=self.optionmenu_callback, font=(BUTTON_FONT, 9),
                                             variable=self.optionmenu_var, width=105, height=15)
         self.optionmenu.place(x=850, y=10)
@@ -271,7 +279,6 @@ class XtractorGUI:
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
         create_tooltip(self.optionmenu, "Select additional features")
 
-    # OCR Menu Callback
     def ocr_menu_callback(self, choice):
         print("OCR menu dropdown clicked:", choice)
 
@@ -306,12 +313,9 @@ class XtractorGUI:
         self.ocr_settings['enable_ocr'] = choice
         print("OCR mode:", self.ocr_settings['enable_ocr'])
 
-    # DPI Menu Callback
     def dpi_callback(self, dpi_value):
         self.ocr_settings['dpi_value'] = int(dpi_value)
         print(f"DPI set to: {dpi_value}")
-
-    # Other methods as per previous code
 
     def browse_pdf_folder(self):
         self.pdf_folder = filedialog.askdirectory()
@@ -347,10 +351,39 @@ class XtractorGUI:
         self.include_subfolders = self.include_subfolders_var.get()
 
     def start_extraction(self):
+        """Initiates the extraction process with a progress bar."""
         # Close any open PDF before extraction
         self.pdf_viewer.close_pdf()
 
-        # Gather necessary data and start extraction
+        # Record start time
+        self.start_time = time.time()
+
+        # Create the progress window
+        self.progress_window = ctk.CTkToplevel(self.root)
+        self.progress_window.title("Progress")
+        self.progress_window.geometry("300x100")
+
+        # Make the progress window stay on top
+        self.progress_window.transient(self.root)  # Set as a child of the root window
+        self.progress_window.grab_set()  # Modal window
+        self.progress_window.attributes('-topmost', True)  # Keep it on top
+
+        # Add a progress label
+        progress_label = ctk.CTkLabel(self.progress_window, text="Processing PDFs...")
+        progress_label.pack(pady=10)
+
+        # Add a progress bar to the window
+        self.progress_var = ctk.DoubleVar(value=0)
+        self.progress_bar = ctk.CTkProgressBar(self.progress_window, variable=self.progress_var,
+                                               orientation="horizontal", width=250)
+        self.progress_bar.pack(pady=20)
+
+        # Set up Manager for shared data structures
+        manager = multiprocessing.Manager()
+        progress_list = manager.list()  # List to simulate a queue
+        total_files = manager.Value('i', 0)  # Track total files
+
+        # Start extraction in a new Process
         extractor = TextExtractor(
             pdf_folder=self.pdf_folder,
             output_excel_path=self.output_excel_path,
@@ -358,15 +391,51 @@ class XtractorGUI:
             ocr_settings=self.ocr_settings,
             include_subfolders=self.include_subfolders
         )
-        extractor.start_extraction()
+        extraction_process = multiprocessing.Process(target=extractor.start_extraction,
+                                                     args=(progress_list, total_files))
+        extraction_process.start()
+
+        # Monitor progress
+        self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
+
+    def update_progress(self, progress_list, total_files, extraction_process):
+        """Updates the progress bar based on the progress of PDF extraction."""
+        # Avoid division by zero
+        if total_files.value > 0:
+            current_progress = len(progress_list) / total_files.value
+            self.progress_var.set(current_progress)
+
+        # Check if extraction process is alive
+        if extraction_process.is_alive():
+            # Repeat check after 100 ms
+            self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
+        else:
+            # Ensure progress bar is complete and close progress window
+            self.progress_var.set(1)
+            self.progress_window.destroy()
+
+            # Calculate the elapsed time
+            end_time = time.time()
+            elapsed_time = end_time - self.start_time
+            formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
+
+            # Ask to open Excel file
+            response = messagebox.askyesno(
+                "Extraction Complete",
+                f"PDF extraction completed successfully in {formatted_time}.\nWould you like to open the Excel file?"
+            )
+
+            # Open the Excel file if the user clicks 'Yes'
+            if response:
+                os.startfile(self.output_excel_path)
 
     def optionmenu_callback(self, choice):
-        if choice == "PDF/DWG List":
-            pdf_dwg_counter()
-        elif choice == "Directory List":
-            generate_file_list_and_excel()
-        elif choice == "Bulk Renamer":
-            bulk_rename_gui()
+        """Execute the corresponding function based on the selected option."""
+        action = OPTION_ACTIONS.get(choice)
+        if action:
+            action()  # Directly call the function
+        else:
+            messagebox.showerror("Error", f"No action found for {choice}")
 
     def on_window_resize(self, event):
         """Handles window resizing and adjusts the canvas dimensions."""

@@ -25,10 +25,16 @@ DPI_OPTIONS = {
     "1200": 1200
 }
 
+from sc_pdf_dwg_list import pdf_dwg_counter
+from sc_dir_list import generate_file_list_and_excel
+from sc_merger import create_merger_gui
+from sc_bulk_rename import bulk_rename_gui
+
 OPTION_ACTIONS = {
-    "PDF/DWG List": "pdf_dwg_counter",
-    "Directory List": "generate_file_list_and_excel",
-    "Bulk Renamer": "bulk_rename_gui"
+    "LOD Merger": create_merger_gui,
+    "PDF/DWG List": pdf_dwg_counter,
+    "Directory List": generate_file_list_and_excel,
+    "Bulk Renamer": bulk_rename_gui
 }
 
 
@@ -45,6 +51,8 @@ TESSDATA_FOLDER = None
 '''
 Version 00
 - subprocessing (now x5 speed!!)
+- Progress bar added again
+- List of Drawings merger added on other features
 
 Start of v0.240915
 
