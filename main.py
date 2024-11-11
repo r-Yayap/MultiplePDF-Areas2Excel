@@ -50,8 +50,7 @@ The following provides an overview of each module and how they work together:
 
 This modular setup enables easy maintainability, allowing new features or changes with minimal impact on other modules.
 """
-
-
+import multiprocessing
 
 import customtkinter as ctk
 from gui import XtractorGUI
@@ -71,5 +70,7 @@ def main():
     app = XtractorApp()
     app.run()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    multiprocessing.freeze_support()  # This helps PyInstaller handle multiprocessing.
     main()
+
