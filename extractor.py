@@ -5,12 +5,14 @@ import os
 import multiprocessing
 from datetime import datetime
 from openpyxl import Workbook
-from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
 import pymupdf as fitz
 from utils import adjust_coordinates_for_rotation, find_tessdata
+import re
+from openpyxl.styles import Font
+
 
 
 class TextExtractor:
@@ -27,6 +29,22 @@ class TextExtractor:
 
         if not os.path.exists(self.temp_image_folder):
             os.makedirs(self.temp_image_folder)
+
+    def clean_text(self, text):
+        """Cleans text by replacing newlines, stripping, and removing illegal characters."""
+        replacement_char = '■'  # Character to replace prohibited control characters
+
+        # Step 1: Replace newline and carriage return characters with a space
+        text = text.replace('\n', ' ').replace('\r', ' ')
+
+        # Step 2: Strip leading and trailing whitespace
+        text = text.strip()
+
+        # Step 3: Replace prohibited control characters with a replacement character
+        text = re.sub(r'[\x00-\x1F\x7F-\x9F]', replacement_char, text)
+
+        # Step 4: Remove extra spaces between words
+        return re.sub(r'\s+', ' ', text)
 
     def start_extraction(self, progress_list, total_files):
         """Starts the extraction process using multiprocessing with progress tracking."""
@@ -79,6 +97,9 @@ class TextExtractor:
             print(f"Error processing {pdf_path}: {e}")
             return None
 
+
+
+
     def get_pdf_files(self):
         """Gathers all PDF files within the specified folder."""
         pdf_files = []
@@ -89,6 +110,8 @@ class TextExtractor:
                 [os.path.join(root_folder, f) for f in files if f.lower().endswith('.pdf')]
             )
         return pdf_files
+
+
 
     def extract_text_from_area(self, page, area_coordinates, pdf_path, page_number, area_index):
         """Extracts text or image content from a specified area in a PDF page."""
@@ -125,10 +148,25 @@ class TextExtractor:
                 if not text_area.strip():
                     text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
 
-            text_area = text_area.replace('\n', ' ')
+            # Clean the extracted text
+            text_area = self.clean_text(text_area)
+
+
+        except fitz.EmptyFileError as e:
+            print(f"Error: {pdf_path} is empty or corrupted: {e}")
+            text_area = "Corrupted File"
+
+        except fitz.FileNotFoundError as e:
+            print(f"Error: {pdf_path} not found: {e}")
+            text_area = "File Not Found"
+
+        except RuntimeError as e:
+            print(f"Runtime error on page {page_number + 1} in {pdf_path}: {e}")
+            text_area = "Error Loading Page"
 
         except Exception as e:
-            print(f"Error extracting text from area {area_index} in {pdf_path}, Page {page_number + 1}: {e}")
+            print(f"Unexpected error extracting text from area {area_index} in {pdf_path}, Page {page_number + 1}: {e}")
+            text_area = "Extraction Error"
 
         return text_area, img_path
 
@@ -171,7 +209,7 @@ class TextExtractor:
                             cell.hyperlink = Hyperlink(
                                 target=f"file://{os.path.abspath(os.path.join(self.pdf_folder, folder, filename))}",
                                 ref=cell.coordinate)
-                            cell.font = Font(color="0000FF")
+                            cell.style = "Hyperlink"
 
                     # Write extracted areas to columns starting from 6
                     for i, (text, img_path) in enumerate(extracted_areas):
@@ -179,11 +217,14 @@ class TextExtractor:
                         column_title = self.areas[i].get("title", f"Area {i + 1}")
                         col_index = self.headers.index(column_title) + 1  # Excel columns are 1-based
 
-                        # Place text in the designated column
+                        # Place text in the designated column, checking for OCR and cleaning
                         text_cell = ws.cell(row=row_index, column=col_index)
-                        text_cell.value = text.replace("_OCR_", "")
+                        cleaned_text = self.clean_text(text.replace("_OCR_", ""))
+                        text_cell.value = cleaned_text
+
+                        # Highlight OCR text in red if "_OCR_" was detected
                         if "_OCR_" in text:
-                            text_cell.font = Font(color="FF3300")  # Highlight OCR text
+                            text_cell.font = Font(color="FF3300")
 
                         # If there is an associated image, add it to the cell
                         if img_path:
@@ -191,14 +232,18 @@ class TextExtractor:
                             img.anchor = f"{get_column_letter(col_index)}{row_index}"
                             ws.add_image(img)
 
-                except ValueError as e:
-                    print(f"Error consolidating data for row: {e}")
-                    continue
+                except Exception as e:
+                    print(f"Unexpected error consolidating data for {filename}: {e}")
+                    ws.append([folder, filename, "Error"] + [""] * len(self.areas))
 
         # Save to the output path
-        wb.save(self.output_excel_path)
-        print(f"Consolidated results saved to {self.output_excel_path}")
+        try:
+            wb.save(self.output_excel_path)
+            print(f"Consolidated results saved to {self.output_excel_path}")
+        except Exception as e:
+            print(f"Error saving Excel file: {e}")
 
         # Cleanup temporary images
         if os.path.exists(self.temp_image_folder):
             shutil.rmtree(self.temp_image_folder)
+
