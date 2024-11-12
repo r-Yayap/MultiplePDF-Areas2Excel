@@ -168,7 +168,9 @@ class TextExtractor:
                         cell = ws.cell(row=row_index, column=col)
                         cell.value = data
                         if col == 4:  # Set filename as a hyperlink in column 4
-                            cell.hyperlink = Hyperlink(target=filename, ref=cell.coordinate)
+                            cell.hyperlink = Hyperlink(
+                                target=f"file://{os.path.abspath(os.path.join(self.pdf_folder, folder, filename))}",
+                                ref=cell.coordinate)
                             cell.font = Font(color="0000FF")
 
                     # Write extracted areas to columns starting from 6
