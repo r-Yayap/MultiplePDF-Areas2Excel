@@ -12,7 +12,7 @@ import pymupdf as fitz
 from utils import adjust_coordinates_for_rotation, find_tessdata
 import re
 from openpyxl.styles import Font
-
+from urllib.parse import unquote
 
 
 class TextExtractor:
@@ -66,6 +66,15 @@ class TextExtractor:
     def process_single_pdf(self, pdf_path, progress_list, total_files):
         """Processes a single PDF file, extracting text and images as necessary."""
         try:
+            # Ensure the file exists and is not empty
+            if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+                print(f"Skipping missing or empty file: {pdf_path}")
+                result_rows = [["Error", "File not found or empty", "", pdf_path, "",
+                                "FileNotFoundError: File not found or empty"]]
+                progress_list.append(result_rows)
+                return result_rows
+
+            # Open the PDF file
             pdf_document = fitz.open(pdf_path)
             file_size = os.path.getsize(pdf_path)
             last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
@@ -74,18 +83,29 @@ class TextExtractor:
 
             result_rows = []  # Collect each page's data here
 
+            # Process each page safely
             for page_number in range(pdf_document.page_count):
-                page = pdf_document[page_number]
-                extracted_areas = []
+                try:
+                    page = pdf_document[page_number]
+                    extracted_areas = []
 
-                for area_index, area in enumerate(self.areas):
-                    coordinates = area["coordinates"]
-                    text_area, img_path = self.extract_text_from_area(page, coordinates, pdf_path, page_number,
-                                                                      area_index)
-                    extracted_areas.append((text_area or "", img_path))
+                    for area_index, area in enumerate(self.areas):
+                        coordinates = area["coordinates"]
+                        text_area, img_path = self.extract_text_from_area(page, coordinates, pdf_path, page_number,
+                                                                          area_index)
 
-                # Append all relevant data for this page as a row in results
-                result_rows.append([file_size, last_modified_date, folder, filename, page_number + 1, extracted_areas])
+                        # If text_area is empty, treat it as blank rather than "Error"
+                        extracted_areas.append((text_area if text_area != "Error" else "", img_path or ""))
+
+                    # Append all relevant data for this page as a row in results
+                    result_rows.append(
+                        [file_size, last_modified_date, folder, filename, page_number + 1, extracted_areas])
+
+                except Exception as e:
+                    print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
+                    result_rows.append(
+                        [file_size, last_modified_date, folder, filename, page_number + 1, "Error processing page",
+                         str(e)])
 
             pdf_document.close()
 
@@ -95,10 +115,11 @@ class TextExtractor:
 
         except Exception as e:
             print(f"Error processing {pdf_path}: {e}")
-            return None
-
-
-
+            # Add an error placeholder for this file in results
+            result_rows = [
+                [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
+            progress_list.append(result_rows)
+            return result_rows
 
     def get_pdf_files(self):
         """Gathers all PDF files within the specified folder."""
@@ -110,8 +131,6 @@ class TextExtractor:
                 [os.path.join(root_folder, f) for f in files if f.lower().endswith('.pdf')]
             )
         return pdf_files
-
-
 
     def extract_text_from_area(self, page, area_coordinates, pdf_path, page_number, area_index):
         """Extracts text or image content from a specified area in a PDF page."""
@@ -129,7 +148,7 @@ class TextExtractor:
             # OCR only if there's no text
             elif self.ocr_settings["enable_ocr"] == "Text-first":
                 text_area = page.get_text("text", clip=adjusted_coordinates)
-                if not text_area.strip():
+                if not text_area.strip():  # Perform OCR only if text_area is empty
                     text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
 
             # OCR for all areas, no images saved
@@ -151,24 +170,24 @@ class TextExtractor:
             # Clean the extracted text
             text_area = self.clean_text(text_area)
 
+            # Return empty string if text_area is blank after cleaning
+            return (text_area if text_area.strip() else "", img_path)
 
         except fitz.EmptyFileError as e:
             print(f"Error: {pdf_path} is empty or corrupted: {e}")
-            text_area = "Corrupted File"
+            return f"EmptyFileError: {str(e)}", None
 
         except fitz.FileNotFoundError as e:
             print(f"Error: {pdf_path} not found: {e}")
-            text_area = "File Not Found"
+            return f"FileNotFoundError: {str(e)}", None
 
         except RuntimeError as e:
             print(f"Runtime error on page {page_number + 1} in {pdf_path}: {e}")
-            text_area = "Error Loading Page"
+            return f"RuntimeError: {str(e)}", None
 
         except Exception as e:
             print(f"Unexpected error extracting text from area {area_index} in {pdf_path}, Page {page_number + 1}: {e}")
-            text_area = "Extraction Error"
-
-        return text_area, img_path
+            return f"UnexpectedError: {str(e)}", None
 
     def apply_ocr(self, page, coordinates, pdf_path, page_number, area_index):
         """Applies OCR on a specified area and returns the extracted text and image path."""
@@ -207,19 +226,23 @@ class TextExtractor:
                         cell.value = data
                         if col == 4:  # Set filename as a hyperlink in column 4
                             cell.hyperlink = Hyperlink(
-                                target=f"file://{os.path.abspath(os.path.join(self.pdf_folder, folder, filename))}",
-                                ref=cell.coordinate)
+                                target=unquote(
+                                    f"file://{os.path.abspath(os.path.join(self.pdf_folder, folder, filename))}"),
+                                ref=cell.coordinate
+                            )
+
                             cell.style = "Hyperlink"
 
                     # Write extracted areas to columns starting from 6
-                    for i, (text, img_path) in enumerate(extracted_areas):
+                    for i, (text, img_path) in enumerate(
+                            extracted_areas if isinstance(extracted_areas, list) else [(extracted_areas, None)]):
                         # Find the appropriate column index for the title assigned to this area
                         column_title = self.areas[i].get("title", f"Area {i + 1}")
                         col_index = self.headers.index(column_title) + 1  # Excel columns are 1-based
 
                         # Place text in the designated column, checking for OCR and cleaning
                         text_cell = ws.cell(row=row_index, column=col_index)
-                        cleaned_text = self.clean_text(text.replace("_OCR_", ""))
+                        cleaned_text = self.clean_text(text.replace("_OCR_", "")) if text != "Error" else "Error"
                         text_cell.value = cleaned_text
 
                         # Highlight OCR text in red if "_OCR_" was detected
@@ -227,7 +250,7 @@ class TextExtractor:
                             text_cell.font = Font(color="FF3300")
 
                         # If there is an associated image, add it to the cell
-                        if img_path:
+                        if img_path and img_path != "Error":
                             img = ExcelImage(img_path)
                             img.anchor = f"{get_column_letter(col_index)}{row_index}"
                             ws.add_image(img)
@@ -246,4 +269,5 @@ class TextExtractor:
         # Cleanup temporary images
         if os.path.exists(self.temp_image_folder):
             shutil.rmtree(self.temp_image_folder)
+
 
