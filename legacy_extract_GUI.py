@@ -1,4 +1,8 @@
 '''
+Changelog 14
+--fixed multiple pages extraction
+--fixed autoscroll speed
+
 Changelog 13
 - Tooltips added
 - Fixed updating rectangles
@@ -92,7 +96,7 @@ import sc_bulk_rename as brn
 from appdirs import user_data_dir
 
 # Label to display version
-version_txt = "Version 0.231219-13"
+version_txt = "Version 0.231219-14"
 
 # Global variables
 include_subfolders = False
@@ -399,20 +403,29 @@ def start_rectangle(event):
     current_rectangle = canvas.create_rectangle(x, y, x, y, outline="red", width=2)
 
 
+last_scroll_time = time.time()
+
 def auto_scroll_canvas(x, y):
-    scroll_margin = 20  # Distance from the canvas edge to start scrolling
-    scroll_speed = 1  # Smaller increments for smoother scrolling
+    global last_scroll_time
+    scroll_margin = 20
+    scroll_speed = 1
+    delay = 0.05  # Delay in seconds between scrolls
 
-    # Check if the mouse is close to the edges and scroll in small increments
-    if x >= canvas.winfo_width() - scroll_margin:
-        canvas.xview_scroll(scroll_speed, "units")
-    elif x <= scroll_margin:
-        canvas.xview_scroll(-scroll_speed, "units")
+    current_time = time.time()
+    if current_time - last_scroll_time >= delay:
+        # Only scroll if the delay period has passed
+        if x >= canvas.winfo_width() - scroll_margin:
+            canvas.xview_scroll(scroll_speed, "units")
+        elif x <= scroll_margin:
+            canvas.xview_scroll(-scroll_speed, "units")
 
-    if y >= canvas.winfo_height() - scroll_margin:
-        canvas.yview_scroll(scroll_speed, "units")
-    elif y <= scroll_margin:
-        canvas.yview_scroll(-scroll_speed, "units")
+        if y >= canvas.winfo_height() - scroll_margin:
+            canvas.yview_scroll(scroll_speed, "units")
+        elif y <= scroll_margin:
+            canvas.yview_scroll(-scroll_speed, "units")
+
+        last_scroll_time = current_time
+
 
 
 def delete_rectangle():
@@ -745,65 +758,48 @@ def extract_text():
     start_time = time.time()
     global areas, ws, pdf_height, pdf_width, include_subfolders, enable_ocr, tessdata_folder, dpi_value
 
-    # Check if there are areas defined
     if not areas:
-        no_areas = messagebox.showwarning("Error", "No areas defined. Please draw rectangles.")
-        print("No areas defined. Please draw rectangles.")
+        messagebox.showwarning("Error", "No areas defined. Please draw rectangles.")
         return
 
-    # Retrieve values from Entry widgets
     pdf_folder_value = pdf_folder_entry.get()
     output_path_value = output_path_entry.get()
 
-    # Check if both Entry widgets have values
-    if not pdf_folder_value or not output_path_value:
-        print("Please enter values in both Entry fields.")
-        return
-
-    # Check if the folder path is valid
-    if not os.path.isdir(pdf_folder_value):
+    if not pdf_folder_value or not output_path_value or not os.path.isdir(pdf_folder_value):
         messagebox.showerror("Invalid Folder", "The specified folder does not exist.")
         return
-
-    # Determine the total number of iterations (PDF files)
-    if include_subfolders:
-        total_files = sum(1 for root, _, files in os.walk(pdf_folder) for file in files if file.lower().endswith('.pdf'))
-    else:
-        _, _, files = next(os.walk(pdf_folder))
-        total_files = sum(1 for file in files if file.lower().endswith('.pdf'))
 
     # Initialize Excel workbook and sheet
     wb = Workbook()
     ws = wb.active
-    # Add headers for Folder, Filename, Size, Date Modified, and areas
-    ws.append(["Size (Bytes)", "Date Last Modified", "Folder", "Filename"] + [f"Area {i + 1}" for i in range(len(areas))])
+    ws.append(["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page Number"] +
+              [f"Area {i + 1}" for i in range(len(areas))])
 
-    # Progress window
     progress_window = ctk.CTkToplevel(root)
     progress_window.title("Extraction in Progress...")
     progress_window.geometry("300x90")
     progress_window.attributes('-topmost', True)
     progress_window.lift()
 
-    # Label to display current progress
     progress_label = ctk.CTkLabel(progress_window, text="Loading PDFs...")
     progress_label.pack()
 
-    # Create a progress bar
     progress = ctk.CTkProgressBar(progress_window, orientation="horizontal", mode="determinate",
                                   progress_color='limegreen', width=150, height=15)
     progress.pack()
 
-    total_label = ctk.CTkLabel(progress_window, text=f"Stretch for a bit or get a cup of tea!",
-                               padx=0, pady=13, anchor="nw", font=("Helvetica", 12))
-    total_label.pack()
+    # Determine the total number of iterations (PDF files)
+    if include_subfolders:
+        total_files = sum(
+            1 for root, _, files in os.walk(pdf_folder) for file in files if file.lower().endswith('.pdf'))
+    else:
+        _, _, files = next(os.walk(pdf_folder))
+        total_files = sum(1 for file in files if file.lower().endswith('.pdf'))
 
-    # Iterate through PDFs
     processed_files = 0
-    temp_image_paths = []
+    temp_image_paths = []  # Track temporary images if images are used in extraction
 
     for root_folder, subfolders, files in os.walk(pdf_folder):
-        # Check if subfolders should be included
         if not include_subfolders:
             subfolders.clear()
 
@@ -812,144 +808,77 @@ def extract_text():
                 pdf_path = os.path.join(root_folder, pdf_filename)
 
                 try:
-                    # Extract file size and last modified date
-                    file_size = os.path.getsize(pdf_path)  # File size in bytes
-                    last_modified_timestamp = os.path.getmtime(pdf_path)
-                    last_modified_date = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                    file_size = os.path.getsize(pdf_path)
+                    last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime(
+                        '%Y-%m-%d %H:%M:%S')
 
-                    # Open PDF file using PyMuPDF
                     pdf_document = fitz.open(pdf_path)
-                    processed_files += 1
-
-                    # Create a list to store extracted text and metadata for the row
-                    row_values = [
-                        file_size,  # Size (Bytes)
-                        last_modified_date,  # Date Last Modified
-                        os.path.relpath(root_folder, pdf_folder),  # Folder
-                        pdf_filename  # Filename
-                    ]
-
                     for page_number in range(pdf_document.page_count):
                         page = pdf_document[page_number]
-                        print(f'PDF: {pdf_filename}')
-                        print(f'Page Rotation: {page.rotation}')
-                        print(f'Page Dimension: {page.rect.width} x {page.rect.height}')
+                        page_specific_row = [
+                            file_size,  # Size (Bytes)
+                            last_modified_date,  # Date Last Modified
+                            os.path.relpath(root_folder, pdf_folder),  # Folder
+                            pdf_filename,  # Filename
+                            page_number + 1  # Page Number
+                        ]
 
-                        sort_val = False if page.rotation == 0 else False  # Example handling rotation
-
-                        # Iterate through areas to extract text
                         for i, area_coordinates in enumerate(areas, start=1):
                             pdf_width, pdf_height = page.rect.width, page.rect.height
-                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation, pdf_height, pdf_width)
-
+                            adjusted_coordinates = adjust_coordinates_for_rotation(area_coordinates, page.rotation,
+                                                                                   pdf_height, pdf_width)
                             try:
-                                # Extract text or apply OCR
                                 if enable_ocr == "Text-first":
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates)
                                     if not text_area.strip():
                                         pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
                                         clipdoc = fitz.open("pdf", pdfdata)
                                         text_area = "_OCR_" + clipdoc[0].get_text()
-
                                 elif enable_ocr == "OCR-All":
                                     pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                     pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
                                     clipdoc = fitz.open("pdf", pdfdata)
                                     text_area = "_OCR_" + clipdoc[0].get_text()
-
                                 elif enable_ocr == "Text1st+Image-beta":
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
-
+                                    text_area = page.get_text("text", clip=adjusted_coordinates)
                                     pix = page.get_pixmap(clip=area_coordinates, dpi=dpi_value)
                                     if not text_area.strip():
                                         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=tessdata_folder)
                                         clipdoc = fitz.open("pdf", pdfdata)
                                         text_area = "_OCR_" + clipdoc[0].get_text()
-
-                                    img_path = f'{pdf_filename}{page_number}{i}.png'
+                                    img_path = f'{pdf_filename}_{page_number}_{i}.png'
                                     pix.save(img_path)
                                     temp_image_paths.append(img_path)
-
                                     img = ExcelImage(img_path)
-                                    img_cell = ws.cell(row=ws.max_row, column=len(row_values) + 1)
-                                    img_anchor = f"{get_column_letter(img_cell.column)}{img_cell.row +1}"
-                                    img.anchor = img_anchor
-                                    ws.add_image(img)
-
-
+                                    ws.add_image(img,
+                                                 f"{get_column_letter(len(page_specific_row) + 1)}{ws.max_row + 1}")
                                 else:
-                                    text_area = page.get_text("text", clip=adjusted_coordinates, sort=sort_val)
+                                    text_area = page.get_text("text", clip=adjusted_coordinates)
 
-                                # Clean and append extracted text
                                 text_area = text_area.replace('\n', ' ').strip().replace('  ', ' ')
-                                row_values.append(text_area)
-
-                                print(f"Page {page_number + 1}, Area {i} - Sample Extracted Text: {text_area}")
+                                page_specific_row.append(text_area)
 
                             except Exception as e:
-                                print(f"Error extracting text from area {i} in {pdf_path}, Page {page_number + 1}: {e}")
+                                print(
+                                    f"Error extracting text from area {i} in {pdf_filename}, Page {page_number + 1}: {e}")
+                                page_specific_row.append("Error extracting text")
 
-                    # Append the extracted data to the worksheet
-                    ws.append(row_values)
+                        ws.append(page_specific_row)
 
+                        pdf_filename_cell = ws.cell(row=ws.max_row, column=4)
+                        pdf_filename_cell.value = pdf_filename
+                        pdf_filename_cell.font = Font(color="0000FF")
+                        pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"D{ws.max_row}")
 
-
-                except EmptyFileError as e:
-                    print(f"Error extracting text from {pdf_path}: {e}")
-                    # Log the information about the corrupted file in Excel with placeholders for Size and Date Modified
-                    ws.append(
-                        ["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename, "Corrupted File"] + [""] * len(
-                            areas))
-
-                except FitzFileNotFoundError as e:
-                    print(f"Error opening {pdf_path}: {e}")
-                    # Log the information about the missing file in Excel with placeholders for Size and Date Modified
-                    ws.append(["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename,
-                               "Long File Name or File not found"] + [""] * len(areas))
-
-                except RuntimeError as e:
-                    print(e)
-                    # Log the information about the error in Excel with placeholders for Size and Date Modified
-                    ws.append(["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error Loading page"] + [
-                        ""] * len(areas))
-
-                except IllegalCharacterError as e:
-                    illegal_characters = e.args[0]
-                    print(f"Error writing to Excel file: Illegal characters found - {illegal_characters}")
-
-                    # Define a function to clean the text
-                    def clean_text(text):
-                        # Replace illegal characters with a placeholder
-                        cleaned_text = ''.join(char if char.isprintable() else '�' for char in text)
-                        return cleaned_text.strip()
-
-                    # Clean each element in row_values and add placeholders for Size and Date Modified
-                    cleaned_row_values = ["", "", os.path.relpath(root_folder, pdf_folder), pdf_filename] + [
-                        clean_text(value) for value in row_values[4:]]
-
-                    # Append the cleaned row to the Excel sheet
-                    ws.append(cleaned_row_values)
+                    processed_files += 1
+                    progress_label.configure(text=f"Processing PDFs... ({processed_files}/{total_files})")
+                    progress.set(processed_files / total_files)
+                    progress_window.update_idletasks()
 
                 except Exception as e:
-                    print(f"Error processing {pdf_path}: {e}")
-                    ws.append([os.path.relpath(root_folder, pdf_folder), pdf_filename, "Error"] + [""] * len(areas))
+                    print(f"Error processing {pdf_filename}: {e}")
 
-
-                # After appending, add hyperlink to the PDF filename cell in the Excel sheet
-                pdf_filename_cell = ws.cell(row=ws.max_row, column=4)  # Assuming PDF Filename is in the second column (column B)
-                pdf_filename_cell.value = pdf_filename  # Ensure the filename is still there
-                pdf_filename_cell.font = Font(color="0000FF")  # Set font color to blue for the hyperlink
-
-                # Add the hyperlink after appending row data
-                pdf_filename_cell.hyperlink = Hyperlink(target=pdf_path, ref=f"B{ws.max_row}")
-
-                # Update progress
-                progress_label.configure(text=f"Extracting Texts in PDFs... ({processed_files}/{total_files})")
-                progress.set(processed_files / total_files)
-                progress_window.update_idletasks()
-
-    # Save the Excel file
     try:
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
             for cell in row:
@@ -959,7 +888,6 @@ def extract_text():
 
         wb.save(output_path_value)
 
-        # Delete temporary images
         for temp_img_path in temp_image_paths:
             try:
                 os.remove(temp_img_path)
