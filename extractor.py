@@ -225,13 +225,10 @@ class TextExtractor:
                         cell = ws.cell(row=row_index, column=col)
                         cell.value = data
                         if col == 4:  # Set filename as a hyperlink in column 4
-                            cell.hyperlink = Hyperlink(
-                                target=unquote(
-                                    f"file://{os.path.abspath(os.path.join(self.pdf_folder, folder, filename))}"),
-                                ref=cell.coordinate
-                            )
-
+                            absolute_path = os.path.abspath(os.path.join(self.pdf_folder, folder, filename))
+                            cell.hyperlink = absolute_path
                             cell.style = "Hyperlink"
+
 
                     # Write extracted areas to columns starting from 6
                     for i, (text, img_path) in enumerate(
