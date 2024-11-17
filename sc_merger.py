@@ -6,9 +6,12 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from docx import Document
-from docx.shared import RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from itertools import zip_longest
-
+from docx.shared import Pt
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import RGBColor
 
 class ExcelMerger:
     """Handles Excel merging logic, including conditional formatting and hyperlink handling."""
@@ -207,7 +210,7 @@ class TitleComparison:
         mismatched_rows = df[df[title_column1] != df[title_column2]]
 
         # Add summary
-        TitleComparison._add_summary(doc, len(df), len(mismatched_rows), mismatched_rows)
+        TitleComparison._add_summary(doc, len(df), len(mismatched_rows))
 
         # Add a table with the details
         table = doc.add_table(rows=1, cols=3)
@@ -217,8 +220,15 @@ class TitleComparison:
         header_cells[1].text = title_column1
         header_cells[2].text = title_column2
 
+        for cell in header_cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.name = 'Verdana'
+                    run.font.size = Pt(10)
+                    run.bold = True  # Make header bold
+
         # Populate table rows
-        for _, row in df.iterrows():
+        for _, row in mismatched_rows.iterrows():
             row_cells = table.add_row().cells
             row_cells[0].text = row.get('refno1', "")
 
@@ -229,32 +239,79 @@ class TitleComparison:
         doc.save(output_path)
 
     @staticmethod
-    def _add_summary(doc, total_titles, mismatched_count, mismatched_rows):
+    def _add_summary(doc, total_titles, mismatched_count):
         """
-        Add a summary of the title comparison to the Word document.
+        Add a summary of the title comparison to the Word document with styled text.
         """
         doc.add_heading('Summary of Title Comparison', level=2)
-        doc.add_paragraph(f"Total Titles Compared: {total_titles}")
-        doc.add_paragraph(f"Titles with Differences: {mismatched_count}")
+
+        # Style for total titles paragraph
+        total_para = doc.add_paragraph(f"Total Titles Compared: {total_titles}")
+        total_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        total_run = total_para.runs[0]
+        total_run.font.name = 'Arial'
+        total_run.font.size = Pt(10)
+
+        # Style for mismatched titles paragraph
+        mismatch_para = doc.add_paragraph(f"Titles with Differences: {mismatched_count}")
+        mismatch_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+        mismatch_run = mismatch_para.runs[0]
+        mismatch_run.font.name = 'Arial'
+        mismatch_run.font.size = Pt(10)
+
+    @staticmethod
+    def _style_table_cell(cell, font_name, font_size):
+        """
+        Style a single cell in the table.
+        """
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.font.name = font_name
+                run.font.size = Pt(font_size)
 
     @staticmethod
     def _highlight_differences(paragraph, text1, text2):
         """
         Highlight differences between two strings in a Word document:
-        - Red for mismatched characters.
-        - Blue for extra characters in one string.
+        - Red for mismatched words.
+        - Blue for extra words in one string.
         - Gray for case differences.
+        Blank cells remain blank.
         """
-        for char1, char2 in zip_longest(text1 or "", text2 or "", fillvalue=""):
-            run = paragraph.add_run(char1)
-            if char1 != char2:
-                if char1.lower() == char2.lower():  # Case difference
-                    run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                elif char2 == "":  # Extra character in text1
-                    run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
-                else:  # Mismatched character
-                    run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        # Trim whitespace
+        text1 = text1.strip() if text1 else ""
+        text2 = text2.strip() if text2 else ""
 
+        # Handle blank cells
+        if not text1 and not text2:
+            return  # Both are blank, do nothing
+        if not text1:  # text1 is blank
+            return
+        if not text2:  # text2 is blank
+            for word in text1.split():
+                run = paragraph.add_run(word + " ")
+                run.font.name = 'Verdana'
+                run.font.size = Pt(10)
+                run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            return
+
+        # Split text into words for comparison
+        words1 = text1.split()
+        words2 = text2.split()
+
+        # Compare word by word
+        for word1, word2 in zip_longest(words1, words2, fillvalue=""):
+            run = paragraph.add_run(word1 + " ")
+            run.font.name = 'Verdana'
+            run.font.size = Pt(10)
+
+            if word1 != word2:
+                if word1.lower() == word2.lower():  # Case difference
+                    run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                elif word2 == "":  # Extra word in text1
+                    run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
+                else:  # Mismatched word
+                    run.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
 
 class MergerGUI:
