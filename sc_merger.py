@@ -1,191 +1,404 @@
 import os
-import pandas as pd
 import tkinter as tk
-import customtkinter as ctk
-from openpyxl import load_workbook
 from tkinter import filedialog, messagebox
+import customtkinter as ctk
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
+from docx import Document
+from docx.shared import RGBColor
+from itertools import zip_longest
 
 
-def merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path):
-    """Merge two Excel files based on specified reference columns."""
-    # Load Excel files
-    excel1 = pd.read_excel(excel1_path, engine='openpyxl')
-    excel2 = pd.read_excel(excel2_path, engine='openpyxl')
+class ExcelMerger:
+    """Handles Excel merging logic, including conditional formatting and hyperlink handling."""
 
-    # Keep track of hyperlinks in Excel1
-    hyperlinks_excel1 = {}
-    wb1 = load_workbook(excel1_path)
-    ws1 = wb1.active
+    @staticmethod
+    def merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path):
+        """
+        Merge two Excel files while retaining hyperlinks and applying formatting.
+        """
+        # Read Excel files
+        excel1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
+        excel2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
 
-    # Loop through cells to store hyperlinks
-    for row in ws1.iter_rows(min_row=2):
-        for cell in row:
-            if cell.hyperlink:
-                hyperlinks_excel1[cell.row] = hyperlinks_excel1.get(cell.row, {})
-                hyperlinks_excel1[cell.row][cell.column] = cell.hyperlink.target
+        # Ensure the reference columns exist
+        if ref_column1 not in excel1.columns or ref_column2 not in excel2.columns:
+            raise KeyError("Reference columns not found in one or both Excel files.")
 
-    # Fill NaN and add cumulative count for alignment
-    excel1[ref_column1] = excel1[ref_column1].fillna('BLANK_EXCEL1')
-    excel2[ref_column2] = excel2[ref_column2].fillna('BLANK_EXCEL2')
-    excel1['refno_count'] = excel1.groupby(ref_column1).cumcount()
-    excel2['refno_count'] = excel2.groupby(ref_column2).cumcount()
+        # Add `original_row_index` to track rows using the new method
+        excel1 = ExcelMerger.add_original_row_index_to_dataframe(excel1, excel1_path)
 
-    # Rename columns and merge
-    excel1 = excel1.rename(columns={ref_column1: 'refno1'})
-    excel2 = excel2.rename(columns={ref_column2: 'refno2'})
-    merged = pd.merge(excel1, excel2, left_on=['refno1', 'refno_count'], right_on=['refno2', 'refno_count'],
-                      how='outer').drop(columns=['refno_count'])
+        # Extract hyperlinks from the original file
+        hyperlinks = ExcelMerger._extract_hyperlinks(excel1_path)
 
-    # Replace placeholders back with NaN
-    merged['refno1'] = merged['refno1'].replace('BLANK_EXCEL1', pd.NA)
-    merged['refno2'] = merged['refno2'].replace('BLANK_EXCEL2', pd.NA)
+        # Prepare data for merging
+        excel1['refno_count'] = excel1.groupby(ref_column1).cumcount()
+        excel2['refno_count'] = excel2.groupby(ref_column2).cumcount()
+        excel1 = excel1.rename(columns={ref_column1: 'refno1'})
+        excel2 = excel2.rename(columns={ref_column2: 'refno2'})
 
-    # Determine the file path based on output_path
-    if os.path.isdir(output_path):
-        temp_file_path = os.path.join(output_path, 'merged_result_temp.xlsx')
-    else:
-        temp_file_path = output_path
+        # Merge data and handle missing `original_row_index`
+        merged_df = pd.merge(
+            excel1, excel2,
+            left_on=['refno1', 'refno_count'],
+            right_on=['refno2', 'refno_count'],
+            how='outer'
+        ).drop(columns=['refno_count']).fillna("")
+        merged_df['original_row_index'] = pd.to_numeric(merged_df['original_row_index'], errors='coerce').fillna(
+            0).astype(int)
 
-    # Save to Excel without hyperlinks
-    merged.to_excel(temp_file_path, index=False)
+        # Save the merged file without formatting
+        temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
-    # Reopen merged file to re-add hyperlinks
-    wb_merged = load_workbook(temp_file_path)
-    ws_merged = wb_merged.active
+        # Apply formatting and hyperlinks
+        ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
 
-    # Restore hyperlinks and apply hyperlink style
-    for row_idx, link_dict in hyperlinks_excel1.items():
-        for col_idx, link in link_dict.items():
-            cell = ws_merged.cell(row=row_idx, column=col_idx)
-            cell.hyperlink = link
-            cell.style = "Hyperlink"  # Apply the built-in Hyperlink style
+        return temp_file_path, merged_df
 
-    # Save final file with hyperlinks restored
-    wb_merged.save(temp_file_path)
+    @staticmethod
+    def _extract_hyperlinks(file_path):
+        """
+        Extract hyperlinks from the original Excel file and map them using row numbers.
+        """
+        print("Extracting hyperlinks from:", file_path)
+        hyperlinks = {}
+        wb = load_workbook(file_path, data_only=False)
+        ws = wb.active
 
-    return temp_file_path
+        # Loop through all rows and columns to find hyperlinks
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):  # Start at row 2 to skip headers
+            row_number = row[0].row  # Get the row number directly from the cell
+            hyperlinks[row_number] = {}
+            for cell in row:
+                if cell.hyperlink:
+                    col_idx = cell.column  # Numeric column index
+                    print(f"Hyperlink found at row {row_number}, col {col_idx}: {cell.hyperlink.target}")
+                    hyperlinks[row_number][col_idx] = cell.hyperlink.target
+
+        print("Extracted Hyperlinks:", hyperlinks)
+        return hyperlinks
+
+    @staticmethod
+    def add_original_row_index_to_dataframe(df, file_path):
+        """
+        Add `original_row_index` to the DataFrame by matching DataFrame rows
+        with non-empty rows in the Excel file.
+        """
+        from openpyxl import load_workbook
+
+        print(f"Adding original row indices from file: {file_path}")
+
+        # Load the workbook and active worksheet
+        wb = load_workbook(file_path, data_only=False)
+        ws = wb.active
+
+        # Prepare a list to store original row indices
+        original_row_indices = []
+
+        # Iterate through rows in the worksheet, skipping the header row
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):  # Row 2 onwards
+            # Construct a tuple of cell values for the row
+            row_values = [cell.value for cell in row]
+            # Check if the row is non-empty (contains at least one non-blank cell)
+            if any(row_values):
+                original_row_indices.append(row[0].row)  # Store the actual Excel row index
+
+        # Match the extracted indices with the DataFrame rows
+        if len(original_row_indices) != len(df):
+            raise ValueError(
+                f"Mismatch between extracted row indices ({len(original_row_indices)}) "
+                f"and DataFrame rows ({len(df)}). Ensure no extra blank rows in Excel."
+            )
+
+        # Assign the original row indices to the DataFrame
+        df['original_row_index'] = original_row_indices
+
+        print(f"Assigned original row indices: {original_row_indices}")
+        return df
+
+    @staticmethod
+    def _save_merged_to_excel(df, output_path):
+        """
+        Save the merged DataFrame to an Excel file.
+        """
+        temp_file_path = output_path if not os.path.isdir(output_path) else os.path.join(output_path, 'merged_result_temp.xlsx')
+        df.to_excel(temp_file_path, index=False, header=True)
+        return temp_file_path
+
+    @staticmethod
+    def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df):
+        """
+        Apply conditional formatting for mismatches and duplicates,
+        and reapply hyperlinks using the `hyperlinks` dictionary.
+        """
+        wb = load_workbook(file_path)
+        ws = wb.active
+        print("Applying formatting and hyperlinks to:", file_path)
+
+        # Define styles for formatting
+        fill_missing_refno1 = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
+        fill_missing_refno2 = PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid")
+        duplicate_font = Font(bold=True, color="FF3300")
+
+        # Get column indices for refno1 and refno2
+        refno1_col_idx = merged_df.columns.get_loc('refno1') + 1
+        refno2_col_idx = merged_df.columns.get_loc('refno2') + 1
+
+        # Identify duplicates in refno1 and refno2
+        refno1_duplicates = merged_df['refno1'][merged_df['refno1'].duplicated(keep=False)].tolist()
+        refno2_duplicates = merged_df['refno2'][merged_df['refno2'].duplicated(keep=False)].tolist()
+
+        # Apply mismatch and duplicate formatting
+        for row_idx in range(2, len(merged_df) + 2):  # Start at row 2 for Excel
+            refno1_value = ws.cell(row=row_idx, column=refno1_col_idx).value
+            refno2_value = ws.cell(row=row_idx, column=refno2_col_idx).value
+
+            # Highlight missing refno1 or refno2
+            if refno1_value and not refno2_value:
+                ws.cell(row=row_idx, column=refno1_col_idx).fill = fill_missing_refno1
+            if refno2_value and not refno1_value:
+                ws.cell(row=row_idx, column=refno2_col_idx).fill = fill_missing_refno2
+
+            # Apply duplicate formatting
+            if refno1_value in refno1_duplicates:
+                ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
+            if refno2_value in refno2_duplicates:
+                ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
+
+        # Apply hyperlinks
+        for original_row_index, columns in hyperlinks.items():
+            # Find the new row in the merged DataFrame
+            new_row = merged_df[merged_df['original_row_index'] == original_row_index]
+
+            # If no matching row is found, skip
+            if new_row.empty:
+                print(f"No matching row for original_row_index: {original_row_index}")
+                continue
+
+            # Get the new Excel row index (1-based)
+            new_row_idx = new_row.index[0] + 2  # DataFrame index is zero-based; Excel rows start at 2
+
+            # Apply hyperlinks to the recorded column positions
+            for col_idx, hyperlink in columns.items():
+                try:
+                    ws.cell(row=new_row_idx, column=col_idx).hyperlink = hyperlink
+                    ws.cell(row=new_row_idx, column=col_idx).style = "Hyperlink"
+                    print(f"Applied hyperlink at new_row_idx: {new_row_idx}, col_idx: {col_idx}, link: {hyperlink}")
+                except Exception as e:
+                    print(f"Error applying hyperlink for row {new_row_idx}, column {col_idx}: {e}")
+
+        # Save the workbook with updated formatting and hyperlinks
+        wb.save(file_path)
 
 
-def open_file_dialog(title):
-    """Open a file dialog to select an Excel file."""
-    return filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")], title=title)
+class TitleComparison:
+    """Handles title comparison logic and generates a Word report."""
 
+    @staticmethod
+    def create_report(df, title_column1, title_column2, output_path):
+        """
+        Create a Word document highlighting differences between two title columns.
+        """
+        doc = Document()
+        doc.add_heading('Title Differences Report', level=1)
 
-def start_merge(excel1_entry, excel2_entry, ref1_entry, ref2_entry, output_entry):
-    """Start the merge process and inform the user of completion."""
-    excel1_path = excel1_entry.get()
-    excel2_path = excel2_entry.get()
-    ref_column1 = ref1_entry.get()
-    ref_column2 = ref2_entry.get()
-    output_path = output_entry.get() or excel1_path  # Default to excel1_path if output_entry is empty
+        # Find mismatched rows
+        mismatched_rows = df[df[title_column1] != df[title_column2]]
 
-    merged_file_path = merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path)
-    messagebox.showinfo("Success", f"Merged file saved as {merged_file_path}")
+        # Add summary
+        TitleComparison._add_summary(doc, len(df), len(mismatched_rows), mismatched_rows)
 
+        # Add a table with the details
+        table = doc.add_table(rows=1, cols=3)
+        table.style = 'Table Grid'
+        header_cells = table.rows[0].cells
+        header_cells[0].text = "Drawing Number"
+        header_cells[1].text = title_column1
+        header_cells[2].text = title_column2
 
+        # Populate table rows
+        for _, row in df.iterrows():
+            row_cells = table.add_row().cells
+            row_cells[0].text = row.get('refno1', "")
 
-def browse_excel1(excel1_entry):
-    """Browse and set the path for Excel 1."""
-    file_path = open_file_dialog("Select Excel 1")
-    excel1_entry.delete(0, tk.END)
-    excel1_entry.insert(0, file_path)
+            TitleComparison._highlight_differences(row_cells[1].paragraphs[0], row[title_column1], row[title_column2])
+            TitleComparison._highlight_differences(row_cells[2].paragraphs[0], row[title_column2], row[title_column1])
 
+        # Save the document
+        doc.save(output_path)
 
-def browse_excel2(excel2_entry):
-    """Browse and set the path for Excel 2."""
-    file_path = open_file_dialog("Select Excel 2")
-    excel2_entry.delete(0, tk.END)
-    excel2_entry.insert(0, file_path)
+    @staticmethod
+    def _add_summary(doc, total_titles, mismatched_count, mismatched_rows):
+        """
+        Add a summary of the title comparison to the Word document.
+        """
+        doc.add_heading('Summary of Title Comparison', level=2)
+        doc.add_paragraph(f"Total Titles Compared: {total_titles}")
+        doc.add_paragraph(f"Titles with Differences: {mismatched_count}")
 
-
-"""ENTRY POINT"""
-def create_merger_gui():
-    """Create the GUI for the Excel merger."""
-    # Create the merger window with a unique name
-    merger_window = ctk.CTk()
-    merger_window.title("Merger Tool")
-
-    font_name = "Helvetica"
-    font_size = 12
-    button_font = "Helvetica"
-
-    # Create two frames for layout
-    left_frame = ctk.CTkFrame(merger_window)
-    left_frame.grid(row=0, column=0, padx=10, pady=10)
-
-    right_frame = ctk.CTkFrame(merger_window)
-    right_frame.grid(row=0, column=1, padx=10, pady=10)
-
-    # Left Frame: Excel File 1 and 2 Entries & Output Path
-    # Excel File 1 Entry
-    excel1_browse_button = ctk.CTkButton(left_frame, text="Browse", command=lambda: browse_excel1(excel1_entry),
-                                         font=(font_name, font_size))
-    excel1_browse_button.grid(row=0, column=0, padx=10, pady=5)
-
-    excel1_entry = ctk.CTkEntry(left_frame, width=200, font=(font_name, 9), placeholder_text="..Select Excel File 1")
-    excel1_entry.grid(row=0, column=1, padx=10, pady=5)
-
-
-
-    # Excel File 2 Entry
-    excel2_browse_button = ctk.CTkButton(left_frame, text="Browse", command=lambda: browse_excel2(excel2_entry),
-                                         font=(font_name, font_size))
-    excel2_browse_button.grid(row=1, column=0, padx=10, pady=5)
-
-    excel2_entry = ctk.CTkEntry(left_frame, width=200, font=(font_name, 9), placeholder_text="..Select Excel File 2")
-    excel2_entry.grid(row=1, column=1, padx=10, pady=5)
+    @staticmethod
+    def _highlight_differences(paragraph, text1, text2):
+        """
+        Highlight differences between two strings in a Word document:
+        - Red for mismatched characters.
+        - Blue for extra characters in one string.
+        - Gray for case differences.
+        """
+        for char1, char2 in zip_longest(text1 or "", text2 or "", fillvalue=""):
+            run = paragraph.add_run(char1)
+            if char1 != char2:
+                if char1.lower() == char2.lower():  # Case difference
+                    run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                elif char2 == "":  # Extra character in text1
+                    run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
+                else:  # Mismatched character
+                    run.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
 
 
-    # Output Path Entry
+class MergerGUI:
+    """Handles the GUI for the Excel merger."""
 
-    output_entry = ctk.CTkEntry(left_frame, width=200, font=(font_name, 9), placeholder_text="Output file path")
-    output_entry.grid(row=2, column=1, padx=10, pady=5)
+    def __init__(self):
+        self.root = ctk.CTk()
+        self.root.title("Merger Tool")
 
-    # Button to set output path to Excel 1
-    use_excel1_button = ctk.CTkButton(left_frame, text="Use Excel 1 Path",
-                                      command=lambda: output_entry.insert(0, excel1_entry.get()),
-                                      font=(font_name, font_size))
-    use_excel1_button.grid(row=3, column=0, padx=5, pady=5)
+        # Initialize tkinter variables
+        self.excel1_path = tk.StringVar()
+        self.excel2_path = tk.StringVar()
+        self.output_path = tk.StringVar()
+        self.ref_column1 = tk.StringVar(value="Area 1")
+        self.ref_column2 = tk.StringVar(value="SHEET NO")
+        self.title_column1 = tk.StringVar(value="Drawing Title")
+        self.title_column2 = tk.StringVar(value="LOD Title")
+        self.generate_report = tk.BooleanVar(value=False)
 
-    # Button to set output path to Excel 2
-    use_excel2_button = ctk.CTkButton(left_frame, text="Use Excel 2 Path",
-                                      command=lambda: output_entry.insert(0, excel2_entry.get()),
-                                      font=(font_name, font_size))
-    use_excel2_button.grid(row=3, column=1, padx=5, pady=5)
+        self._build_gui()
 
-    # Right Frame: Reference Columns
-    # Reference Column Entry
-    ref1_label = ctk.CTkLabel(right_frame, text="Reference Column (Excel 1):", font=(font_name, font_size))
-    ref1_label.grid(row=0, column=0, padx=10, pady=5, sticky="e")
+    def _build_gui(self):
+        """Build the GUI components."""
+        # Frames for better layout management
+        left_frame = ctk.CTkFrame(self.root)
+        left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
-    ref1_entry = ctk.CTkEntry(right_frame, width=200, font=(font_name, 9), placeholder_text="Column Name of Reference")
-    ref1_entry.grid(row=0, column=1, padx=10, pady=5)
-    ref1_entry.insert(0,"Area 1")
+        right_frame = ctk.CTkFrame(self.root)
+        right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
-    ref2_label = ctk.CTkLabel(right_frame, text="Reference Column (Excel 2):", font=(font_name, font_size))
-    ref2_label.grid(row=1, column=0, padx=10, pady=5, sticky="e")
+        # Build components in respective frames
+        self._build_file_selection(left_frame)
+        self._build_reference_selection(right_frame)
+        self._build_controls()
 
-    ref2_entry = ctk.CTkEntry(right_frame, width=200, font=(font_name, 9), placeholder_text="Column Name of Reference")
-    ref2_entry.grid(row=1, column=1, padx=10, pady=5)
-    ref2_entry.insert(0,"SHEET NO")
+    def _build_file_selection(self, parent_frame):
+        """Build file selection UI."""
+        font_name = "Helvetica"
+        font_size = 12
 
-    # Case sensitivity label
-    case_sensitive_label = ctk.CTkLabel(right_frame, text="Note: Reference columns are CASE SENSITIVE.",
-                                        fg_color="transparent", text_color="gray59",
-                                        padx=0, pady=0, anchor="nw", font=(button_font, 9.5))
-    case_sensitive_label.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
+        # Excel 1
+        ctk.CTkLabel(parent_frame, text="Excel File 1:", font=(font_name, font_size)).grid(row=0, column=0, padx=5, pady=5)
+        ctk.CTkEntry(parent_frame, textvariable=self.excel1_path, width=200).grid(row=0, column=1, padx=5, pady=5)
+        ctk.CTkButton(parent_frame, text="Browse", command=self._browse_excel1).grid(row=0, column=2, padx=5, pady=5)
 
-    # Start Merge Button
-    start_button = ctk.CTkButton(merger_window, text="Start Merge",
-                                 command=lambda: start_merge(excel1_entry, excel2_entry, ref1_entry, ref2_entry,
-                                                             output_entry),
-                                 font=(font_name, font_size))
-    start_button.grid(row=1, column=0, columnspan=2, pady=10)
+        # Excel 2
+        ctk.CTkLabel(parent_frame, text="Excel File 2:", font=(font_name, font_size)).grid(row=1, column=0, padx=5, pady=5)
+        ctk.CTkEntry(parent_frame, textvariable=self.excel2_path, width=200).grid(row=1, column=1, padx=5, pady=5)
+        ctk.CTkButton(parent_frame, text="Browse", command=self._browse_excel2).grid(row=1, column=2, padx=5, pady=5)
 
-    # Run the merger GUI
-    merger_window.mainloop()
+        # Output Path
+        ctk.CTkLabel(parent_frame, text="Output Path:", font=(font_name, font_size)).grid(row=2, column=0, padx=5, pady=5)
+        ctk.CTkEntry(parent_frame, textvariable=self.output_path, width=200).grid(row=2, column=1, padx=5, pady=5)
+        ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(row=2, column=2, padx=5, pady=5)
+
+    def _build_reference_selection(self, parent_frame):
+        """Build reference column selection UI."""
+        font_name = "Helvetica"
+        font_size = 12
+
+        # Reference Column 1
+        ctk.CTkLabel(parent_frame, text="Reference Column (Excel 1):", font=(font_name, font_size)).grid(row=0,
+                                                                                                         column=0,
+                                                                                                         padx=5, pady=5)
+        ctk.CTkEntry(parent_frame, textvariable=self.ref_column1, width=200).grid(row=0, column=1, padx=5, pady=5)
+
+        # Reference Column 2
+        ctk.CTkLabel(parent_frame, text="Reference Column (Excel 2):", font=(font_name, font_size)).grid(row=1,
+                                                                                                         column=0,
+                                                                                                         padx=5, pady=5)
+        ctk.CTkEntry(parent_frame, textvariable=self.ref_column2, width=200).grid(row=1, column=1, padx=5, pady=5)
+
+        # Generate Report Checkbox
+        ctk.CTkCheckBox(parent_frame, text="Generate Title Comparison Report", variable=self.generate_report,
+                        command=self._toggle_title_entries).grid(row=2, column=0, columnspan=2, padx=5, pady=5,
+                                                                 sticky="w")
+
+        # Title Columns (Initially disabled)
+        self.title_entry1 = ctk.CTkEntry(parent_frame, textvariable=self.title_column1, width=200, state="disabled")
+        self.title_entry1.grid(row=3, column=0, padx=5, pady=5)
+
+        self.title_entry2 = ctk.CTkEntry(parent_frame, textvariable=self.title_column2, width=200, state="disabled")
+        self.title_entry2.grid(row=3, column=1, padx=5, pady=5)
+
+    def _build_controls(self):
+        """Build the control buttons."""
+        ctk.CTkButton(self.root, text="Start Merge", command=self._start_merge).grid(row=1, column=0, columnspan=2, pady=10)
+
+    def _browse_excel1(self):
+        """Browse for Excel File 1."""
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")], title="Select Excel File 1")
+        if file_path:
+            self.excel1_path.set(file_path)
+
+    def _browse_excel2(self):
+        """Browse for Excel File 2."""
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")], title="Select Excel File 2")
+        if file_path:
+            self.excel2_path.set(file_path)
+
+    def _use_excel1_path(self):
+        """Set output path to the same directory as Excel 1."""
+        excel1 = self.excel1_path.get()
+        if excel1:
+            directory, file_name = os.path.split(excel1)
+            name, ext = os.path.splitext(file_name)
+            self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
+
+    def _toggle_title_entries(self):
+        """Enable or disable title column entries based on the checkbox state."""
+        state = "normal" if self.generate_report.get() else "disabled"
+        # Directly configure the Entry widgets associated with title_column1 and title_column2
+        self.title_entry1.configure(state=state)
+        self.title_entry2.configure(state=state)
+
+    def _start_merge(self):
+        """Start the merge process."""
+        excel1_path = self.excel1_path.get()
+        excel2_path = self.excel2_path.get()
+        ref_column1 = self.ref_column1.get()
+        ref_column2 = self.ref_column2.get()
+        output_path = self.output_path.get() or excel1_path  # Default to excel1_path if no output path is provided
+
+        try:
+            # Merge Excel files
+            merged_file_path, merged_df = ExcelMerger.merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path)
+            messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
+
+            # Generate title comparison report if required
+            if self.generate_report.get():
+                title_column1 = self.title_column1.get()
+                title_column2 = self.title_column2.get()
+                report_path = os.path.splitext(merged_file_path)[0] + "-TitleComparison.docx"
+                TitleComparison.create_report(merged_df, title_column1, title_column2, report_path)
+                messagebox.showinfo("Success", f"Title comparison report saved at {report_path}")
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def run(self):
+        """Run the GUI application."""
+        self.root.mainloop()
 
 
 if __name__ == "__main__":
-    create_merger_gui()
+    app = MergerGUI()
+    app.run()

@@ -3,7 +3,8 @@ import pandas as pd
 from tkinter import Tk, filedialog,messagebox
 from openpyxl import load_workbook
 from datetime import datetime
-
+from openpyxl.styles import PatternFill
+from openpyxl.formatting.rule import CellIsRule
 
 def choose_directory(title="Select Directory"):
     root = Tk()
@@ -60,8 +61,8 @@ def prepare_data_for_export(file_dict, selected_folder):
             combined_dict[file_name] = {
                 'File': file_name, 'PDF': None, 'DWG': None,
                 'FolderPDF': [], 'FolderDWG': [], 'PDFSize': None, 'DWGSize': None,
-                'PDFModified': None, 'DWGModified': None, 'PDFHasDuplicate': None,
-                'DWGHasDuplicate': None
+                'PDFModified': None, 'DWGModified': None, 'PDFDuplicateCount': None,
+                'DWGDuplicateCount': None
             }
 
         # Add PDF information
@@ -71,10 +72,11 @@ def prepare_data_for_export(file_dict, selected_folder):
             combined_dict[file_name]['PDFSize'] = pdf_data['size']
             combined_dict[file_name]['PDFModified'] = pdf_data['modified']
 
-            # Append the folder path to FolderPDF without overwriting
+            # Append the folder path to FolderPDF
             pdf_folder = os.path.relpath(os.path.dirname(pdf_data['path']), selected_folder)
             combined_dict[file_name]['FolderPDF'].append(pdf_folder)
-            combined_dict[file_name]['PDFHasDuplicate'] = len(combined_dict[file_name]['FolderPDF']) > 1
+            if len(combined_dict[file_name]['FolderPDF']) > 1:
+                combined_dict[file_name]['PDFDuplicateCount'] = len(combined_dict[file_name]['FolderPDF'])
 
         # Add DWG information
         if dwg_data:
@@ -83,10 +85,11 @@ def prepare_data_for_export(file_dict, selected_folder):
             combined_dict[file_name]['DWGSize'] = dwg_data['size']
             combined_dict[file_name]['DWGModified'] = dwg_data['modified']
 
-            # Append the folder path to FolderDWG without overwriting
+            # Append the folder path to FolderDWG
             dwg_folder = os.path.relpath(os.path.dirname(dwg_data['path']), selected_folder)
             combined_dict[file_name]['FolderDWG'].append(dwg_folder)
-            combined_dict[file_name]['DWGHasDuplicate'] = len(combined_dict[file_name]['FolderDWG']) > 1
+            if len(combined_dict[file_name]['FolderDWG']) > 1:
+                combined_dict[file_name]['DWGDuplicateCount'] = len(combined_dict[file_name]['FolderDWG'])
 
     # Process PDF files
     for pdf_path, pdf_info in pdf_dict.items():
@@ -100,23 +103,44 @@ def prepare_data_for_export(file_dict, selected_folder):
         pdf_info = pdf_dict.get(dwg_path, None)
         update_combined_dict(file_name, pdf_info, {'path': dwg_path, **dwg_info})
 
-    # Create and return a DataFrame from the combined dictionary
+    # Create a DataFrame from the combined dictionary
     df = pd.DataFrame.from_dict(combined_dict, orient='index').reset_index(drop=True)
 
     # Flatten folder lists into a readable format for Excel
     df['FolderPDF'] = df['FolderPDF'].apply(lambda x: ', '.join(x) if x else None)
     df['FolderDWG'] = df['FolderDWG'].apply(lambda x: ', '.join(x) if x else None)
 
+    # Drop the 'File' column
+    df = df.drop(columns=['File'])
+
     return df
 
 
 def save_to_excel(df, excel_file):
-    # Save the final DataFrame to Excel
+    # Save the DataFrame to Excel
     df.to_excel(excel_file, index=False)
 
-    # Apply conditional formatting for duplicates (Optional, if needed)
+    # Load the workbook and worksheet
     wb = load_workbook(excel_file)
     ws = wb.active
+
+    # Define red fill for duplicates
+    red_fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+
+    # Apply conditional formatting for PDFDuplicateCount column
+    pdf_col = df.columns.get_loc('PDFDuplicateCount') + 1  # Excel column index (1-based)
+    dwg_col = df.columns.get_loc('DWGDuplicateCount') + 1  # Excel column index (1-based)
+
+    ws.conditional_formatting.add(
+        f"{chr(64 + pdf_col)}2:{chr(64 + pdf_col)}{len(df) + 1}",
+        CellIsRule(operator="greaterThan", formula=["1"], stopIfTrue=True, fill=red_fill)
+    )
+
+    # Apply conditional formatting for DWGDuplicateCount column
+    ws.conditional_formatting.add(
+        f"{chr(64 + dwg_col)}2:{chr(64 + dwg_col)}{len(df) + 1}",
+        CellIsRule(operator="greaterThan", formula=["1"], stopIfTrue=True, fill=red_fill)
+    )
 
     # Save the workbook
     wb.save(excel_file)
