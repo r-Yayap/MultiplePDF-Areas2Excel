@@ -230,16 +230,12 @@ class TitleComparison:
             row_cells = table.add_row().cells
             row_cells[0].text = row.get('refno1', "")
 
-            # Highlight differences only if titles are different
-            if row[title_column1] != row[title_column2]:
-                TitleComparison._highlight_differences(row_cells[1].paragraphs[0], row[title_column1],
-                                                       row[title_column2])
-                TitleComparison._highlight_differences(row_cells[2].paragraphs[0], row[title_column2],
-                                                       row[title_column1])
-            else:
-                # No differences; add the text without highlighting
-                row_cells[1].text = row[title_column1] or ""
-                row_cells[2].text = row[title_column2] or ""
+            # Get paragraphs for both title columns
+            para1 = row_cells[1].paragraphs[0]
+            para2 = row_cells[2].paragraphs[0]
+
+            # Highlight differences
+            TitleComparison._highlight_differences(para1, para2, row[title_column1], row[title_column2])
 
         # Save the document
         doc.save(output_path)
@@ -275,55 +271,111 @@ class TitleComparison:
                 run.font.name = font_name
                 run.font.size = Pt(font_size)
 
+    from docx.shared import RGBColor
+
     @staticmethod
-    def _highlight_differences(paragraph, text1, text2):
+    def _highlight_differences(paragraph1, paragraph2, text1, text2):
         """
-        Highlight differences between two strings in a Word document:
-        - Red for mismatched words.
-        - Blue for extra words in one string.
-        - Gray for case differences.
-        Blank cells remain blank.
+        Highlight differences between two strings in Word document cells.
+        The alignment is based on the Longest Common Subsequence (LCS) algorithm.
+        Matching words at the same positions are not highlighted.
+        Words with case differences are highlighted in gray.
+        Non-matching words are highlighted in red.
         """
+        import unicodedata
 
-
-        # Normalize text to handle special character variations (e.g., hyphens)
+        # Normalize and split texts into tokens
         def normalize(text):
-            return unicodedata.normalize('NFKC', text)
+            return unicodedata.normalize('NFKC', text.strip()) if text else ""
 
-        # Trim whitespace and normalize the text
-        text1 = normalize(text1.strip()) if text1 else ""
-        text2 = normalize(text2.strip()) if text2 else ""
+        text1 = normalize(text1)
+        text2 = normalize(text2)
 
-        # Handle blank cells
-        if not text1 and not text2:
-            return  # Both are blank, do nothing
-        if not text1:  # text1 is blank
-            return
-        if not text2:  # text2 is blank
-            for word in text1.split():
-                run = paragraph.add_run(word + " ")
-                run.font.name = 'Verdana'
-                run.font.size = Pt(10)
-                run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            return
+        # Split texts into tokens
+        tokens1 = text1.split()
+        tokens2 = text2.split()
 
-        # Split text into words for comparison
-        words1 = text1.split()
-        words2 = text2.split()
+        # Lowercase tokens for case-insensitive comparison
+        tokens1_lower = [token.lower() for token in tokens1]
+        tokens2_lower = [token.lower() for token in tokens2]
 
-        # Compare word by word
-        for word1, word2 in zip_longest(words1, words2, fillvalue=""):
-            run = paragraph.add_run(word1 + " ")
-            run.font.name = 'Verdana'
-            run.font.size = Pt(10)
+        # Compute LCS matrix
+        len1, len2 = len(tokens1_lower), len(tokens2_lower)
+        lcs_matrix = [[0] * (len2 + 1) for _ in range(len1 + 1)]
 
-            if word1 != word2:
-                if word1.lower() == word2.lower():  # Case difference
-                    run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                elif word2 == "":  # Extra word in text1
-                    run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
-                else:  # Mismatched word
-                    run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        # Build the LCS matrix
+        for i in range(len1):
+            for j in range(len2):
+                if tokens1_lower[i] == tokens2_lower[j]:
+                    lcs_matrix[i + 1][j + 1] = lcs_matrix[i][j] + 1
+                else:
+                    lcs_matrix[i + 1][j + 1] = max(lcs_matrix[i][j + 1], lcs_matrix[i + 1][j])
+
+        # Backtrack to find LCS indices
+        i, j = len1, len2
+        lcs_indices = []
+        while i > 0 and j > 0:
+            if tokens1_lower[i - 1] == tokens2_lower[j - 1]:
+                lcs_indices.append((i - 1, j - 1))
+                i -= 1
+                j -= 1
+            elif lcs_matrix[i - 1][j] >= lcs_matrix[i][j - 1]:
+                i -= 1
+            else:
+                j -= 1
+        lcs_indices.reverse()
+
+        # Alignment of tokens based on LCS
+        idx1, idx2 = 0, 0
+        aligned_tokens1 = []
+        aligned_tokens2 = []
+        lcs_pos = 0
+
+        while idx1 < len(tokens1) or idx2 < len(tokens2):
+            if lcs_pos < len(lcs_indices) and idx1 == lcs_indices[lcs_pos][0] and idx2 == lcs_indices[lcs_pos][1]:
+                # Tokens match (case-insensitive)
+                aligned_tokens1.append(tokens1[idx1])
+                aligned_tokens2.append(tokens2[idx2])
+                idx1 += 1
+                idx2 += 1
+                lcs_pos += 1
+            else:
+                if idx1 < len(tokens1) and (lcs_pos >= len(lcs_indices) or idx1 < lcs_indices[lcs_pos][0]):
+                    # Token in text1 does not align
+                    aligned_tokens1.append(tokens1[idx1])
+                    aligned_tokens2.append(None)
+                    idx1 += 1
+                elif idx2 < len(tokens2) and (lcs_pos >= len(lcs_indices) or idx2 < lcs_indices[lcs_pos][1]):
+                    # Token in text2 does not align
+                    aligned_tokens1.append(None)
+                    aligned_tokens2.append(tokens2[idx2])
+                    idx2 += 1
+
+        # Apply highlighting based on the alignment
+        for token1, token2 in zip(aligned_tokens1, aligned_tokens2):
+            # Process token from text1
+            if token1 is not None:
+                run1 = paragraph1.add_run(token1 + " ")
+                run1.font.name = 'Verdana'
+                run1.font.size = Pt(10)
+                if token2 is None:
+                    # Token in text1 has no match
+                    run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                elif token1 != token2:
+                    # Case difference
+                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+
+            # Process token from text2
+            if token2 is not None:
+                run2 = paragraph2.add_run(token2 + " ")
+                run2.font.name = 'Verdana'
+                run2.font.size = Pt(10)
+                if token1 is None:
+                    # Token in text2 has no match
+                    run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                elif token1 != token2:
+                    # Case difference
+                    run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
 
 
 class MergerGUI:
