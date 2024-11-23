@@ -11,7 +11,7 @@ from docx.shared import Pt
 from docx.shared import RGBColor
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
-
+import unicodedata
 
 class ExcelMerger:
     """Handles Excel merging logic, including conditional formatting and hyperlink handling."""
@@ -202,17 +202,15 @@ class TitleComparison:
     def create_report(df, title_column1, title_column2, output_path):
         """
         Create a Word document highlighting differences between two title columns.
+        Include all rows, even those with no differences.
         """
         doc = Document()
         doc.add_heading('Title Differences Report', level=1)
 
-        # Find mismatched rows
-        mismatched_rows = df[df[title_column1] != df[title_column2]]
-
         # Add summary
-        TitleComparison._add_summary(doc, len(df), len(mismatched_rows))
+        TitleComparison._add_summary(doc, len(df), len(df[df[title_column1] != df[title_column2]]))
 
-        # Add a table with the details
+        # Create a table
         table = doc.add_table(rows=1, cols=3)
         table.style = 'Table Grid'
         header_cells = table.rows[0].cells
@@ -225,15 +223,23 @@ class TitleComparison:
                 for run in paragraph.runs:
                     run.font.name = 'Verdana'
                     run.font.size = Pt(10)
-                    run.bold = True  # Make header bold
+                    run.bold = True
 
-        # Populate table rows
-        for _, row in mismatched_rows.iterrows():
+        # Populate rows
+        for _, row in df.iterrows():
             row_cells = table.add_row().cells
             row_cells[0].text = row.get('refno1', "")
 
-            TitleComparison._highlight_differences(row_cells[1].paragraphs[0], row[title_column1], row[title_column2])
-            TitleComparison._highlight_differences(row_cells[2].paragraphs[0], row[title_column2], row[title_column1])
+            # Highlight differences only if titles are different
+            if row[title_column1] != row[title_column2]:
+                TitleComparison._highlight_differences(row_cells[1].paragraphs[0], row[title_column1],
+                                                       row[title_column2])
+                TitleComparison._highlight_differences(row_cells[2].paragraphs[0], row[title_column2],
+                                                       row[title_column1])
+            else:
+                # No differences; add the text without highlighting
+                row_cells[1].text = row[title_column1] or ""
+                row_cells[2].text = row[title_column2] or ""
 
         # Save the document
         doc.save(output_path)
@@ -278,9 +284,15 @@ class TitleComparison:
         - Gray for case differences.
         Blank cells remain blank.
         """
-        # Trim whitespace
-        text1 = text1.strip() if text1 else ""
-        text2 = text2.strip() if text2 else ""
+
+
+        # Normalize text to handle special character variations (e.g., hyphens)
+        def normalize(text):
+            return unicodedata.normalize('NFKC', text)
+
+        # Trim whitespace and normalize the text
+        text1 = normalize(text1.strip()) if text1 else ""
+        text2 = normalize(text2.strip()) if text2 else ""
 
         # Handle blank cells
         if not text1 and not text2:
