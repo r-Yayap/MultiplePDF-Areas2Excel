@@ -84,6 +84,8 @@ class XtractorGUI:
 
         # Insert each area with its title and coordinates into the Treeview and keep track of each item ID
         self.treeview_item_ids = {}  # Dictionary to track Treeview item IDs to canvas rectangle IDs
+
+
         for index, area in enumerate(self.pdf_viewer.areas):
             coordinates = area["coordinates"]
             title = area["title"]

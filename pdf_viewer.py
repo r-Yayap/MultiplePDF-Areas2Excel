@@ -407,6 +407,12 @@ class PDFViewer:
                 self.selected_rectangle_id = None
                 print("Rectangle deleted.")
 
+                # Reassign titles to reflect the new order
+                for index, area in enumerate(self.areas):
+                    area["title"] = f"Rectangle {index + 1}"  # Update titles in `areas`
+                self.parent.update_areas_treeview()  # Refresh Treeview to reflect updated titles
+
+
             except ValueError:
                 print("Selected rectangle ID not found in the rectangle list.")
         else:

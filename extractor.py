@@ -231,11 +231,14 @@ class TextExtractor:
 
 
                     # Write extracted areas to columns starting from 6
-                    for i, (text, img_path) in enumerate(
-                            extracted_areas if isinstance(extracted_areas, list) else [(extracted_areas, None)]):
-                        # Find the appropriate column index for the title assigned to this area
-                        column_title = self.areas[i].get("title", f"Area {i + 1}")
+                    # Write extracted areas to columns starting from 6
+                    for index, area in enumerate(self.areas):  # Use the updated `self.areas` list
+                        column_title = area.get("title", f"Area {index + 1}")
                         col_index = self.headers.index(column_title) + 1  # Excel columns are 1-based
+
+                        # Retrieve text and image path from extracted areas
+                        text, img_path = extracted_areas[index] if isinstance(extracted_areas, list) else (
+                        extracted_areas, None)
 
                         # Place text in the designated column, checking for OCR and cleaning
                         text_cell = ws.cell(row=row_index, column=col_index)
