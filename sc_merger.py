@@ -1,17 +1,17 @@
 import os
 import tkinter as tk
+from itertools import zip_longest
 from tkinter import filedialog, messagebox
+
 import customtkinter as ctk
 import pandas as pd
-from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from itertools import zip_longest
 from docx.shared import Pt
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 from docx.shared import RGBColor
+from openpyxl import load_workbook
+from openpyxl.styles import Font, PatternFill
+
 
 class ExcelMerger:
     """Handles Excel merging logic, including conditional formatting and hyperlink handling."""
@@ -317,9 +317,9 @@ class TitleComparison:
 class MergerGUI:
     """Handles the GUI for the Excel merger."""
 
-    def __init__(self):
-        self.root = ctk.CTk()
-        self.root.title("Merger Tool")
+    def __init__(self, master=None):
+        self.mergerApp = ctk.CTkToplevel(master) if master else ctk.CTk()
+        self.mergerApp.title("Merger Tool")
 
         # Initialize tkinter variables
         self.excel1_path = tk.StringVar()
@@ -336,10 +336,10 @@ class MergerGUI:
     def _build_gui(self):
         """Build the GUI components."""
         # Frames for better layout management
-        left_frame = ctk.CTkFrame(self.root)
+        left_frame = ctk.CTkFrame(self.mergerApp)
         left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
 
-        right_frame = ctk.CTkFrame(self.root)
+        right_frame = ctk.CTkFrame(self.mergerApp)
         right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
 
         # Build components in respective frames
@@ -398,7 +398,7 @@ class MergerGUI:
 
     def _build_controls(self):
         """Build the control buttons."""
-        ctk.CTkButton(self.root, text="Start Merge", command=self._start_merge).grid(row=1, column=0, columnspan=2, pady=10)
+        ctk.CTkButton(self.mergerApp, text="Start Merge", command=self._start_merge).grid(row=1, column=0, columnspan=2, pady=10)
 
     def _browse_excel1(self):
         """Browse for Excel File 1."""
@@ -453,9 +453,10 @@ class MergerGUI:
 
     def run(self):
         """Run the GUI application."""
-        self.root.mainloop()
+        if isinstance(self.mergerApp, ctk.CTk):  # Call mainloop only if it's the main window
+            self.mergerApp.mainloop()
 
 
 if __name__ == "__main__":
-    app = MergerGUI()
+    app = MergerGUI()  # Standalone initialization
     app.run()

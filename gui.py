@@ -32,6 +32,8 @@ class XtractorGUI:
         self.ocr_settings = {'enable_ocr': 'Off', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
 
+        OPTION_ACTIONS["LOD Merger"] = self.open_lod_merger
+
         self.setup_widgets()
         self.setup_bindings()
         self.setup_tooltips()
@@ -429,11 +431,15 @@ class XtractorGUI:
             if response:
                 os.startfile(self.output_excel_path)
 
+    def open_lod_merger(self):
+        """Open the LOD Merger GUI as a child window."""
+        MergerGUI(master=self.root).run()  # Pass the parent window to the merger
+
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""
         action = OPTION_ACTIONS.get(choice)
         if action:
-            action()  # Directly call the function
+            action()  # Call the function
         else:
             messagebox.showerror("Error", f"No action found for {choice}")
 

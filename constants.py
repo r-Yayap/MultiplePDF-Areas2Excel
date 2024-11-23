@@ -27,11 +27,11 @@ DPI_OPTIONS = {
 
 from sc_pdf_dwg_list import pdf_dwg_counter
 from sc_dir_list import generate_file_list_and_excel
-from sc_merger import create_merger_gui
+from sc_merger import MergerGUI
 from sc_bulk_rename import bulk_rename_gui
 
 OPTION_ACTIONS = {
-    "LOD Merger": create_merger_gui,
+    "LOD Merger": None,  # Call a method that references self
     "PDF/DWG List": pdf_dwg_counter,
     "Directory List": generate_file_list_and_excel,
     "Bulk Renamer": bulk_rename_gui
