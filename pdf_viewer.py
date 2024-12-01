@@ -321,10 +321,15 @@ class PDFViewer:
         canvas_width = self.canvas.master.winfo_width() - 30
         canvas_height = self.canvas.master.winfo_height() - 135
 
-        # Update canvas size and scrollbars
+        # Update canvas size
         self.canvas.config(width=canvas_width, height=canvas_height)
+
+        # Update scrollbar dimensions and positions
         self.v_scrollbar.configure(height=canvas_height)
+        self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)  # Adjust position based on new width
+
         self.h_scrollbar.configure(width=canvas_width)
+        self.h_scrollbar.place_configure(x=10, y=canvas_height + 105)  # Adjust position based on new height
 
         # Refresh the PDF display to fit the new canvas size
         self.update_display()
