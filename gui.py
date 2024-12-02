@@ -162,14 +162,7 @@ class XtractorGUI:
 
         self.ocr_menu.place(x=330, y=10)
 
-        # DPI Option Menu
-        self.dpi_var = ctk.IntVar(value=150)
-        self.dpi_menu = ctk.CTkOptionMenu(self.root, values=["75", "150", "300", "450", "600"],
-                                          command=self.dpi_callback, font=("Verdana Bold", 7),
-                                          variable=self.dpi_var, width=43, height=14)
-        self.dpi_menu.place(x=372, y=30)
-        self.dpi_label = ctk.CTkLabel(self.root, text="DPI:", text_color="gray59", font=("Verdana Bold", 8))
-        self.dpi_label.place(x=348, y=32)
+
 
         # Zoom Slider
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
@@ -184,13 +177,13 @@ class XtractorGUI:
         self.open_sample_button.place(x=20, y=35)
 
         # Recent PDF Button
-        self.recent_pdf_button = ctk.CTkButton(self.root, text="Recent PDF", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 9), width=88, height=10)
-        self.recent_pdf_button.place(x=87, y=35)
+        self.recent_pdf_button = ctk.CTkButton(self.root, text="Recent", command=self.open_recent_pdf,
+                                               font=(BUTTON_FONT, 9), width=40, height=10)
+        self.recent_pdf_button.place(x=90, y=35)
 
         # Close PDF Button
-        self.close_pdf_button = ctk.CTkButton(self.root, text="Close PDF", command=self.close_pdf,
-                                              font=(BUTTON_FONT, 9), width=88, height=10)
+        self.close_pdf_button = ctk.CTkButton(self.root, text="X", command=self.close_pdf,anchor="center",
+                                              font=(BUTTON_FONT, 9), width=10, height=10, fg_color="red4")
         self.close_pdf_button.place(x=143, y=35)
 
         # Output Excel Path
@@ -206,10 +199,10 @@ class XtractorGUI:
         # Include Subfolders Checkbox
         self.include_subfolders_var = ctk.IntVar()
         self.include_subfolders_checkbox = ctk.CTkCheckBox(self.root, text="Include Subfolders?",
-                                                           variable=self.include_subfolders_var,
+                                                           variable=self.include_subfolders_var,border_width=1,
                                                            command=self.toggle_include_subfolders,
-                                                           font=(BUTTON_FONT, 9))
-        self.include_subfolders_checkbox.place(x=196, y=34)
+                                                           font=(BUTTON_FONT, 9),checkbox_width=17, checkbox_height=17)
+        self.include_subfolders_checkbox.place(x=192, y=34)
 
         # Extract Button
         self.extract_button = ctk.CTkButton(self.root, text="EXTRACT", font=("Arial Black", 12),
@@ -237,6 +230,15 @@ class XtractorGUI:
 
         # Pack the Treeview into the frame
         self.areas_tree.pack(side="left")
+
+        # DPI Option Menu
+        self.dpi_var = ctk.IntVar(value=150)
+        self.dpi_menu = ctk.CTkOptionMenu(self.root, values=["75", "150", "300", "450", "600"],
+                                          command=self.dpi_callback, font=("Verdana Bold", 7),
+                                          variable=self.dpi_var, width=43, height=14)
+        self.dpi_menu.place(x=372, y=30)
+        self.dpi_label = ctk.CTkLabel(self.root, text="DPI:", text_color="gray59", font=("Verdana Bold", 8),bg_color="transparent",height=5)
+        self.dpi_label.place(x=348, y=32)
 
         # Import, Export, and Clear Areas Buttons
         self.import_button = ctk.CTkButton(self.root, text="Import Areas", command=self.import_rectangles,
@@ -355,7 +357,7 @@ class XtractorGUI:
         self.include_subfolders = self.include_subfolders_var.get()
 
     def start_extraction(self):
-        """Initiates the extraction process with a progress bar."""
+        """Initiates the extraction process with a progress bar and total files count."""
         # Close any open PDF before extraction
         self.pdf_viewer.close_pdf()
 
@@ -365,7 +367,7 @@ class XtractorGUI:
         # Create the progress window
         self.progress_window = ctk.CTkToplevel(self.root)
         self.progress_window.title("Progress")
-        self.progress_window.geometry("300x100")
+        self.progress_window.geometry("300x120")
 
         # Make the progress window stay on top
         self.progress_window.transient(self.root)  # Set as a child of the root window
@@ -373,14 +375,18 @@ class XtractorGUI:
         self.progress_window.attributes('-topmost', True)  # Keep it on top
 
         # Add a progress label
-        progress_label = ctk.CTkLabel(self.progress_window, text="Processing PDFs...")
-        progress_label.pack(pady=10)
+        self.progress_label = ctk.CTkLabel(self.progress_window, text="Processing PDFs...")
+        self.progress_label.pack(pady=5)
+
+        # Add a total files label
+        self.total_files_label = ctk.CTkLabel(self.progress_window, text="Total files: 0")
+        self.total_files_label.pack(pady=5)
 
         # Add a progress bar to the window
         self.progress_var = ctk.DoubleVar(value=0)
         self.progress_bar = ctk.CTkProgressBar(self.progress_window, variable=self.progress_var,
                                                orientation="horizontal", width=250)
-        self.progress_bar.pack(pady=20)
+        self.progress_bar.pack(pady=10)
 
         # Set up Manager for shared data structures
         manager = multiprocessing.Manager()
@@ -393,8 +399,8 @@ class XtractorGUI:
             output_excel_path=self.output_excel_path,
             areas=self.pdf_viewer.areas,
             ocr_settings=self.ocr_settings,
-            include_subfolders=self.include_subfolders
-        )
+            include_subfolders=self.include_subfolders)
+
         extraction_process = multiprocessing.Process(target=extractor.start_extraction,
                                                      args=(progress_list, total_files))
         extraction_process.start()
@@ -403,27 +409,30 @@ class XtractorGUI:
         self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
 
     def update_progress(self, progress_list, total_files, extraction_process):
-        """Updates the progress bar based on the progress of PDF extraction."""
+        """Updates the progress bar and files processed count during PDF extraction."""
         # Avoid division by zero
         if total_files.value > 0:
-            current_progress = len(progress_list) / total_files.value
+            processed_files = len(progress_list)
+            self.total_files_label.configure(text=f"Processed: {processed_files}/{total_files.value}")  # Update label
+
+            current_progress = processed_files / total_files.value
             self.progress_var.set(current_progress)
 
-        # Check if extraction process is alive
+        # Check if the extraction process is alive
         if extraction_process.is_alive():
-            # Repeat check after 100 ms
+            # Repeat the check after 100 ms
             self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
         else:
-            # Ensure progress bar is complete and close progress window
+            # Ensure the progress bar is complete and close the progress window
             self.progress_var.set(1)
             self.progress_window.destroy()
 
-            # Calculate the elapsed time
+            # Calculate and display elapsed time
             end_time = time.time()
             elapsed_time = end_time - self.start_time
             formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
 
-            # Ask to open Excel file
+            # Ask to open the Excel file
             response = messagebox.askyesno(
                 "Extraction Complete",
                 f"PDF extraction completed successfully in {formatted_time}.\nWould you like to open the Excel file?"

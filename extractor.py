@@ -1,18 +1,18 @@
 #extractor.py
 
-import shutil
-import os
 import multiprocessing
-from datetime import datetime
-from openpyxl import Workbook
-from openpyxl.worksheet.hyperlink import Hyperlink
-from openpyxl.drawing.image import Image as ExcelImage
-from openpyxl.utils import get_column_letter
-import pymupdf as fitz
-from utils import adjust_coordinates_for_rotation, find_tessdata
+import os
 import re
+import shutil
+from datetime import datetime
+
+import pymupdf as fitz
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font
-from urllib.parse import unquote
+from openpyxl.utils import get_column_letter
+
+from utils import adjust_coordinates_for_rotation, find_tessdata
 
 
 class TextExtractor:

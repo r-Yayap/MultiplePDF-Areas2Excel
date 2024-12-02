@@ -12,6 +12,9 @@ from docx.shared import RGBColor
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 import unicodedata
+import re
+
+
 
 class ExcelMerger:
     """Handles Excel merging logic, including conditional formatting and hyperlink handling."""
@@ -262,120 +265,143 @@ class TitleComparison:
         mismatch_run.font.size = Pt(10)
 
     @staticmethod
-    def _style_table_cell(cell, font_name, font_size):
+    def _style_table_cell(cell, font_name):
         """
         Style a single cell in the table.
         """
         for paragraph in cell.paragraphs:
             for run in paragraph.runs:
                 run.font.name = font_name
-                run.font.size = Pt(font_size)
+                run.font.size = Pt(9)
 
-    from docx.shared import RGBColor
+    @staticmethod
+    def tokenize(text):
+        import re
+        import unicodedata
+        # Normalize and split by spaces and special characters, preserving original spacing
+        text = unicodedata.normalize('NFKC', text.strip()).replace("‐", "-")
+        return re.findall(r'(\s+|\b\w+\b|[-&()/%])', text)
+
+    @staticmethod
+    def align_tokens(tokens1, tokens2, max_window_size=5):
+        from difflib import SequenceMatcher
+        aligned1, aligned2 = [], []
+        i, j = 0, 0
+
+        while i < len(tokens1) or j < len(tokens2):
+            token1 = tokens1[i] if i < len(tokens1) else None
+            token2 = tokens2[j] if j < len(tokens2) else None
+
+            if token1 and token2:
+                similarity = SequenceMatcher(None, token1.lower(), token2.lower()).ratio()
+                if similarity >= 0.9:
+                    # Exact or near match
+                    aligned1.append(token1)
+                    aligned2.append(token2)
+                    i += 1
+                    j += 1
+                else:
+                    # Window search for better matches
+                    best_match_score = 0
+                    best_match_index = None
+                    match_found = False
+
+                    # Search ahead in tokens2
+                    for k in range(1, max_window_size):
+                        if j + k < len(tokens2):
+                            temp_similarity = SequenceMatcher(None, token1.lower(), tokens2[j + k].lower()).ratio()
+                            if temp_similarity > best_match_score:
+                                best_match_score = temp_similarity
+                                best_match_index = j + k
+                        if best_match_score >= 0.9:  # Early stop
+                            break
+
+                    # Search ahead in tokens1
+                    for k in range(1, max_window_size):
+                        if i + k < len(tokens1):
+                            temp_similarity = SequenceMatcher(None, tokens1[i + k].lower(), token2.lower()).ratio()
+                            if temp_similarity > best_match_score:
+                                best_match_score = temp_similarity
+                                best_match_index = i + k
+                        if best_match_score >= 0.9:  # Early stop
+                            break
+
+                    if best_match_score >= 0.9:
+                        # Align with the best match found
+                        if best_match_index < len(tokens2):
+                            aligned1.append(None)
+                            aligned2.append(tokens2[j])
+                            j += 1
+                        elif best_match_index < len(tokens1):
+                            aligned1.append(tokens1[i])
+                            aligned2.append(None)
+                            i += 1
+                    else:
+                        # No good match found
+                        aligned1.append(token1)
+                        aligned2.append(None)
+                        i += 1
+            elif token1:
+                # Token in tokens1 but not tokens2
+                aligned1.append(token1)
+                aligned2.append(None)
+                i += 1
+            elif token2:
+                # Token in tokens2 but not tokens1
+                aligned1.append(None)
+                aligned2.append(token2)
+                j += 1
+
+        return aligned1, aligned2
 
     @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
-        """
-        Highlight differences between two strings in Word document cells.
-        The alignment is based on the Longest Common Subsequence (LCS) algorithm.
-        Matching words at the same positions are not highlighted.
-        Words with case differences are highlighted in gray.
-        Non-matching words are highlighted in red.
-        """
-        import unicodedata
+        from difflib import SequenceMatcher
+        from docx.shared import RGBColor
 
-        # Normalize and split texts into tokens
-        def normalize(text):
-            return unicodedata.normalize('NFKC', text.strip()) if text else ""
+        # Tokenize strings
+        tokens1 = TitleComparison.tokenize(text1)
+        tokens2 = TitleComparison.tokenize(text2)
 
-        text1 = normalize(text1)
-        text2 = normalize(text2)
+        # Align tokens dynamically
+        aligned_tokens1, aligned_tokens2 = TitleComparison.align_tokens(tokens1, tokens2)
 
-        # Split texts into tokens
-        tokens1 = text1.split()
-        tokens2 = text2.split()
-
-        # Lowercase tokens for case-insensitive comparison
-        tokens1_lower = [token.lower() for token in tokens1]
-        tokens2_lower = [token.lower() for token in tokens2]
-
-        # Compute LCS matrix
-        len1, len2 = len(tokens1_lower), len(tokens2_lower)
-        lcs_matrix = [[0] * (len2 + 1) for _ in range(len1 + 1)]
-
-        # Build the LCS matrix
-        for i in range(len1):
-            for j in range(len2):
-                if tokens1_lower[i] == tokens2_lower[j]:
-                    lcs_matrix[i + 1][j + 1] = lcs_matrix[i][j] + 1
-                else:
-                    lcs_matrix[i + 1][j + 1] = max(lcs_matrix[i][j + 1], lcs_matrix[i + 1][j])
-
-        # Backtrack to find LCS indices
-        i, j = len1, len2
-        lcs_indices = []
-        while i > 0 and j > 0:
-            if tokens1_lower[i - 1] == tokens2_lower[j - 1]:
-                lcs_indices.append((i - 1, j - 1))
-                i -= 1
-                j -= 1
-            elif lcs_matrix[i - 1][j] >= lcs_matrix[i][j - 1]:
-                i -= 1
-            else:
-                j -= 1
-        lcs_indices.reverse()
-
-        # Alignment of tokens based on LCS
-        idx1, idx2 = 0, 0
-        aligned_tokens1 = []
-        aligned_tokens2 = []
-        lcs_pos = 0
-
-        while idx1 < len(tokens1) or idx2 < len(tokens2):
-            if lcs_pos < len(lcs_indices) and idx1 == lcs_indices[lcs_pos][0] and idx2 == lcs_indices[lcs_pos][1]:
-                # Tokens match (case-insensitive)
-                aligned_tokens1.append(tokens1[idx1])
-                aligned_tokens2.append(tokens2[idx2])
-                idx1 += 1
-                idx2 += 1
-                lcs_pos += 1
-            else:
-                if idx1 < len(tokens1) and (lcs_pos >= len(lcs_indices) or idx1 < lcs_indices[lcs_pos][0]):
-                    # Token in text1 does not align
-                    aligned_tokens1.append(tokens1[idx1])
-                    aligned_tokens2.append(None)
-                    idx1 += 1
-                elif idx2 < len(tokens2) and (lcs_pos >= len(lcs_indices) or idx2 < lcs_indices[lcs_pos][1]):
-                    # Token in text2 does not align
-                    aligned_tokens1.append(None)
-                    aligned_tokens2.append(tokens2[idx2])
-                    idx2 += 1
-
-        # Apply highlighting based on the alignment
+        # Apply highlighting
         for token1, token2 in zip(aligned_tokens1, aligned_tokens2):
-            # Process token from text1
             if token1 is not None:
-                run1 = paragraph1.add_run(token1 + " ")
+                run1 = paragraph1.add_run(token1)
                 run1.font.name = 'Verdana'
                 run1.font.size = Pt(10)
-                if token2 is None:
-                    # Token in text1 has no match
-                    run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                elif token1 != token2:
-                    # Case difference
-                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-
-            # Process token from text2
             if token2 is not None:
-                run2 = paragraph2.add_run(token2 + " ")
+                run2 = paragraph2.add_run(token2)
                 run2.font.name = 'Verdana'
                 run2.font.size = Pt(10)
-                if token1 is None:
-                    # Token in text2 has no match
-                    run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                elif token1 != token2:
-                    # Case difference
+
+            # Highlight differences
+            if token1 and token2:
+                if token1 == token2:
+                    # Exact match, no highlight
+                    continue
+                elif token1.lower() == token2.lower():
+                    # Case difference only: Gray highlight
+                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
                     run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                else:
+                    similarity = SequenceMatcher(None, token1.lower(), token2.lower()).ratio()
+                    if similarity >= 0.8:
+                        # Minor difference: Highlight in orange
+                        run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+                        run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+                    else:
+                        # Significant difference: Highlight in red
+                        run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                        run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif token1:
+                # Token only in String 1: Highlight in red
+                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif token2:
+                # Token only in String 2: Highlight in red
+                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
 
 class MergerGUI:

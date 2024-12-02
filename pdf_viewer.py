@@ -19,7 +19,7 @@ class PDFViewer:
 
         self.h_scrollbar = ctk.CTkScrollbar(master, orientation="horizontal", command=self.canvas.xview,
                                             width=CANVAS_WIDTH)
-        self.h_scrollbar.place(x=10, y=CANVAS_HEIGHT + 105)
+        self.h_scrollbar.place(x=10, y=CANVAS_HEIGHT + 107)
 
         self.pdf_document = None
         self.page = None
@@ -329,7 +329,7 @@ class PDFViewer:
         self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)  # Adjust position based on new width
 
         self.h_scrollbar.configure(width=canvas_width)
-        self.h_scrollbar.place_configure(x=10, y=canvas_height + 105)  # Adjust position based on new height
+        self.h_scrollbar.place_configure(x=10, y=canvas_height + 107)  # Adjust position based on new height
 
         # Refresh the PDF display to fit the new canvas size
         self.update_display()
