@@ -1,7 +1,8 @@
 import os
 import tkinter as tk
-from itertools import zip_longest
+
 from tkinter import filedialog, messagebox
+from difflib import SequenceMatcher
 
 import customtkinter as ctk
 import pandas as pd
@@ -11,9 +12,9 @@ from docx.shared import Pt
 from docx.shared import RGBColor
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
-import unicodedata
-import re
 
+import re
+import unicodedata
 
 
 class ExcelMerger:
@@ -265,24 +266,6 @@ class TitleComparison:
         mismatch_run.font.size = Pt(10)
 
     @staticmethod
-    def _style_table_cell(cell, font_name):
-        """
-        Style a single cell in the table.
-        """
-        for paragraph in cell.paragraphs:
-            for run in paragraph.runs:
-                run.font.name = font_name
-                run.font.size = Pt(9)
-
-    @staticmethod
-    def tokenize(text):
-        import re
-        import unicodedata
-        # Normalize and split by spaces and special characters, preserving original spacing
-        text = unicodedata.normalize('NFKC', text.strip()).replace("‐", "-")
-        return re.findall(r'(\s+|\b\w+\b|[-&()/%])', text)
-
-    @staticmethod
     def align_tokens(tokens1, tokens2, max_window_size=5):
         from difflib import SequenceMatcher
         aligned1, aligned2 = [], []
@@ -356,8 +339,7 @@ class TitleComparison:
 
     @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
-        from difflib import SequenceMatcher
-        from docx.shared import RGBColor
+
 
         # Tokenize strings
         tokens1 = TitleComparison.tokenize(text1)
