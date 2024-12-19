@@ -266,9 +266,16 @@ class TitleComparison:
         mismatch_run.font.size = Pt(10)
 
     @staticmethod
+    def tokenize(text):
+        # Tokenize text by splitting words, punctuation, and spaces
+        tokens = re.findall(r'\s+|\S+', text)
+        return tokens
+
+    @staticmethod
     def align_tokens(tokens1, tokens2, max_window_size=5):
         from difflib import SequenceMatcher
         aligned1, aligned2 = [], []
+        flags = []
         i, j = 0, 0
 
         while i < len(tokens1) or j < len(tokens2):
@@ -276,114 +283,85 @@ class TitleComparison:
             token2 = tokens2[j] if j < len(tokens2) else None
 
             if token1 and token2:
-                similarity = SequenceMatcher(None, token1.lower(), token2.lower()).ratio()
-                if similarity >= 0.9:
-                    # Exact or near match
+                similarity = SequenceMatcher(None, token1.strip().lower(), token2.strip().lower()).ratio()
+                if similarity == 1.0:
                     aligned1.append(token1)
                     aligned2.append(token2)
+                    flags.append("EXACT")
+                    i += 1
+                    j += 1
+                elif similarity >= 0.8:
+                    aligned1.append(token1)
+                    aligned2.append(token2)
+                    flags.append("MINOR")
                     i += 1
                     j += 1
                 else:
-                    # Window search for better matches
-                    best_match_score = 0
-                    best_match_index = None
-                    match_found = False
-
-                    # Search ahead in tokens2
-                    for k in range(1, max_window_size):
-                        if j + k < len(tokens2):
-                            temp_similarity = SequenceMatcher(None, token1.lower(), tokens2[j + k].lower()).ratio()
-                            if temp_similarity > best_match_score:
-                                best_match_score = temp_similarity
-                                best_match_index = j + k
-                        if best_match_score >= 0.9:  # Early stop
-                            break
-
-                    # Search ahead in tokens1
-                    for k in range(1, max_window_size):
-                        if i + k < len(tokens1):
-                            temp_similarity = SequenceMatcher(None, tokens1[i + k].lower(), token2.lower()).ratio()
-                            if temp_similarity > best_match_score:
-                                best_match_score = temp_similarity
-                                best_match_index = i + k
-                        if best_match_score >= 0.9:  # Early stop
-                            break
-
-                    if best_match_score >= 0.9:
-                        # Align with the best match found
-                        if best_match_index < len(tokens2):
-                            aligned1.append(None)
-                            aligned2.append(tokens2[j])
-                            j += 1
-                        elif best_match_index < len(tokens1):
-                            aligned1.append(tokens1[i])
-                            aligned2.append(None)
-                            i += 1
-                    else:
-                        # No good match found
+                    # Handle missing tokens
+                    if len(tokens1) - i > len(tokens2) - j:
                         aligned1.append(token1)
                         aligned2.append(None)
+                        flags.append("MISSING_2")
                         i += 1
+                    else:
+                        aligned1.append(None)
+                        aligned2.append(token2)
+                        flags.append("MISSING_1")
+                        j += 1
             elif token1:
-                # Token in tokens1 but not tokens2
                 aligned1.append(token1)
                 aligned2.append(None)
+                flags.append("MISSING_2")
                 i += 1
             elif token2:
-                # Token in tokens2 but not tokens1
                 aligned1.append(None)
                 aligned2.append(token2)
+                flags.append("MISSING_1")
                 j += 1
 
-        return aligned1, aligned2
+        return aligned1, aligned2, flags
 
     @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
-
-
-        # Tokenize strings
         tokens1 = TitleComparison.tokenize(text1)
         tokens2 = TitleComparison.tokenize(text2)
+        aligned_tokens1, aligned_tokens2, flags = TitleComparison.align_tokens(tokens1, tokens2)
 
-        # Align tokens dynamically
-        aligned_tokens1, aligned_tokens2 = TitleComparison.align_tokens(tokens1, tokens2)
+        for token1, token2, flag in zip(aligned_tokens1, aligned_tokens2, flags):
+            run1, run2 = None, None
 
-        # Apply highlighting
-        for token1, token2 in zip(aligned_tokens1, aligned_tokens2):
+            # Add token1 to paragraph1
             if token1 is not None:
-                run1 = paragraph1.add_run(token1)
-                run1.font.name = 'Verdana'
-                run1.font.size = Pt(10)
-            if token2 is not None:
-                run2 = paragraph2.add_run(token2)
-                run2.font.name = 'Verdana'
-                run2.font.size = Pt(10)
-
-            # Highlight differences
-            if token1 and token2:
-                if token1 == token2:
-                    # Exact match, no highlight
-                    continue
-                elif token1.lower() == token2.lower():
-                    # Case difference only: Gray highlight
-                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                    run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                if token1.isspace():
+                    paragraph1.add_run(token1)
                 else:
-                    similarity = SequenceMatcher(None, token1.lower(), token2.lower()).ratio()
-                    if similarity >= 0.8:
-                        # Minor difference: Highlight in orange
-                        run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-                        run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-                    else:
-                        # Significant difference: Highlight in red
-                        run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                        run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            elif token1:
-                # Token only in String 1: Highlight in red
-                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            elif token2:
-                # Token only in String 2: Highlight in red
-                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                    run1 = paragraph1.add_run(token1)
+                    run1.font.name = 'Verdana'
+                    run1.font.size = Pt(10)
+
+            # Add token2 to paragraph2
+            if token2 is not None:
+                if token2.isspace():
+                    paragraph2.add_run(token2)
+                else:
+                    run2 = paragraph2.add_run(token2)
+                    run2.font.name = 'Verdana'
+                    run2.font.size = Pt(10)
+
+            # Highlight based on the flag
+            if flag == "EXACT":
+                continue
+            elif flag == "MINOR":
+                if run1:
+                    run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+                if run2:
+                    run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            elif flag == "MISSING_1":
+                if run2:
+                    run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif flag == "MISSING_2":
+                if run1:
+                    run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
 
 class MergerGUI:
