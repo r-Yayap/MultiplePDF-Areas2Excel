@@ -266,102 +266,157 @@ class TitleComparison:
         mismatch_run.font.size = Pt(10)
 
     @staticmethod
-    def tokenize(text):
-        # Tokenize text by splitting words, punctuation, and spaces
-        tokens = re.findall(r'\s+|\S+', text)
-        return tokens
-
-    @staticmethod
-    def align_tokens(tokens1, tokens2, max_window_size=5):
-        from difflib import SequenceMatcher
-        aligned1, aligned2 = [], []
-        flags = []
-        i, j = 0, 0
-
-        while i < len(tokens1) or j < len(tokens2):
-            token1 = tokens1[i] if i < len(tokens1) else None
-            token2 = tokens2[j] if j < len(tokens2) else None
-
-            if token1 and token2:
-                similarity = SequenceMatcher(None, token1.strip().lower(), token2.strip().lower()).ratio()
-                if similarity == 1.0:
-                    aligned1.append(token1)
-                    aligned2.append(token2)
-                    flags.append("EXACT")
-                    i += 1
-                    j += 1
-                elif similarity >= 0.8:
-                    aligned1.append(token1)
-                    aligned2.append(token2)
-                    flags.append("MINOR")
-                    i += 1
-                    j += 1
-                else:
-                    # Handle missing tokens
-                    if len(tokens1) - i > len(tokens2) - j:
-                        aligned1.append(token1)
-                        aligned2.append(None)
-                        flags.append("MISSING_2")
-                        i += 1
-                    else:
-                        aligned1.append(None)
-                        aligned2.append(token2)
-                        flags.append("MISSING_1")
-                        j += 1
-            elif token1:
-                aligned1.append(token1)
-                aligned2.append(None)
-                flags.append("MISSING_2")
-                i += 1
-            elif token2:
-                aligned1.append(None)
-                aligned2.append(token2)
-                flags.append("MISSING_1")
-                j += 1
-
-        return aligned1, aligned2, flags
-
-    @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
+        """
+        Highlight differences between two pieces of text, preserving spaces and applying color codes.
+        """
         tokens1 = TitleComparison.tokenize(text1)
         tokens2 = TitleComparison.tokenize(text2)
-        aligned_tokens1, aligned_tokens2, flags = TitleComparison.align_tokens(tokens1, tokens2)
+        aligned_tokens1, aligned_tokens2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
+
+        print("DEBUG: Aligned Tokens and Flags:")
+        for token1, token2, flag in zip(aligned_tokens1, aligned_tokens2, flags):
+            print(f"Token1: {token1}, Token2: {token2}, Flag: {flag}")
 
         for token1, token2, flag in zip(aligned_tokens1, aligned_tokens2, flags):
             run1, run2 = None, None
 
-            # Add token1 to paragraph1
-            if token1 is not None:
-                if token1.isspace():
-                    paragraph1.add_run(token1)
-                else:
-                    run1 = paragraph1.add_run(token1)
-                    run1.font.name = 'Verdana'
-                    run1.font.size = Pt(10)
-
-            # Add token2 to paragraph2
-            if token2 is not None:
-                if token2.isspace():
-                    paragraph2.add_run(token2)
-                else:
-                    run2 = paragraph2.add_run(token2)
-                    run2.font.name = 'Verdana'
-                    run2.font.size = Pt(10)
-
-            # Highlight based on the flag
+            # Avoid duplication by handling CHAR_LEVEL and CASE_ONLY properly
             if flag == "EXACT":
-                continue
-            elif flag == "MINOR":
-                if run1:
-                    run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-                if run2:
-                    run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+                print(f"DEBUG: EXACT match for tokens: {token1}, {token2}")
+                paragraph1.add_run(token1)
+                paragraph2.add_run(token2)
+            elif flag == "CASE_ONLY":
+                print(f"DEBUG: CASE_ONLY match for tokens: {token1}, {token2}")
+                run1 = paragraph1.add_run(token1)
+                run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                run2 = paragraph2.add_run(token2)
+                run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+            elif flag == "CHAR_LEVEL":
+                print(f"DEBUG: CHAR_LEVEL difference for tokens: {token1}, {token2}")
+                TitleComparison._highlight_character_differences(paragraph1, paragraph2, token1, token2)
             elif flag == "MISSING_1":
-                if run2:
-                    run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                print(f"DEBUG: Token missing in the first text: {token2}")
+                run2 = paragraph2.add_run(token2)
+                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
             elif flag == "MISSING_2":
-                if run1:
-                    run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                print(f"DEBUG: Token missing in the second text: {token1}")
+                run1 = paragraph1.add_run(token1)
+                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+
+    @staticmethod
+    def _highlight_character_differences(paragraph1, paragraph2, token1, token2):
+        """
+        Highlight character-level differences between two tokens.
+        """
+        if token1 is None or token2 is None:
+            print("DEBUG: Skipping highlighting as one of the tokens is None")
+            return  # Skip if either token is None
+
+        matcher = SequenceMatcher(None, token1, token2)
+        print(f"DEBUG: Character-level differences for tokens: {token1}, {token2}")
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            print(f"DEBUG: Operation {tag}, Token1[{i1}:{i2}]='{token1[i1:i2]}', Token2[{j1}:{j2}]='{token2[j1:j2]}'")
+            if tag == 'equal':
+                paragraph1.add_run(token1[i1:i2])
+                paragraph2.add_run(token2[j1:j2])
+            elif tag == 'replace':
+                if token1[i1:i2].lower() == token2[j1:j2].lower():  # Case-only difference
+                    print(f"DEBUG: Case-only difference for: '{token1[i1:i2]}' vs '{token2[j1:j2]}'")
+                    run1 = paragraph1.add_run(token1[i1:i2])
+                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                    run2 = paragraph2.add_run(token2[j1:j2])
+                    run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                else:  # Significant character-level difference
+                    print(f"DEBUG: Significant difference for: '{token1[i1:i2]}' vs '{token2[j1:j2]}'")
+                    run1 = paragraph1.add_run(token1[i1:i2])
+                    run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+                    run2 = paragraph2.add_run(token2[j1:j2])
+                    run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            elif tag == 'delete':
+                print(f"DEBUG: Token deleted: '{token1[i1:i2]}'")
+                run1 = paragraph1.add_run(token1[i1:i2])
+                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif tag == 'insert':
+                print(f"DEBUG: Token inserted: '{token2[j1:j2]}'")
+                run2 = paragraph2.add_run(token2[j1:j2])
+                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
+
+    @staticmethod
+    def dp_align_tokens(tokens1, tokens2):
+        """
+        Align tokens from two lists using dynamic programming for optimal alignment.
+        """
+        n, m = len(tokens1), len(tokens2)
+        dp = [[0] * (m + 1) for _ in range(n + 1)]
+        backtrack = [[None] * (m + 1) for _ in range(n + 1)]
+
+        # Fill DP table
+        for i in range(1, n + 1):
+            dp[i][0] = i
+            backtrack[i][0] = 'UP'
+        for j in range(1, m + 1):
+            dp[0][j] = j
+            backtrack[0][j] = 'LEFT'
+
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                similarity = SequenceMatcher(None, tokens1[i - 1], tokens2[j - 1]).ratio()
+
+                if similarity == 1.0:  # Exact match
+                    dp[i][j] = dp[i - 1][j - 1]
+                    backtrack[i][j] = 'DIAG'
+                else:
+                    replace_cost = dp[i - 1][j - 1] + (1 - similarity)
+                    delete_cost = dp[i - 1][j] + 1
+                    insert_cost = dp[i][j - 1] + 1
+
+                    dp[i][j] = min(replace_cost, delete_cost, insert_cost)
+                    if dp[i][j] == replace_cost:
+                        backtrack[i][j] = 'DIAG'
+                    elif dp[i][j] == delete_cost:
+                        backtrack[i][j] = 'UP'
+                    else:
+                        backtrack[i][j] = 'LEFT'
+
+        # Traceback
+        aligned1, aligned2, flags = [], [], []
+        i, j = n, m
+        while i > 0 or j > 0:
+            if backtrack[i][j] == 'DIAG':
+                aligned1.append(tokens1[i - 1])
+                aligned2.append(tokens2[j - 1])
+                if tokens1[i - 1].lower() == tokens2[j - 1].lower() and tokens1[i - 1] != tokens2[j - 1]:
+                    flags.append("CASE_ONLY")  # Case-only difference
+                elif tokens1[i - 1] == tokens2[j - 1]:
+                    flags.append("EXACT")  # Exact match
+                else:
+                    flags.append("CHAR_LEVEL")  # Character-level difference
+
+                i -= 1
+                j -= 1
+            elif backtrack[i][j] == 'UP':
+                aligned1.append(tokens1[i - 1])
+                aligned2.append(None)
+                flags.append("MISSING_2")
+                i -= 1
+            elif backtrack[i][j] == 'LEFT':
+                aligned1.append(None)
+                aligned2.append(tokens2[j - 1])
+                flags.append("MISSING_1")
+                j -= 1
+
+        return aligned1[::-1], aligned2[::-1], flags[::-1]
+
+    @staticmethod
+    def tokenize(text):
+        """
+        Tokenize text into words, punctuation, and spaces while preserving spacing.
+        Hyphenated words and punctuation are treated as single tokens.
+        """
+        tokens = re.findall(r'(\s+|[^\s]+)', text)
+        print("DEBUG: Tokenized Text:", tokens)
+        return tokens
 
 
 class MergerGUI:
