@@ -268,41 +268,17 @@ class TitleComparison:
     @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
         """
-        Highlight differences between two pieces of text, preserving spaces and applying color codes.
+        Highlight differences between two pieces of text, preserving spaces for rendering.
         """
-        tokens1 = TitleComparison.tokenize(text1)
-        tokens2 = TitleComparison.tokenize(text2)
+        tokens1 = TitleComparison.tokenize_with_indices(text1)
+        tokens2 = TitleComparison.tokenize_with_indices(text2)
+
+        # Perform alignment
         aligned_tokens1, aligned_tokens2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
 
-        print("DEBUG: Aligned Tokens and Flags:")
-        for token1, token2, flag in zip(aligned_tokens1, aligned_tokens2, flags):
-            print(f"Token1: {token1}, Token2: {token2}, Flag: {flag}")
-
-        for token1, token2, flag in zip(aligned_tokens1, aligned_tokens2, flags):
-            run1, run2 = None, None
-
-            # Avoid duplication by handling CHAR_LEVEL and CASE_ONLY properly
-            if flag == "EXACT":
-                print(f"DEBUG: EXACT match for tokens: {token1}, {token2}")
-                paragraph1.add_run(token1)
-                paragraph2.add_run(token2)
-            elif flag == "CASE_ONLY":
-                print(f"DEBUG: CASE_ONLY match for tokens: {token1}, {token2}")
-                run1 = paragraph1.add_run(token1)
-                run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                run2 = paragraph2.add_run(token2)
-                run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-            elif flag == "CHAR_LEVEL":
-                print(f"DEBUG: CHAR_LEVEL difference for tokens: {token1}, {token2}")
-                TitleComparison._highlight_character_differences(paragraph1, paragraph2, token1, token2)
-            elif flag == "MISSING_1":
-                print(f"DEBUG: Token missing in the first text: {token2}")
-                run2 = paragraph2.add_run(token2)
-                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            elif flag == "MISSING_2":
-                print(f"DEBUG: Token missing in the second text: {token1}")
-                run1 = paragraph1.add_run(token1)
-                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        # Reconstruct the text in Word
+        TitleComparison.reconstruct_text_with_flags(paragraph1, aligned_tokens1, flags)
+        TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, flags)
 
     @staticmethod
     def _highlight_character_differences(paragraph1, paragraph2, token1, token2):
@@ -315,6 +291,7 @@ class TitleComparison:
 
         matcher = SequenceMatcher(None, token1, token2)
         print(f"DEBUG: Character-level differences for tokens: {token1}, {token2}")
+
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
             print(f"DEBUG: Operation {tag}, Token1[{i1}:{i2}]='{token1[i1:i2]}', Token2[{j1}:{j2}]='{token2[j1:j2]}'")
             if tag == 'equal':
@@ -343,81 +320,156 @@ class TitleComparison:
                 run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
     @staticmethod
+    def tokenize(text):
+        """
+        Tokenize text into words and punctuation, excluding spaces.
+        """
+        tokens = re.findall(r'[^\s]+', text)
+        return tokens
+
+    @staticmethod
+    def tokenize_with_indices(text):
+        """
+        Tokenize text into words and punctuation, excluding spaces, and return indices.
+        """
+        tokens = []
+        for match in re.finditer(r'[^\s]+', text):
+            tokens.append((match.group(), match.start()))
+        print("DEBUG: Tokenized Text with Indices:", tokens)
+        return tokens
+
+    @staticmethod
     def dp_align_tokens(tokens1, tokens2):
         """
         Align tokens from two lists using dynamic programming for optimal alignment.
         """
-        n, m = len(tokens1), len(tokens2)
+        # Extract token strings and their indices
+        token_strs1 = [t[0] for t in tokens1]
+        token_strs2 = [t[0] for t in tokens2]
+
+        n, m = len(token_strs1), len(token_strs2)
         dp = [[0] * (m + 1) for _ in range(n + 1)]
         backtrack = [[None] * (m + 1) for _ in range(n + 1)]
 
         # Fill DP table
         for i in range(1, n + 1):
-            dp[i][0] = i
+            dp[i][0] = i  # Cost of deletions
             backtrack[i][0] = 'UP'
         for j in range(1, m + 1):
-            dp[0][j] = j
+            dp[0][j] = j  # Cost of insertions
             backtrack[0][j] = 'LEFT'
 
         for i in range(1, n + 1):
             for j in range(1, m + 1):
-                similarity = SequenceMatcher(None, tokens1[i - 1], tokens2[j - 1]).ratio()
+                similarity = SequenceMatcher(None, token_strs1[i - 1], token_strs2[j - 1]).ratio()
 
+                # Calculate costs
                 if similarity == 1.0:  # Exact match
-                    dp[i][j] = dp[i - 1][j - 1]
-                    backtrack[i][j] = 'DIAG'
-                else:
+                    replace_cost = dp[i - 1][j - 1]
+                elif similarity >= 0.8:  # High similarity
                     replace_cost = dp[i - 1][j - 1] + (1 - similarity)
-                    delete_cost = dp[i - 1][j] + 1
-                    insert_cost = dp[i][j - 1] + 1
+                elif similarity >= 0.4:  # Moderate similarity
+                    replace_cost = dp[i - 1][j - 1] + 2
+                else:  # Completely unrelated tokens
+                    replace_cost = float('inf')
 
-                    dp[i][j] = min(replace_cost, delete_cost, insert_cost)
-                    if dp[i][j] == replace_cost:
-                        backtrack[i][j] = 'DIAG'
-                    elif dp[i][j] == delete_cost:
-                        backtrack[i][j] = 'UP'
-                    else:
-                        backtrack[i][j] = 'LEFT'
+                delete_cost = dp[i - 1][j] + 1
+                insert_cost = dp[i][j - 1] + 1
 
-        # Traceback
-        aligned1, aligned2, flags = [], [], []
+                dp[i][j] = min(replace_cost, delete_cost, insert_cost)
+
+                if dp[i][j] == replace_cost:
+                    backtrack[i][j] = 'DIAG'
+                elif dp[i][j] == delete_cost:
+                    backtrack[i][j] = 'UP'
+                else:
+                    backtrack[i][j] = 'LEFT'
+
+        # Traceback to align tokens
+        aligned_tokens1, aligned_tokens2, flags = [], [], []
         i, j = n, m
         while i > 0 or j > 0:
             if backtrack[i][j] == 'DIAG':
-                aligned1.append(tokens1[i - 1])
-                aligned2.append(tokens2[j - 1])
-                if tokens1[i - 1].lower() == tokens2[j - 1].lower() and tokens1[i - 1] != tokens2[j - 1]:
-                    flags.append("CASE_ONLY")  # Case-only difference
-                elif tokens1[i - 1] == tokens2[j - 1]:
-                    flags.append("EXACT")  # Exact match
-                else:
-                    flags.append("CHAR_LEVEL")  # Character-level difference
-
+                aligned_tokens1.append(tokens1[i - 1])
+                aligned_tokens2.append(tokens2[j - 1])
+                flags.append("EXACT" if token_strs1[i - 1] == token_strs2[j - 1] else "CHAR_LEVEL")
                 i -= 1
                 j -= 1
             elif backtrack[i][j] == 'UP':
-                aligned1.append(tokens1[i - 1])
-                aligned2.append(None)
+                aligned_tokens1.append(tokens1[i - 1])
+                aligned_tokens2.append((None, None))
                 flags.append("MISSING_2")
                 i -= 1
             elif backtrack[i][j] == 'LEFT':
-                aligned1.append(None)
-                aligned2.append(tokens2[j - 1])
+                aligned_tokens1.append((None, None))
+                aligned_tokens2.append(tokens2[j - 1])
                 flags.append("MISSING_1")
                 j -= 1
 
-        return aligned1[::-1], aligned2[::-1], flags[::-1]
+        return aligned_tokens1[::-1], aligned_tokens2[::-1], flags[::-1]
 
     @staticmethod
-    def tokenize(text):
+    def reconstruct_text_with_flags(paragraph, tokens, flags):
         """
-        Tokenize text into words, punctuation, and spaces while preserving spacing.
-        Hyphenated words and punctuation are treated as single tokens.
+        Reconstruct the text in the paragraph using original indices and apply flags for highlighting.
         """
-        tokens = re.findall(r'(\s+|[^\s]+)', text)
-        print("DEBUG: Tokenized Text:", tokens)
-        return tokens
+        for (token, index), flag in zip(tokens, flags):
+            if token is None:
+                continue
 
+            # Add a space before the token if required
+            if index > 0:
+                paragraph.add_run(" ")
+
+            run = paragraph.add_run(token)
+
+            if flag == "EXACT":
+                continue  # No formatting needed
+            elif flag == "CASE_ONLY":
+                run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+            elif flag == "CHAR_LEVEL":
+                run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            elif flag == "MISSING_1" or flag == "MISSING_2":
+                run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+
+    @staticmethod
+    def reconstruct_with_spaces(text, tokens):
+        """
+        Reconstruct the text by adding spaces between tokens based on the original text.
+        """
+        reconstructed = []
+        original_index = 0
+
+        for token in tokens:
+            if token is None:
+                reconstructed.append(None)
+                continue
+            # Find token in the text starting from the last position
+            next_index = text.find(token, original_index)
+            if next_index > original_index:
+                reconstructed.append(" " * (next_index - original_index))  # Add spaces
+            reconstructed.append(token)
+            original_index = next_index + len(token)
+
+        # Add trailing spaces, if any
+        if original_index < len(text):
+            reconstructed.append(" " * (len(text) - original_index))
+
+        return reconstructed
+
+    @staticmethod
+    def align_with_spaces(text1, text2):
+        """
+        Perform token alignment while handling spaces.
+        """
+        tokens1 = TitleComparison.tokenize(text1)
+        tokens2 = TitleComparison.tokenize(text2)
+        aligned1, aligned2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
+
+        aligned1_with_spaces = TitleComparison.reconstruct_with_spaces(text1, aligned1)
+        aligned2_with_spaces = TitleComparison.reconstruct_with_spaces(text2, aligned2)
+
+        return aligned1_with_spaces, aligned2_with_spaces, flags
 
 class MergerGUI:
     """Handles the GUI for the Excel merger."""
