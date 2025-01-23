@@ -281,53 +281,6 @@ class TitleComparison:
         TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, flags)
 
     @staticmethod
-    def _highlight_character_differences(paragraph1, paragraph2, token1, token2):
-        """
-        Highlight character-level differences between two tokens.
-        """
-        if token1 is None or token2 is None:
-            print("DEBUG: Skipping highlighting as one of the tokens is None")
-            return  # Skip if either token is None
-
-        matcher = SequenceMatcher(None, token1, token2)
-        print(f"DEBUG: Character-level differences for tokens: {token1}, {token2}")
-
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            print(f"DEBUG: Operation {tag}, Token1[{i1}:{i2}]='{token1[i1:i2]}', Token2[{j1}:{j2}]='{token2[j1:j2]}'")
-            if tag == 'equal':
-                paragraph1.add_run(token1[i1:i2])
-                paragraph2.add_run(token2[j1:j2])
-            elif tag == 'replace':
-                if token1[i1:i2].lower() == token2[j1:j2].lower():  # Case-only difference
-                    print(f"DEBUG: Case-only difference for: '{token1[i1:i2]}' vs '{token2[j1:j2]}'")
-                    run1 = paragraph1.add_run(token1[i1:i2])
-                    run1.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                    run2 = paragraph2.add_run(token2[j1:j2])
-                    run2.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                else:  # Significant character-level difference
-                    print(f"DEBUG: Significant difference for: '{token1[i1:i2]}' vs '{token2[j1:j2]}'")
-                    run1 = paragraph1.add_run(token1[i1:i2])
-                    run1.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-                    run2 = paragraph2.add_run(token2[j1:j2])
-                    run2.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            elif tag == 'delete':
-                print(f"DEBUG: Token deleted: '{token1[i1:i2]}'")
-                run1 = paragraph1.add_run(token1[i1:i2])
-                run1.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            elif tag == 'insert':
-                print(f"DEBUG: Token inserted: '{token2[j1:j2]}'")
-                run2 = paragraph2.add_run(token2[j1:j2])
-                run2.font.color.rgb = RGBColor(255, 0, 0)  # Red
-
-    @staticmethod
-    def tokenize(text):
-        """
-        Tokenize text into words and punctuation, excluding spaces.
-        """
-        tokens = re.findall(r'[^\s]+', text)
-        return tokens
-
-    @staticmethod
     def tokenize_with_indices(text):
         """
         Tokenize text into words and punctuation, excluding spaces, and return indices.
@@ -432,44 +385,6 @@ class TitleComparison:
             elif flag == "MISSING_1" or flag == "MISSING_2":
                 run.font.color.rgb = RGBColor(255, 0, 0)  # Red
 
-    @staticmethod
-    def reconstruct_with_spaces(text, tokens):
-        """
-        Reconstruct the text by adding spaces between tokens based on the original text.
-        """
-        reconstructed = []
-        original_index = 0
-
-        for token in tokens:
-            if token is None:
-                reconstructed.append(None)
-                continue
-            # Find token in the text starting from the last position
-            next_index = text.find(token, original_index)
-            if next_index > original_index:
-                reconstructed.append(" " * (next_index - original_index))  # Add spaces
-            reconstructed.append(token)
-            original_index = next_index + len(token)
-
-        # Add trailing spaces, if any
-        if original_index < len(text):
-            reconstructed.append(" " * (len(text) - original_index))
-
-        return reconstructed
-
-    @staticmethod
-    def align_with_spaces(text1, text2):
-        """
-        Perform token alignment while handling spaces.
-        """
-        tokens1 = TitleComparison.tokenize(text1)
-        tokens2 = TitleComparison.tokenize(text2)
-        aligned1, aligned2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
-
-        aligned1_with_spaces = TitleComparison.reconstruct_with_spaces(text1, aligned1)
-        aligned2_with_spaces = TitleComparison.reconstruct_with_spaces(text2, aligned2)
-
-        return aligned1_with_spaces, aligned2_with_spaces, flags
 
 class MergerGUI:
     """Handles the GUI for the Excel merger."""
