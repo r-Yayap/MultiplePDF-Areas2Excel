@@ -225,8 +225,8 @@ class TitleComparison:
         for cell in header_cells:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
-                    run.font.name = 'Verdana'
-                    run.font.size = Pt(10)
+                    run.font.name = 'Helvetica'
+                    run.font.size = Pt(9)
                     run.bold = True
 
         # Populate rows
