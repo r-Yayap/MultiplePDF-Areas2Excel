@@ -1,7 +1,8 @@
 # gui.py
 
 import importlib
-import json
+from openpyxl import Workbook, load_workbook
+from tkinter import filedialog, messagebox
 import multiprocessing
 import os
 import time
@@ -38,35 +39,62 @@ class XtractorGUI:
         self.setup_bindings()
         self.setup_tooltips()
 
+    from openpyxl import Workbook, load_workbook
+    from tkinter import filedialog, messagebox
+
     def export_rectangles(self):
-        """Exports the currently selected areas (rectangles) to a JSON file."""
+        """Exports the currently selected areas (rectangles) to an Excel file."""
         export_file_path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("Excel 97-2003 files", "*.xls"),
+                       ("Excel Macro-Enabled Workbook", "*.xlsm"), ("All files", "*.*")],
             title="Save Rectangles As"
         )
         if export_file_path:
             try:
-                with open(export_file_path, 'w', encoding='utf-8') as json_file:
-                    json.dump(self.pdf_viewer.areas, json_file, indent=4)
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Rectangles"
+
+                # Add headers
+                ws.append(["Title", "x0", "y0", "x1", "y1"])
+
+                # Write rectangle data
+                for area in self.pdf_viewer.areas:
+                    title = area.get("title", "Untitled")
+                    coordinates = area["coordinates"]
+                    ws.append([title] + coordinates)
+
+                # Save to Excel file
+                wb.save(export_file_path)
                 print(f"Exported areas to {export_file_path}")
+
             except Exception as e:
                 messagebox.showerror("Export Error", f"Could not export areas: {e}")
 
     def import_rectangles(self):
-        """Imports area selections from a JSON file."""
+        """Imports area selections from an Excel file."""
         import_file_path = filedialog.askopenfilename(
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            filetypes=[("Excel files", "*.xlsx;*.xls;*.xlsm"), ("All files", "*.*")],
             title="Import Rectangles"
         )
         if import_file_path:
             try:
-                with open(import_file_path, 'r') as json_file:
-                    imported_areas = json.load(json_file)
-                self.pdf_viewer.areas = imported_areas  # Update the areas in the PDF viewer
-                self.pdf_viewer.update_rectangles()  # Refresh the rectangles on the canvas
+                wb = load_workbook(import_file_path)
+                ws = wb.active  # Assume first sheet contains data
+
+                # Read all areas from the sheet
+                imported_areas = []
+                for row in ws.iter_rows(min_row=2, values_only=True):  # Skip header row
+                    title, x0, y0, x1, y1 = row
+                    imported_areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
+
+                # Update the areas in the PDF viewer
+                self.pdf_viewer.areas = imported_areas
+                self.pdf_viewer.update_rectangles()  # Refresh rectangles on the canvas
                 self.update_areas_treeview()  # Refresh the Treeview to show imported areas
                 print(f"Imported areas from {import_file_path}")
+
             except Exception as e:
                 messagebox.showerror("Import Error", f"Could not import areas: {e}")
 
