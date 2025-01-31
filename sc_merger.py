@@ -317,12 +317,18 @@ class TitleComparison:
                 similarity = SequenceMatcher(None, token_strs1[i - 1], token_strs2[j - 1]).ratio()
 
                 # Calculate costs
-                if similarity == 1.0:  # Exact match
+                if token_strs1[i - 1] == token_strs2[j - 1]:  # Exact match
                     replace_cost = dp[i - 1][j - 1]
+                    flag = "EXACT"
+                elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():  # Case-only difference
+                    replace_cost = dp[i - 1][j - 1] + 0.5  # Slight penalty
+                    flag = "CASE_ONLY"
                 elif similarity >= 0.8:  # High similarity
                     replace_cost = dp[i - 1][j - 1] + (1 - similarity)
+                    flag = "CHAR_LEVEL"
                 elif similarity >= 0.4:  # Moderate similarity
                     replace_cost = dp[i - 1][j - 1] + 2
+                    flag = "CHAR_LEVEL"
                 else:  # Completely unrelated tokens
                     replace_cost = float('inf')
 
@@ -345,7 +351,14 @@ class TitleComparison:
             if backtrack[i][j] == 'DIAG':
                 aligned_tokens1.append(tokens1[i - 1])
                 aligned_tokens2.append(tokens2[j - 1])
-                flags.append("EXACT" if token_strs1[i - 1] == token_strs2[j - 1] else "CHAR_LEVEL")
+
+                if token_strs1[i - 1] == token_strs2[j - 1]:
+                    flags.append("EXACT")
+                elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():
+                    flags.append("CASE_ONLY")
+                else:
+                    flags.append("CHAR_LEVEL")
+
                 i -= 1
                 j -= 1
             elif backtrack[i][j] == 'UP':
