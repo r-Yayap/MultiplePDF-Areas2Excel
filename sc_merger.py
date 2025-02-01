@@ -2,7 +2,6 @@ import os
 import re
 import tkinter as tk
 from difflib import SequenceMatcher
-
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -27,7 +26,10 @@ class ExcelMerger:
                      title_column1=None, title_column2=None):
         """
         Merge two Excel files while retaining hyperlinks and applying formatting.
-        Optionally apply title rich-text highlighting if title_column1 and title_column2 are provided.
+        The selected headers will be renamed:
+          - The reference column in Excel 1 becomes "number_1" and in Excel 2 "number_2"
+          - The title column in Excel 1 becomes "title_excel1" and in Excel 2 "title_excel2"
+        Optionally, apply title rich-text highlighting if title_column1 and title_column2 are provided.
         """
         # Read Excel files
         excel1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
@@ -40,41 +42,54 @@ class ExcelMerger:
         # Add original_row_index to track rows (based on non-empty rows in excel1)
         excel1 = ExcelMerger.add_original_row_index_to_dataframe(excel1, excel1_path)
 
-        # Extract hyperlinks from the original file
+        # Extract hyperlinks from the original file (from Excel1)
         hyperlinks = ExcelMerger._extract_hyperlinks(excel1_path)
 
-        # Prepare data for merging
+        # Prepare data for merging:
+        # First, compute a count for duplicate reference values
         excel1['refno_count'] = excel1.groupby(ref_column1).cumcount()
         excel2['refno_count'] = excel2.groupby(ref_column2).cumcount()
-        excel1 = excel1.rename(columns={ref_column1: 'refno1'})
-        excel2 = excel2.rename(columns={ref_column2: 'refno2'})
 
+        # Rename the reference columns to our desired fixed names:
+        excel1 = excel1.rename(columns={ref_column1: 'number_1'})
+        excel2 = excel2.rename(columns={ref_column2: 'number_2'})
+
+        # Optionally rename the title columns if provided.
+        if title_column1:
+            excel1 = excel1.rename(columns={title_column1: 'title_excel1'})
+        if title_column2:
+            excel2 = excel2.rename(columns={title_column2: 'title_excel2'})
+
+        # Now merge the DataFrames. (Since we’ve renamed the keys, we merge on 'number_1' and 'number_2'.)
         merged_df = pd.merge(
             excel1, excel2,
-            left_on=['refno1', 'refno_count'],
-            right_on=['refno2', 'refno_count'],
+            left_on=['number_1', 'refno_count'],
+            right_on=['number_2', 'refno_count'],
             how='outer'
         ).drop(columns=['refno_count']).fillna("")
+
         merged_df['original_row_index'] = pd.to_numeric(
             merged_df['original_row_index'], errors='coerce').fillna(0).astype(int)
 
-        # Save the merged file without extra formatting
+        # Debug: print merged columns to verify renaming.
+        print("Merged DataFrame columns:")
+        print(merged_df.columns.tolist())
+
+        # Save the merged file without extra formatting.
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
-        # Apply formatting and reapply hyperlinks
+        # Apply formatting and reapply hyperlinks.
         ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
 
-        # If title column names were provided, apply rich-text title highlighting in Excel
+        # If title columns were provided, apply rich-text title highlighting in Excel.
+        # (Now we know the fixed names are "title_excel1" and "title_excel2".)
         if title_column1 and title_column2:
-            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, title_column1, title_column2)
+            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
 
         return temp_file_path, merged_df
 
     @staticmethod
     def _extract_hyperlinks(file_path):
-        """
-        Extract hyperlinks from the original Excel file and map them using row numbers.
-        """
         print("Extracting hyperlinks from:", file_path)
         hyperlinks = {}
         wb = load_workbook(file_path, data_only=False)
@@ -94,10 +109,6 @@ class ExcelMerger:
 
     @staticmethod
     def add_original_row_index_to_dataframe(df, file_path):
-        """
-        Add original_row_index to the DataFrame by matching DataFrame rows
-        with non-empty rows in the Excel file.
-        """
         print(f"Adding original row indices from file: {file_path}")
         wb = load_workbook(file_path, data_only=False)
         ws = wb.active
@@ -118,20 +129,12 @@ class ExcelMerger:
 
     @staticmethod
     def _save_merged_to_excel(df, output_path):
-        """
-        Save the merged DataFrame to an Excel file.
-        """
-        temp_file_path = output_path if not os.path.isdir(output_path) else os.path.join(output_path,
-                                                                                         'merged_result_temp.xlsx')
+        temp_file_path = output_path if not os.path.isdir(output_path) else os.path.join(output_path, 'merged_result_temp.xlsx')
         df.to_excel(temp_file_path, index=False, header=True)
         return temp_file_path
 
     @staticmethod
     def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df):
-        """
-        Apply conditional formatting for mismatches and duplicates,
-        and reapply hyperlinks using the hyperlinks dictionary.
-        """
         wb = load_workbook(file_path)
         ws = wb.active
         print("Applying formatting and hyperlinks to:", file_path)
@@ -140,11 +143,12 @@ class ExcelMerger:
         fill_missing_refno2 = PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid")
         duplicate_font = Font(bold=True, color="FF3300")
 
-        refno1_col_idx = merged_df.columns.get_loc('refno1') + 1
-        refno2_col_idx = merged_df.columns.get_loc('refno2') + 1
+        # Our reference keys are now 'number_1' and 'number_2'
+        refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
+        refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
 
-        refno1_duplicates = merged_df['refno1'][merged_df['refno1'].duplicated(keep=False)].tolist()
-        refno2_duplicates = merged_df['refno2'][merged_df['refno2'].duplicated(keep=False)].tolist()
+        refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
+        refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
 
         for row_idx in range(2, len(merged_df) + 2):
             refno1_value = ws.cell(row=row_idx, column=refno1_col_idx).value
@@ -175,16 +179,10 @@ class ExcelMerger:
                     print(f"Error applying hyperlink for row {new_row_idx}, col {col_idx}: {e}")
 
         wb.save(file_path)
+        wb.close()
 
-    # -------------------------------------------------------------------
-    # Methods for tokenizing, aligning tokens, and creating rich text
-    # (for highlighting differences in title columns in the Excel file)
-    # -------------------------------------------------------------------
     @staticmethod
     def tokenize_with_indices(text):
-        """
-        Tokenize text into words/punctuation (excluding whitespace) and return a list of (token, index) tuples.
-        """
         tokens = []
         for match in re.finditer(r'[^\s]+', text):
             tokens.append((match.group(), match.start()))
@@ -192,10 +190,6 @@ class ExcelMerger:
 
     @staticmethod
     def dp_align_tokens(tokens1, tokens2):
-        """
-        Align tokens from two lists using dynamic programming for optimal alignment.
-        Returns aligned_tokens1, aligned_tokens2, and alignment flags.
-        """
         token_strs1 = [t[0] for t in tokens1]
         token_strs2 = [t[0] for t in tokens2]
         n, m = len(token_strs1), len(token_strs2)
@@ -267,9 +261,6 @@ class ExcelMerger:
 
     @staticmethod
     def create_rich_text(original_text, aligned_tokens, flags):
-        """
-        Create a CellRichText object from original_text using token alignment and formatting flags.
-        """
         rich_text = CellRichText()
         last_index = 0
         for (token, idx), flag in zip(aligned_tokens, flags):
@@ -294,10 +285,6 @@ class ExcelMerger:
 
     @staticmethod
     def apply_title_highlighting(file_path, merged_df, title_col1, title_col2):
-        """
-        For each row in the merged Excel file, compare the two title columns and update the cell
-        content with rich text that highlights differences.
-        """
         wb = load_workbook(file_path, rich_text=True)
         ws = wb.active
 
@@ -305,10 +292,18 @@ class ExcelMerger:
         col_idx1 = merged_df.columns.get_loc(title_col1) + 1
         col_idx2 = merged_df.columns.get_loc(title_col2) + 1
 
+        # Debug: print out which columns (and their indices) are used for title highlighting.
+        print("Applying title highlighting:")
+        print(f"Title column 1: {title_col1} (Column index: {col_idx1})")
+        print(f"Title column 2: {title_col2} (Column index: {col_idx2})")
+
         for i, row in merged_df.iterrows():
             excel_row = i + 2  # Account for header row in Excel
             title1 = str(row.get(title_col1, ""))
             title2 = str(row.get(title_col2, ""))
+
+            # Debug: print the titles being compared on each row
+            print(f"Row {excel_row}: Comparing Title1: '{title1}' with Title2: '{title2}'")
 
             tokens1 = ExcelMerger.tokenize_with_indices(title1)
             tokens2 = ExcelMerger.tokenize_with_indices(title2)
@@ -321,6 +316,7 @@ class ExcelMerger:
             ws.cell(row=excel_row, column=col_idx2).value = rich_text2
 
         wb.save(file_path)
+        wb.close()
         print("Title highlighting applied and workbook saved:", file_path)
 
 
@@ -329,23 +325,21 @@ class TitleComparison:
 
     @staticmethod
     def create_report(df, title_column1, title_column2, output_path):
-        """
-        Create a Word document highlighting differences between two title columns.
-        Include all rows, even those with no differences.
-        """
+        # With our new renaming, we expect the merged DataFrame to have
+        # 'title_excel1' and 'title_excel2' for the title columns.
+        print("Creating report using columns: title_excel1 and title_excel2")
         doc = Document()
         doc.add_heading('Title Differences Report', level=1)
 
-        # Add summary
-        TitleComparison._add_summary(doc, len(df), len(df[df[title_column1] != df[title_column2]]))
+        mismatches = df['title_excel1'] != df['title_excel2']
+        TitleComparison._add_summary(doc, len(df), len(df[mismatches]))
 
-        # Create a table with three columns
         table = doc.add_table(rows=1, cols=3)
         table.style = 'Table Grid'
         header_cells = table.rows[0].cells
         header_cells[0].text = "Drawing Number"
-        header_cells[1].text = title_column1
-        header_cells[2].text = title_column2
+        header_cells[1].text = "title_excel1"
+        header_cells[2].text = "title_excel2"
 
         for cell in header_cells:
             for paragraph in cell.paragraphs:
@@ -354,19 +348,18 @@ class TitleComparison:
                     run.font.size = Pt(9)
                     run.bold = True
 
-        # Populate rows with title comparisons
         for _, row in df.iterrows():
             row_cells = table.add_row().cells
-            row_cells[0].text = row.get('refno1', "")
+            row_cells[0].text = row.get('number_1', "")
             para1 = row_cells[1].paragraphs[0]
             para2 = row_cells[2].paragraphs[0]
-            TitleComparison._highlight_differences(para1, para2, row[title_column1], row[title_column2])
+            TitleComparison._highlight_differences(para1, para2, row['title_excel1'], row['title_excel2'])
 
         doc.save(output_path)
+        print("Report saved at:", output_path)
 
     @staticmethod
     def _add_summary(doc, total_titles, mismatched_count):
-        """Add a summary of the title comparison to the Word document with styled text."""
         doc.add_heading('Summary of Title Comparison', level=2)
         total_para = doc.add_paragraph(f"Total Titles Compared: {total_titles}")
         total_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
@@ -382,20 +375,14 @@ class TitleComparison:
 
     @staticmethod
     def tokenize_with_indices(text):
-        """
-        Tokenize text into words and punctuation, excluding spaces, and return indices.
-        """
         tokens = []
         for match in re.finditer(r'[^\s]+', text):
             tokens.append((match.group(), match.start()))
-        print("DEBUG: Tokenized Text with Indices:", tokens)
+        print("DEBUG (Report): Tokenized Text with Indices:", tokens)
         return tokens
 
     @staticmethod
     def dp_align_tokens(tokens1, tokens2):
-        """
-        Align tokens from two lists using dynamic programming for optimal alignment.
-        """
         token_strs1 = [t[0] for t in tokens1]
         token_strs2 = [t[0] for t in tokens2]
         n, m = len(token_strs1), len(token_strs2)
@@ -464,52 +451,36 @@ class TitleComparison:
 
     @staticmethod
     def _highlight_differences(paragraph1, paragraph2, text1, text2):
-        """
-        Highlight differences between two pieces of text.
-        """
         tokens1 = TitleComparison.tokenize_with_indices(text1)
         tokens2 = TitleComparison.tokenize_with_indices(text2)
         aligned_tokens1, aligned_tokens2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
-        # Pass both token lists to the reconstruct method:
         TitleComparison.reconstruct_text_with_flags(paragraph1, aligned_tokens1, aligned_tokens2, flags)
         TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, aligned_tokens1, flags)
 
     @staticmethod
     def reconstruct_text_with_flags(paragraph, tokens1, tokens2, flags):
-        """
-        Reconstructs the text in the paragraph using original indices and applies flags for highlighting.
-        CHAR_LEVEL differences are now highlighted at the character level, not the whole word.
-        """
         for (token1, index1), (token2, index2), flag in zip(tokens1, tokens2, flags):
             if token1 is None:
                 continue
-
-            # Add a space before the token if required
             if index1 > 0:
                 paragraph.add_run(" ")
-
             if flag == "EXACT":
-                paragraph.add_run(token1)  # No formatting needed
-
+                paragraph.add_run(token1)
             elif flag == "CASE_ONLY":
                 run = paragraph.add_run(token1)
-                run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
-
+                run.font.color.rgb = RGBColor(128, 128, 128)
             elif flag == "CHAR_LEVEL":
-                # Highlight only the differing characters
                 matcher = SequenceMatcher(None, token1, token2)
                 for op, i1, i2, j1, j2 in matcher.get_opcodes():
-                    text_part = token1[i1:i2]  # Extract substring
+                    text_part = token1[i1:i2]
                     if op == "equal":
                         paragraph.add_run(text_part)
                     else:
                         diff_run = paragraph.add_run(text_part)
-                        diff_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-
+                        diff_run.font.color.rgb = RGBColor(255, 165, 0)
             elif flag in ["MISSING_1", "MISSING_2"]:
                 run = paragraph.add_run(token1)
-                run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-
+                run.font.color.rgb = RGBColor(255, 0, 0)
         return paragraph
 
 
@@ -520,85 +491,145 @@ class MergerGUI:
         self.mergerApp = ctk.CTkToplevel(master) if master else ctk.CTk()
         self.mergerApp.title("Merger Tool")
 
-        # Initialize tkinter variables
         self.excel1_path = tk.StringVar()
         self.excel2_path = tk.StringVar()
         self.output_path = tk.StringVar()
-        self.ref_column1 = tk.StringVar(value="Area 1")
-        self.ref_column2 = tk.StringVar(value="SHEET NO")
-        self.title_column1 = tk.StringVar(value="Drawing Title")
-        self.title_column2 = tk.StringVar(value="LOD Title")
+
+        self.ref_column1 = tk.StringVar()
+        self.title_column1 = tk.StringVar()
+        self.ref_column2 = tk.StringVar()
+        self.title_column2 = tk.StringVar()
+
         self.generate_report = tk.BooleanVar(value=False)
+
+        self.excel1_headers = []
+        self.excel2_headers = []
 
         self._build_gui()
 
     def _build_gui(self):
-        """Build the GUI components."""
-        left_frame = ctk.CTkFrame(self.mergerApp)
-        left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        right_frame = ctk.CTkFrame(self.mergerApp)
-        right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
-        self._build_file_selection(left_frame)
-        self._build_reference_selection(right_frame)
-        self._build_controls()
+        self.mergerApp.grid_rowconfigure(0, weight=1)
+        self.mergerApp.grid_columnconfigure(0, weight=1)
+        self.mergerApp.grid_columnconfigure(1, weight=1)
 
-    def _build_file_selection(self, parent_frame):
-        """Build file selection UI."""
+        self.excel1_frame = ctk.CTkFrame(self.mergerApp)
+        self.excel1_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        self.excel2_frame = ctk.CTkFrame(self.mergerApp)
+        self.excel2_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+
+        for frame in (self.excel1_frame, self.excel2_frame):
+            frame.grid_rowconfigure(0, weight=0)
+            frame.grid_columnconfigure(0, weight=0)
+            frame.grid_columnconfigure(1, weight=1)
+
+        self._build_excel1_section(self.excel1_frame)
+        self._build_excel2_section(self.excel2_frame)
+
+        self.controls_frame = ctk.CTkFrame(self.mergerApp)
+        self.controls_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+        self._build_controls(self.controls_frame)
+
+    def _build_excel1_section(self, parent_frame):
         font_name = "Helvetica"
         font_size = 12
-        ctk.CTkLabel(parent_frame, text="Excel File 1:", font=(font_name, font_size)).grid(row=0, column=0, padx=5,
-                                                                                           pady=5)
-        ctk.CTkEntry(parent_frame, textvariable=self.excel1_path, width=200).grid(row=0, column=1, padx=5, pady=5)
-        ctk.CTkButton(parent_frame, text="Browse", command=self._browse_excel1).grid(row=0, column=2, padx=5, pady=5)
-        ctk.CTkLabel(parent_frame, text="Excel File 2:", font=(font_name, font_size)).grid(row=1, column=0, padx=5,
-                                                                                           pady=5)
-        ctk.CTkEntry(parent_frame, textvariable=self.excel2_path, width=200).grid(row=1, column=1, padx=5, pady=5)
-        ctk.CTkButton(parent_frame, text="Browse", command=self._browse_excel2).grid(row=1, column=2, padx=5, pady=5)
-        ctk.CTkLabel(parent_frame, text="Output Path:", font=(font_name, font_size)).grid(row=2, column=0, padx=5,
-                                                                                          pady=5)
-        ctk.CTkEntry(parent_frame, textvariable=self.output_path, width=200).grid(row=2, column=1, padx=5, pady=5)
-        ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(row=2, column=2,
-                                                                                                 padx=5, pady=5)
 
-    def _build_reference_selection(self, parent_frame):
-        """Build reference column selection UI."""
+        self.excel1_button = ctk.CTkButton(parent_frame, text="Select Excel File 1",
+                                           command=self._browse_excel1, width=200, height=40)
+        self.excel1_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
+            row=1, column=0, padx=5, pady=2, sticky="e")
+        self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
+        self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ctk.CTkCheckBox(parent_frame, text="Generate Title Comparison Report",
+                        variable=self.generate_report, command=self._toggle_title_entries).grid(
+            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
+
+        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
+            row=3, column=0, padx=5, pady=2, sticky="e")
+        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[], state="disabled")
+        self.title_option_menu1.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+    def _build_excel2_section(self, parent_frame):
         font_name = "Helvetica"
         font_size = 12
-        ctk.CTkLabel(parent_frame, text="Reference Column (Excel 1):", font=(font_name, font_size)).grid(row=0,
-                                                                                                         column=0,
-                                                                                                         padx=5, pady=5)
-        ctk.CTkEntry(parent_frame, textvariable=self.ref_column1, width=200).grid(row=0, column=1, padx=5, pady=5)
-        ctk.CTkLabel(parent_frame, text="Reference Column (Excel 2):", font=(font_name, font_size)).grid(row=1,
-                                                                                                         column=0,
-                                                                                                         padx=5, pady=5)
-        ctk.CTkEntry(parent_frame, textvariable=self.ref_column2, width=200).grid(row=1, column=1, padx=5, pady=5)
-        ctk.CTkCheckBox(parent_frame, text="Generate Title Comparison Report", variable=self.generate_report,
-                        command=self._toggle_title_entries).grid(row=2, column=0, columnspan=2, padx=5, pady=5,
-                                                                 sticky="w")
-        self.title_entry1 = ctk.CTkEntry(parent_frame, textvariable=self.title_column1, width=200, state="disabled")
-        self.title_entry1.grid(row=3, column=0, padx=5, pady=5)
-        self.title_entry2 = ctk.CTkEntry(parent_frame, textvariable=self.title_column2, width=200, state="disabled")
-        self.title_entry2.grid(row=3, column=1, padx=5, pady=5)
 
-    def _build_controls(self):
-        """Build the control buttons."""
-        ctk.CTkButton(self.mergerApp, text="Start Merge", command=self._start_merge).grid(row=1, column=0, columnspan=2,
-                                                                                          pady=10)
+        self.excel2_button = ctk.CTkButton(parent_frame, text="Select Excel File 2",
+                                           command=self._browse_excel2, width=200, height=40)
+        self.excel2_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
+            row=1, column=0, padx=5, pady=2, sticky="e")
+        self.ref_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column2, values=[])
+        self.ref_option_menu2.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
+            row=2, column=0, padx=5, pady=2, sticky="e")
+
+        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
+            row=3, column=0, padx=5, pady=2, sticky="e")
+        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[], state="disabled")
+        self.title_option_menu2.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+    def _build_controls(self, parent_frame):
+        font_name = "Helvetica"
+        font_size = 12
+
+        ctk.CTkLabel(parent_frame, text="Output Path:", font=(font_name, font_size)).grid(
+            row=0, column=0, padx=5, pady=2, sticky="e")
+        ctk.CTkEntry(parent_frame, textvariable=self.output_path, width=300).grid(
+            row=0, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(
+            row=0, column=2, padx=5, pady=2)
+
+        ctk.CTkButton(parent_frame, text="Start Merge", command=self._start_merge).grid(
+            row=1, column=0, columnspan=3, pady=10)
+        parent_frame.grid_columnconfigure(1, weight=1)
 
     def _browse_excel1(self):
-        """Browse for Excel File 1."""
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")], title="Select Excel File 1")
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
+                                               title="Select Excel File 1")
         if file_path:
             self.excel1_path.set(file_path)
+            self._load_excel1_headers(file_path)
+            self.excel1_button.configure(fg_color="#217346")  # Excel green
 
     def _browse_excel2(self):
-        """Browse for Excel File 2."""
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")], title="Select Excel File 2")
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
+                                               title="Select Excel File 2")
         if file_path:
             self.excel2_path.set(file_path)
+            self._load_excel2_headers(file_path)
+            self.excel2_button.configure(fg_color="#217346")  # Excel green
+
+    def _load_excel1_headers(self, file_path):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            headers = list(df.columns)
+            self.excel1_headers = headers
+            self.ref_option_menu1.configure(values=headers)
+            self.title_option_menu1.configure(values=headers)
+            if headers:
+                self.ref_column1.set(headers[0])
+                self.title_column1.set(headers[0])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load headers from Excel File 1: {e}")
+
+    def _load_excel2_headers(self, file_path):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            headers = list(df.columns)
+            self.excel2_headers = headers
+            self.ref_option_menu2.configure(values=headers)
+            self.title_option_menu2.configure(values=headers)
+            if headers:
+                self.ref_column2.set(headers[0])
+                self.title_column2.set(headers[0])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load headers from Excel File 2: {e}")
 
     def _use_excel1_path(self):
-        """Set output path to the same directory as Excel 1."""
         excel1 = self.excel1_path.get()
         if excel1:
             directory, file_name = os.path.split(excel1)
@@ -606,13 +637,11 @@ class MergerGUI:
             self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
 
     def _toggle_title_entries(self):
-        """Enable or disable title column entries based on the checkbox state."""
         state = "normal" if self.generate_report.get() else "disabled"
-        self.title_entry1.configure(state=state)
-        self.title_entry2.configure(state=state)
+        self.title_option_menu1.configure(state=state)
+        self.title_option_menu2.configure(state=state)
 
     def _start_merge(self):
-        """Start the merge process."""
         excel1_path = self.excel1_path.get()
         excel2_path = self.excel2_path.get()
         ref_column1 = self.ref_column1.get()
@@ -641,7 +670,6 @@ class MergerGUI:
             messagebox.showerror("Error", str(e))
 
     def run(self):
-        """Run the GUI application."""
         if isinstance(self.mergerApp, ctk.CTk):
             self.mergerApp.mainloop()
 
