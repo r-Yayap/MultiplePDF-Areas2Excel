@@ -3,6 +3,7 @@ import re
 import tkinter as tk
 from difflib import SequenceMatcher
 from tkinter import filedialog, messagebox
+from datetime import datetime
 import functools
 
 import customtkinter as ctk
@@ -14,8 +15,26 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
-
 import unicodedata
+
+
+# Helper to clear a docx paragraph's contents
+def clear_paragraph(paragraph):
+    p = paragraph._element
+    for child in list(p):
+        p.remove(child)
+
+
+# Helper to auto-select a header based on a list of keywords.
+def auto_select_header(headers, keywords):
+    # Try to return the first header that contains any keyword.
+    for header in headers:
+        lower_header = header.lower()
+        for kw in keywords:
+            if kw in lower_header:
+                return header
+    # Fallback: return the first header if available.
+    return headers[0] if headers else ""
 
 
 class ExcelMerger:
@@ -26,17 +45,8 @@ class ExcelMerger:
     def merge_3_excels(excel1_path, excel2_path, excel3_path,
                        ref_column1, ref_column2, ref_column3,
                        output_path,
-                       title_column1=None, title_column2=None, title_column3=None):
-        """
-        Merge three Excel files while retaining hyperlinks and applying formatting.
-        The selected headers will be renamed as follows:
-          - Excel 1: ref_column1 → "number_1", title → "title_excel1"
-          - Excel 2: ref_column2 → "number_2", title → "title_excel2"
-          - Excel 3: ref_column3 → "number_3", title → "title_excel3"
-        A common key "common_ref" is created (by copying the reference value) and an
-        occurrence count ("refno_count") is computed. The merge is performed sequentially on
-        ['common_ref', 'refno_count'].
-        """
+                       title_column1=None, title_column2=None, title_column3=None,
+                       compare_excel3=False):
         # Read Excel files
         df1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
         df2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
@@ -48,7 +58,7 @@ class ExcelMerger:
             if ref_col not in df.columns:
                 raise KeyError(f"Reference column '{ref_col}' not found in one of the Excel files.")
 
-        # For hyperlink purposes, add original row indices to df1 (or choose one)
+        # For hyperlink purposes, add original row indices to df1
         df1 = ExcelMerger.add_original_row_index_to_dataframe(df1, excel1_path)
         # Extract hyperlinks from Excel1
         hyperlinks = ExcelMerger._extract_hyperlinks(excel1_path)
@@ -76,7 +86,7 @@ class ExcelMerger:
         if title_column3:
             df3 = df3.rename(columns={title_column3: 'title_excel3'})
 
-        # Merge df1 and df2
+        # Merge df1 and df2 on common_ref and refno_count
         merged_df = pd.merge(
             df1, df2,
             on=['common_ref', 'refno_count'],
@@ -84,7 +94,7 @@ class ExcelMerger:
             suffixes=('_1', '_2')
         ).fillna("")
 
-        # Merge the result with df3; use a suffix for any overlapping columns from df3.
+        # Merge the result with df3
         merged_df = pd.merge(
             merged_df, df3,
             on=['common_ref', 'refno_count'],
@@ -102,58 +112,35 @@ class ExcelMerger:
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
         ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
 
-        # For title highlighting, you might compare two of the titles; here we compare Excel1 vs. Excel2.
+        # Highlight differences between title_excel1 and title_excel2
         if title_column1 and title_column2:
             ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
-        # (You could also add additional comparisons for title_excel3 if desired.)
+        # If the flag is set and title_column3 was provided, also compare title_excel3 against the baseline
+        if title_column1 and title_column3 and compare_excel3:
+            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel3')
 
         return temp_file_path, merged_df
 
     @staticmethod
     def merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path,
                      title_column1=None, title_column2=None):
-        """
-        Merge two Excel files while retaining hyperlinks and applying formatting.
-        The selected headers will be renamed as follows:
-          - Excel 1: ref_column1 becomes "number_1", title becomes "title_excel1"
-          - Excel 2: ref_column2 becomes "number_2", title becomes "title_excel2"
-        A common key "common_ref" is created (by copying the reference value) and an
-        occurrence count ("refno_count") is computed. The merge is performed on
-        ['number_1', 'refno_count'] and ['number_2', 'refno_count'].
-        """
-        # Read Excel files
+        # Two-file merge code (same as before)
         excel1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
         excel2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
-
-        # Ensure the reference columns exist
         if ref_column1 not in excel1.columns or ref_column2 not in excel2.columns:
             raise KeyError("Reference columns not found in one or both Excel files.")
-
-        # Add original row indices from Excel1 (used later for hyperlink re‑application)
         excel1 = ExcelMerger.add_original_row_index_to_dataframe(excel1, excel1_path)
-
-        # Extract hyperlinks from Excel1
         hyperlinks = ExcelMerger._extract_hyperlinks(excel1_path)
-
-        # Compute occurrence counts for handling duplicate references
         excel1['refno_count'] = excel1.groupby(ref_column1).cumcount()
         excel2['refno_count'] = excel2.groupby(ref_column2).cumcount()
-
-        # Rename the reference columns to fixed names
         excel1 = excel1.rename(columns={ref_column1: 'number_1'})
         excel2 = excel2.rename(columns={ref_column2: 'number_2'})
-
-        # Create a common key column (if needed, here we simply copy the value)
         excel1['common_ref'] = excel1['number_1']
         excel2['common_ref'] = excel2['number_2']
-
-        # Optionally rename the title columns if provided
         if title_column1:
             excel1 = excel1.rename(columns={title_column1: 'title_excel1'})
         if title_column2:
             excel2 = excel2.rename(columns={title_column2: 'title_excel2'})
-
-        # Merge the DataFrames on the common key and occurrence count
         merged_df = pd.merge(
             excel1, excel2,
             left_on=['number_1', 'refno_count'],
@@ -161,27 +148,15 @@ class ExcelMerger:
             how='outer',
             suffixes=('_1', '_2')
         ).drop(columns=['refno_count']).fillna("")
-
-        # Convert original_row_index to numeric (if present)
         merged_df['original_row_index'] = pd.to_numeric(
             merged_df['original_row_index'], errors='coerce').fillna(0).astype(int)
-
-        # Debug: print merged columns for verification
         print("Merged DataFrame columns:")
         print(merged_df.columns.tolist())
-
-        # Save the merged file
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
-
-        # Apply formatting and reapply hyperlinks
         ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
-
-        # If title columns were provided, apply rich-text title highlighting in Excel.
         if title_column1 and title_column2:
             ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
-
         return temp_file_path, merged_df
-
 
     @staticmethod
     def _extract_hyperlinks(file_path):
@@ -212,8 +187,7 @@ class ExcelMerger:
                 original_row_indices.append(row[0].row)
         if len(original_row_indices) != len(df):
             raise ValueError(
-                f"Mismatch between extracted row indices ({len(original_row_indices)}) "
-                f"and DataFrame rows ({len(df)}). Ensure no extra blank rows in Excel."
+                f"Mismatch between extracted row indices ({len(original_row_indices)}) and DataFrame rows ({len(df)}). Ensure no extra blank rows in Excel."
             )
         df['original_row_index'] = original_row_indices
         print(f"Assigned original row indices: {original_row_indices}")
@@ -233,8 +207,6 @@ class ExcelMerger:
         fill_missing_refno1 = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
         fill_missing_refno2 = PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid")
         duplicate_font = Font(bold=True, color="FF3300")
-        # For two-file merge, our reference keys are 'number_1' and 'number_2'.
-        # (For three-file merge, you might extend this logic.)
         refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
         refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
         refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
@@ -366,116 +338,89 @@ class ExcelMerger:
     def apply_title_highlighting(file_path, merged_df, title_col1, title_col2):
         wb = load_workbook(file_path, rich_text=True)
         ws = wb.active
-
         col_idx1 = merged_df.columns.get_loc(title_col1) + 1
         col_idx2 = merged_df.columns.get_loc(title_col2) + 1
-
         print("Applying title highlighting:")
         print(f"Title column 1: {title_col1} (Column index: {col_idx1})")
         print(f"Title column 2: {title_col2} (Column index: {col_idx2})")
-
         for i, row in merged_df.iterrows():
-            excel_row = i + 2
+            excel_row = i + 2  # account for header row
             title1 = str(row.get(title_col1, ""))
             title2 = str(row.get(title_col2, ""))
-
             print(f"Row {excel_row}: Comparing Title1: '{title1}' with Title2: '{title2}'")
-
             tokens1 = ExcelMerger.tokenize_with_indices(title1)
             tokens2 = ExcelMerger.tokenize_with_indices(title2)
             aligned_tokens1, aligned_tokens2, flags = ExcelMerger.dp_align_tokens(tokens1, tokens2)
-
             rich_text1 = ExcelMerger.create_rich_text(title1, aligned_tokens1, flags)
             rich_text2 = ExcelMerger.create_rich_text(title2, aligned_tokens2, flags)
-
             ws.cell(row=excel_row, column=col_idx1).value = rich_text1
             ws.cell(row=excel_row, column=col_idx2).value = rich_text2
-
         wb.save(file_path)
         wb.close()
         print("Title highlighting applied and workbook saved:", file_path)
+
 
 class TitleComparison:
     """Handles title comparison logic and generates a Word report."""
 
     @staticmethod
-    def create_report(df, title_column1, title_column2, output_path):
-        print("Creating report using columns: title_excel1 and title_excel2")
+    def create_report(df, title_column1, title_column2, output_path, include_excel3=False):
+        """
+        Create a Word document highlighting differences between title columns.
+        The first column will be "common_ref", followed by "title_excel1", "title_excel2",
+        and, if include_excel3 is True, "title_excel3". In this report, title_excel1 is used
+        as the baseline; title_excel2 and (optionally) title_excel3 will be compared to title_excel1
+        and highlighted.
+        """
+        # Expected fixed column names in the merged DataFrame:
+        headers = ["common_ref", "title_excel1", "title_excel2"]
+        if include_excel3:
+            headers.append("title_excel3")
+        print("Creating report using headers:", headers)
         doc = Document()
         doc.add_heading('Title Differences Report', level=1)
-
+        # For summary, count mismatches between title_excel1 and title_excel2 only.
         mismatches = df['title_excel1'] != df['title_excel2']
         TitleComparison._add_summary(doc, len(df), len(df[mismatches]))
-
-        table = doc.add_table(rows=1, cols=3)
+        num_cols = len(headers)
+        table = doc.add_table(rows=1, cols=num_cols)
         table.style = 'Table Grid'
         header_cells = table.rows[0].cells
-        header_cells[0].text = "Drawing Number"
+        header_cells[0].text = "Common Ref"
         header_cells[1].text = "title_excel1"
         header_cells[2].text = "title_excel2"
-
+        if include_excel3:
+            header_cells[3].text = "title_excel3"
         for cell in header_cells:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
                     run.font.name = 'Helvetica'
                     run.font.size = Pt(9)
                     run.bold = True
-
+        # Populate rows
         for _, row in df.iterrows():
             row_cells = table.add_row().cells
-            row_cells[0].text = row.get('number_1', "")
-            para1 = row_cells[1].paragraphs[0]
+            row_cells[0].text = str(row.get("common_ref", ""))
+            # Baseline title (Excel1) is added without highlighting.
+            row_cells[1].text = str(row.get("title_excel1", ""))
+            # For title_excel2, compare it against baseline (title_excel1)
+            baseline = str(row.get("title_excel1", ""))
+            text2 = str(row.get("title_excel2", ""))
             para2 = row_cells[2].paragraphs[0]
-            TitleComparison._highlight_differences(para1, para2, row['title_excel1'], row['title_excel2'])
-
+            clear_paragraph(para2)
+            tokens_base = TitleComparison.tokenize_with_indices(baseline)
+            tokens_2 = TitleComparison.tokenize_with_indices(text2)
+            aligned_tokens2, _, flags2 = TitleComparison.dp_align_tokens(tokens_2, tokens_base)
+            TitleComparison.reconstruct_text_with_flags(para2, aligned_tokens2, tokens_base, flags2)
+            if include_excel3:
+                text3 = str(row.get("title_excel3", ""))
+                para3 = row_cells[3].paragraphs[0]
+                clear_paragraph(para3)
+                tokens_3 = TitleComparison.tokenize_with_indices(text3)
+                aligned_tokens3, _, flags3 = TitleComparison.dp_align_tokens(tokens_3, tokens_base)
+                TitleComparison.reconstruct_text_with_flags(para3, aligned_tokens3, tokens_base, flags3)
         doc.save(output_path)
         print("Report saved at:", output_path)
-
-    @staticmethod
-    def _highlight_differences(paragraph1, paragraph2, text1, text2):
-        # Ensure the texts are strings; if they are None, set them to empty strings.
-        if text1 is None:
-            text1 = ""
-        if text2 is None:
-            text2 = ""
-
-        # Debug: print the input texts
-        print("Highlighting differences between:")
-        print(f"text1: '{text1}'")
-        print(f"text2: '{text2}'")
-
-        # If both texts are empty, there's nothing to highlight.
-        if text1 == "" and text2 == "":
-            paragraph1.add_run("")
-            paragraph2.add_run("")
-            return
-
-        tokens1 = TitleComparison.tokenize_with_indices(text1)
-        tokens2 = TitleComparison.tokenize_with_indices(text2)
-
-        # Debug: Print token lists
-        print("Tokens from text1:", tokens1)
-        print("Tokens from text2:", tokens2)
-
-        # If token lists are empty, add the plain text and return.
-        if not tokens1:
-            paragraph1.add_run(text1)
-        if not tokens2:
-            paragraph2.add_run(text2)
-
-        # Only attempt alignment if tokens exist in both texts.
-        if tokens1 and tokens2:
-            aligned_tokens1, aligned_tokens2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
-            # Debug: Print aligned tokens and flags
-            print("Aligned tokens for text1:", aligned_tokens1)
-            print("Aligned tokens for text2:", aligned_tokens2)
-            print("Alignment flags:", flags)
-            TitleComparison.reconstruct_text_with_flags(paragraph1, aligned_tokens1, aligned_tokens2, flags)
-            TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, aligned_tokens1, flags)
-        else:
-            # Fallback: if one of the texts has no tokens, just add the text.
-            paragraph1.add_run(text1)
-            paragraph2.add_run(text2)
 
     @staticmethod
     def _add_summary(doc, total_titles, mismatched_count):
@@ -494,7 +439,8 @@ class TitleComparison:
     @staticmethod
     def tokenize_with_indices(text):
         tokens = []
-        for match in re.finditer(r'[^\s]+', text):
+        # Use a regex that matches either whitespace or non-whitespace sequences.
+        for match in re.finditer(r'\s+|\S+', text):
             tokens.append((match.group(), match.start()))
         print("DEBUG (Report): Tokenized Text with Indices:", tokens)
         return tokens
@@ -612,7 +558,10 @@ class MergerGUI:
         self.ref_column3 = tk.StringVar()
         self.title_column3 = tk.StringVar()
 
+        # New Boolean variables for Word report and comparing Excel3 title
         self.generate_report = tk.BooleanVar(value=False)
+        self.generate_word_report = tk.BooleanVar(value=False)
+        self.compare_excel3_title = tk.BooleanVar(value=False)
 
         self.excel1_headers = []
         self.excel2_headers = []
@@ -643,6 +592,7 @@ class MergerGUI:
         self._build_excel2_section(self.excel2_frame)
         self._build_excel3_section(self.excel3_frame)
 
+        # Controls frame includes checkboxes for Word report generation.
         self.controls_frame = ctk.CTkFrame(self.mergerApp)
         self.controls_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
         self._build_controls(self.controls_frame)
@@ -662,7 +612,8 @@ class MergerGUI:
             row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[], state="disabled")
+        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[],
+                                                    state="disabled")
         self.title_option_menu1.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
 
     def _build_excel2_section(self, parent_frame):
@@ -680,7 +631,8 @@ class MergerGUI:
             row=2, column=0, padx=5, pady=2, sticky="e")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[], state="disabled")
+        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[],
+                                                    state="disabled")
         self.title_option_menu2.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
 
     def _build_excel3_section(self, parent_frame):
@@ -698,8 +650,13 @@ class MergerGUI:
             row=2, column=0, padx=5, pady=2, sticky="e")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[], state="disabled")
+        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[],
+                                                    state="disabled")
         self.title_option_menu3.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+        # Checkbox to decide whether to compare Excel3 title
+        ctk.CTkCheckBox(parent_frame, text="Compare Excel3 Title",
+                        variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
+            row=4, column=0, columnspan=2, padx=5, pady=2, sticky="w")
 
     def _build_controls(self, parent_frame):
         font_name = "Helvetica"
@@ -710,6 +667,10 @@ class MergerGUI:
             row=0, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(
             row=0, column=2, padx=5, pady=2)
+        # Uncomment below if you wish to have a checkbox for generating Word report.
+        # ctk.CTkCheckBox(parent_frame, text="Generate Word Report",
+        #                 variable=self.generate_word_report).grid(
+        #     row=1, column=0, columnspan=3, padx=5, pady=2, sticky="w")
         ctk.CTkButton(parent_frame, text="Start Merge", command=self._start_merge).grid(
             row=1, column=0, columnspan=3, pady=10)
         parent_frame.grid_columnconfigure(1, weight=1)
@@ -745,9 +706,10 @@ class MergerGUI:
             self.excel1_headers = headers
             self.ref_option_menu1.configure(values=headers)
             self.title_option_menu1.configure(values=headers)
-            if headers:
-                self.ref_column1.set(headers[0])
-                self.title_column1.set(headers[0])
+            # Auto-select reference header: if any header contains "drawing number" or "sheet no" or "ref"
+            self.ref_column1.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            # Auto-select title header: if any header contains "title"
+            self.title_column1.set(auto_select_header(headers, ["title"]))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load headers from Excel File 1: {e}")
 
@@ -758,9 +720,8 @@ class MergerGUI:
             self.excel2_headers = headers
             self.ref_option_menu2.configure(values=headers)
             self.title_option_menu2.configure(values=headers)
-            if headers:
-                self.ref_column2.set(headers[0])
-                self.title_column2.set(headers[0])
+            self.ref_column2.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            self.title_column2.set(auto_select_header(headers, ["title"]))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load headers from Excel File 2: {e}")
 
@@ -771,9 +732,8 @@ class MergerGUI:
             self.excel3_headers = headers
             self.ref_option_menu3.configure(values=headers)
             self.title_option_menu3.configure(values=headers)
-            if headers:
-                self.ref_column3.set(headers[0])
-                self.title_column3.set(headers[0])
+            self.ref_column3.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            self.title_column3.set(auto_select_header(headers, ["title"]))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load headers from Excel File 3: {e}")
 
@@ -798,7 +758,18 @@ class MergerGUI:
         ref_column2 = self.ref_column2.get()
         # Only use Excel3's header if a file was selected
         ref_column3 = self.ref_column3.get() if self.excel3_path.get().strip() else None
-        output_path = self.output_path.get() or excel1_path
+
+        # Check for valid output path. If empty, show an error.
+        output_path = self.output_path.get().strip()
+        if not output_path:
+            messagebox.showerror("Error", "Please provide a valid output path.")
+            return
+        # If the output file already exists, add a timestamp to avoid overwriting.
+        if os.path.exists(output_path):
+            directory, file_name = os.path.split(output_path)
+            base, ext = os.path.splitext(file_name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
 
         try:
             if self.generate_report.get():
@@ -813,16 +784,22 @@ class MergerGUI:
                     excel1_path, excel2_path, excel3_path,
                     ref_column1, ref_column2, ref_column3,
                     output_path,
-                    title_column1=title_col1, title_column2=title_col2, title_column3=title_col3
+                    title_column1=title_col1, title_column2=title_col2, title_column3=title_col3,
+                    compare_excel3=self.compare_excel3_title.get()
                 )
             else:
-                merged_file_path, merged_df = ExcelMerger.merge_excels(excel1_path, excel2_path, ref_column1, ref_column2,output_path, title_column1=title_col1, title_column2=title_col2)
+                merged_file_path, merged_df = ExcelMerger.merge_excels(
+                    excel1_path, excel2_path,
+                    ref_column1, ref_column2,
+                    output_path,
+                    title_column1=title_col1, title_column2=title_col2
+                )
             messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
 
-            if self.generate_report.get():
+            if self.generate_report.get() and self.generate_word_report.get():
                 report_path = os.path.splitext(merged_file_path)[0] + "-TitleComparison.docx"
-                # Here we compare title_excel1 and title_excel2; adjust if needed.
-                TitleComparison.create_report(merged_df, 'title_excel1', 'title_excel2', report_path)
+                include_excel3 = self.compare_excel3_title.get() and bool(excel3_path.strip())
+                TitleComparison.create_report(merged_df, 'title_excel1', 'title_excel2', report_path, include_excel3)
                 messagebox.showinfo("Success", f"Title comparison report saved at {report_path}")
 
         except Exception as e:
@@ -832,10 +809,6 @@ class MergerGUI:
         if isinstance(self.mergerApp, ctk.CTk):
             self.mergerApp.mainloop()
 
-
-if __name__ == "__main__":
-    app = MergerGUI()
-    app.run()
 
 if __name__ == "__main__":
     app = MergerGUI()
