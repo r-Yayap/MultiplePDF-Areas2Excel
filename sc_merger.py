@@ -33,7 +33,7 @@ class ExcelMerger:
         if ref_column1 not in excel1.columns or ref_column2 not in excel2.columns:
             raise KeyError("Reference columns not found in one or both Excel files.")
 
-        # Add `original_row_index` to track rows using the new method
+        # Add original_row_index to track rows using the new method
         excel1 = ExcelMerger.add_original_row_index_to_dataframe(excel1, excel1_path)
 
         # Extract hyperlinks from the original file
@@ -45,7 +45,7 @@ class ExcelMerger:
         excel1 = excel1.rename(columns={ref_column1: 'refno1'})
         excel2 = excel2.rename(columns={ref_column2: 'refno2'})
 
-        # Merge data and handle missing `original_row_index`
+        # Merge data and handle missing original_row_index
         merged_df = pd.merge(
             excel1, excel2,
             left_on=['refno1', 'refno_count'],
@@ -89,7 +89,7 @@ class ExcelMerger:
     @staticmethod
     def add_original_row_index_to_dataframe(df, file_path):
         """
-        Add `original_row_index` to the DataFrame by matching DataFrame rows
+        Add original_row_index to the DataFrame by matching DataFrame rows
         with non-empty rows in the Excel file.
         """
         from openpyxl import load_workbook
@@ -137,7 +137,7 @@ class ExcelMerger:
     def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df):
         """
         Apply conditional formatting for mismatches and duplicates,
-        and reapply hyperlinks using the `hyperlinks` dictionary.
+        and reapply hyperlinks using the hyperlinks dictionary.
         """
         wb = load_workbook(file_path)
         ws = wb.active
@@ -277,8 +277,8 @@ class TitleComparison:
         aligned_tokens1, aligned_tokens2, flags = TitleComparison.dp_align_tokens(tokens1, tokens2)
 
         # Reconstruct the text in Word
-        TitleComparison.reconstruct_text_with_flags(paragraph1, aligned_tokens1, flags)
-        TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, flags)
+        TitleComparison.reconstruct_text_with_flags(paragraph1, aligned_tokens1, aligned_tokens2, flags)
+        TitleComparison.reconstruct_text_with_flags(paragraph2, aligned_tokens2, aligned_tokens1, flags)
 
     @staticmethod
     def tokenize_with_indices(text):
@@ -374,29 +374,44 @@ class TitleComparison:
 
         return aligned_tokens1[::-1], aligned_tokens2[::-1], flags[::-1]
 
-    @staticmethod
-    def reconstruct_text_with_flags(paragraph, tokens, flags):
+    def reconstruct_text_with_flags(paragraph, tokens1, tokens2, flags):
         """
-        Reconstruct the text in the paragraph using original indices and apply flags for highlighting.
+        Reconstructs the text in the paragraph using original indices and applies flags for highlighting.
+        CHAR_LEVEL differences are now highlighted at the character level, not the whole word.
         """
-        for (token, index), flag in zip(tokens, flags):
-            if token is None:
+        for (token1, index1), (token2, index2), flag in zip(tokens1, tokens2, flags):
+            if token1 is None:
                 continue
 
             # Add a space before the token if required
-            if index > 0:
+            if index1 > 0:
                 paragraph.add_run(" ")
 
-            run = paragraph.add_run(token)
-
             if flag == "EXACT":
-                continue  # No formatting needed
+                paragraph.add_run(token1)  # No formatting needed
+
             elif flag == "CASE_ONLY":
+                run = paragraph.add_run(token1)
                 run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+
             elif flag == "CHAR_LEVEL":
-                run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            elif flag == "MISSING_1" or flag == "MISSING_2":
+                # Highlight only the differing characters
+                matcher = SequenceMatcher(None, token1, token2)
+
+                for op, i1, i2, j1, j2 in matcher.get_opcodes():
+                    text_part = token1[i1:i2]  # Extract differing substring
+
+                    if op == "equal":
+                        paragraph.add_run(text_part)  # ✅ FIXED: Use paragraph, not run
+                    else:
+                        diff_run = paragraph.add_run(text_part)  # ✅ Use paragraph again
+                        diff_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+
+            elif flag in ["MISSING_1", "MISSING_2"]:
+                run = paragraph.add_run(token1)
                 run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+
+        return paragraph
 
 
 class MergerGUI:
