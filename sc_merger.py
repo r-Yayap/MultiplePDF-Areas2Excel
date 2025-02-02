@@ -17,6 +17,109 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 import unicodedata
 
+# Import tkinterdnd2 for drag-and-drop
+from tkinterdnd2 import TkinterDnD, DND_ALL
+
+
+import customtkinter as ctk
+
+# Define your light theme as a nested dictionary.
+default_light_theme = {
+    "color_scale": {
+        "0": "#000000",
+        "1": "#1a1a1a",
+        "2": "#333333",
+        "3": "#4d4d4d",
+        "4": "#666666",
+        "5": "#808080",
+        "6": "#999999",
+        "7": "#b3b3b3",
+        "8": "#cccccc",
+        "9": "#e6e6e6",
+        "10": "#ffffff"
+    },
+    "CTk": {
+        "fg_color": "#333333",  # Default text color
+        "bg_color": "#FFFFFF"   # Window background
+    },
+    "CTkFrame": {
+        "fg_color": "#FFFFFF",  # Frame foreground
+        "bg_color": "#FFFFFF",  # Frame background
+        "border_color": "#CCCCCC",  # Added border_color key
+        "corner_radius": 10,  # Corner radius
+        "border_width": 1  # **Add this key** (set to 1 or your desired width)
+    },
+    "CTkButton": {
+        "fg_color": "#217346",         # Button background color
+        "hover_color": "#D6D6D6",        # Hover color for buttons in light mode
+        "text_color": "#333333",
+        "border_color": "#217346",  # <-- Added key
+        "border_width": 1,
+        "text_color_disabled": "#808080"  # <-- Added key for disabled text color
+    },
+    "CTkEntry": {
+        "bg_color": "#F0F0F0"  # Entry widget background
+    },
+    "CTkOptionMenu": {
+        "fg_color": "#217346",
+        "text_color": "#333333"
+    },
+    # Add other widget types as needed…
+}
+
+# Define your dark theme as a nested dictionary.
+default_dark_theme = {
+    "color_scale": {
+        "0": "#000000",
+        "1": "#0d0d0d",
+        "2": "#1a1a1a",
+        "3": "#262626",
+        "4": "#333333",
+        "5": "#404040",
+        "6": "#4d4d4d",
+        "7": "#595959",
+        "8": "#666666",
+        "9": "#737373",
+        "10": "#808080"
+    },
+    "CTk": {
+        "fg_color": "#FFFFFF",  # Default text color
+        "bg_color": "#333333"   # Window background
+    },
+    "CTkFrame": {
+        "fg_color": "#333333",
+        "bg_color": "#333333",
+        "border_color": "#555555",  # Added border_color key
+        "corner_radius": 10,  # Corner radius
+        "border_width": 1  # **Add this key** (set to 1 or your desired width)
+    },
+    "CTkButton": {
+        "fg_color": "#217346",
+        "hover_color": "#505050",  # Hover color for buttons in dark mode
+        "text_color": "#FFFFFF",
+        "border_color": "#217346",  # <-- Added key
+        "border_width": 1,
+        "text_color_disabled": "#B0B0B0"
+    },
+    "CTkEntry": {
+        "bg_color": "#3D3D3D"
+    },
+    "CTkOptionMenu": {
+        "fg_color": "#217346",
+        "text_color": "#FFFFFF"
+    },
+    # Add other widget types as needed…
+}
+
+def set_custom_theme(mode):
+    if mode.lower() == "dark":
+        ctk.ThemeManager.theme = default_dark_theme
+        ctk.set_appearance_mode("dark")
+    else:
+        ctk.ThemeManager.theme = default_light_theme
+        ctk.set_appearance_mode("light")
+
+
 
 # Helper to clear a docx paragraph's contents
 def clear_paragraph(paragraph):
@@ -24,16 +127,13 @@ def clear_paragraph(paragraph):
     for child in list(p):
         p.remove(child)
 
-
-# Helper to auto-select a header based on a list of keywords.
+# Helper to auto-select a header based on keywords.
 def auto_select_header(headers, keywords):
-    # Try to return the first header that contains any keyword.
     for header in headers:
         lower_header = header.lower()
         for kw in keywords:
             if kw in lower_header:
                 return header
-    # Fallback: return the first header if available.
     return headers[0] if headers else ""
 
 
@@ -537,12 +637,28 @@ class TitleComparison:
         return paragraph
 
 
+# Custom main window class that supports drag-and-drop.
+class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.TkdndVersion = TkinterDnD._require(self)
+
+
+
+
 class MergerGUI:
-    """Handles the GUI for the Excel merger."""
+    """Handles the GUI for the Excel merger with drag-and-drop file selection and theme toggle."""
 
     def __init__(self, master=None):
-        self.mergerApp = ctk.CTkToplevel(master) if master else ctk.CTk()
-        self.mergerApp.title("Merger Tool")
+
+        #set_custom_theme("dark")  # or "light" if you prefer the light theme
+
+        ctk.set_appearance_mode("dark")  # Set dark mode at startup
+
+
+        # Use our custom CTkDnD main window for drag-and-drop support.
+        self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
+        self.mergerApp.title("XFusion")
 
         # File paths for three Excel files and the output file.
         self.excel1_path = tk.StringVar()
@@ -550,7 +666,7 @@ class MergerGUI:
         self.excel3_path = tk.StringVar()
         self.output_path = tk.StringVar()
 
-        # Header selections for each file (via drop-down lists)
+        # Header selections for each file (via drop-down lists).
         self.ref_column1 = tk.StringVar()
         self.title_column1 = tk.StringVar()
         self.ref_column2 = tk.StringVar()
@@ -558,10 +674,13 @@ class MergerGUI:
         self.ref_column3 = tk.StringVar()
         self.title_column3 = tk.StringVar()
 
-        # New Boolean variables for Word report and comparing Excel3 title
+        # Boolean variables for report options and comparing Excel3 title.
         self.generate_report = tk.BooleanVar(value=False)
         self.generate_word_report = tk.BooleanVar(value=False)
         self.compare_excel3_title = tk.BooleanVar(value=False)
+
+        # Boolean variable for theme mode; True = dark mode.
+        self.theme_mode = tk.BooleanVar(value=True)
 
         self.excel1_headers = []
         self.excel2_headers = []
@@ -575,7 +694,7 @@ class MergerGUI:
         self.mergerApp.grid_columnconfigure(1, weight=1)
         self.mergerApp.grid_columnconfigure(2, weight=1)
 
-        # Create three main frames side-by-side for Excel 1, 2, and 3.
+        # Create three frames for Excel 1, 2, and 3.
         self.excel1_frame = ctk.CTkFrame(self.mergerApp)
         self.excel1_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self.excel2_frame = ctk.CTkFrame(self.mergerApp)
@@ -592,7 +711,7 @@ class MergerGUI:
         self._build_excel2_section(self.excel2_frame)
         self._build_excel3_section(self.excel3_frame)
 
-        # Controls frame includes checkboxes for Word report generation.
+        # Create controls frame.
         self.controls_frame = ctk.CTkFrame(self.mergerApp)
         self.controls_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
         self._build_controls(self.controls_frame)
@@ -600,63 +719,88 @@ class MergerGUI:
     def _build_excel1_section(self, parent_frame):
         font_name = "Helvetica"
         font_size = 12
-        self.excel1_button = ctk.CTkButton(parent_frame, text="Select Excel File 1",
-                                           command=self._browse_excel1, width=200, height=40)
-        self.excel1_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.excel1_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            command=self._browse_excel2,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel1_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        # Enable drag and drop on Excel1 button.
+        self.excel1_button.drop_target_register(DND_ALL)
+        self.excel1_button.dnd_bind('<<Drop>>', self.drop_excel1)
         ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
             row=1, column=0, padx=5, pady=2, sticky="e")
         self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
         self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkCheckBox(parent_frame, text="Generate Title Comparison Report",
+        ctk.CTkCheckBox(parent_frame, text="Compare Title",
                         variable=self.generate_report, command=self._toggle_title_entries).grid(
             row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[],
-                                                    state="disabled")
+        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[], state="disabled")
         self.title_option_menu1.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
 
     def _build_excel2_section(self, parent_frame):
         font_name = "Helvetica"
         font_size = 12
-        self.excel2_button = ctk.CTkButton(parent_frame, text="Select Excel File 2",
-                                           command=self._browse_excel2, width=200, height=40)
-        self.excel2_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.excel2_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            command=self._browse_excel2,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel2_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        self.excel2_button.drop_target_register(DND_ALL)
+        self.excel2_button.dnd_bind('<<Drop>>', self.drop_excel2)
         ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
             row=1, column=0, padx=5, pady=2, sticky="e")
         self.ref_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column2, values=[])
         self.ref_option_menu2.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Spacer to align with Excel1 (row 2)
+        # Spacer row for alignment.
         ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
             row=2, column=0, padx=5, pady=2, sticky="e")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[],
-                                                    state="disabled")
+        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[], state="disabled")
         self.title_option_menu2.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
 
     def _build_excel3_section(self, parent_frame):
         font_name = "Helvetica"
         font_size = 12
-        self.excel3_button = ctk.CTkButton(parent_frame, text="Select Excel File 3",
-                                           command=self._browse_excel3, width=200, height=40)
-        self.excel3_button.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.excel3_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            command=self._browse_excel2,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel3_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        self.excel3_button.drop_target_register(DND_ALL)
+        self.excel3_button.dnd_bind('<<Drop>>', self.drop_excel3)
         ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
             row=1, column=0, padx=5, pady=2, sticky="e")
         self.ref_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column3, values=[])
         self.ref_option_menu3.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Spacer to align with others (row 2)
-        ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
-            row=2, column=0, padx=5, pady=2, sticky="e")
+        # Place the compare title checkbox above the title dropdown.
+        ctk.CTkCheckBox(parent_frame, text="Compare Title",
+                        variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
+            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[],
-                                                    state="disabled")
+        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[], state="disabled")
         self.title_option_menu3.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-        # Checkbox to decide whether to compare Excel3 title
-        ctk.CTkCheckBox(parent_frame, text="Compare Excel3 Title",
-                        variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
-            row=4, column=0, columnspan=2, padx=5, pady=2, sticky="w")
 
     def _build_controls(self, parent_frame):
         font_name = "Helvetica"
@@ -667,13 +811,47 @@ class MergerGUI:
             row=0, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(
             row=0, column=2, padx=5, pady=2)
-        # Uncomment below if you wish to have a checkbox for generating Word report.
-        # ctk.CTkCheckBox(parent_frame, text="Generate Word Report",
-        #                 variable=self.generate_word_report).grid(
-        #     row=1, column=0, columnspan=3, padx=5, pady=2, sticky="w")
+        # Theme toggle switch (no label) placed at the bottom-right of the controls frame.
+        self.theme_switch = ctk.CTkSwitch(parent_frame, text="", variable=self.theme_mode,
+                                          command=self.toggle_theme, switch_width=20, switch_height=10)
+        # Use place to anchor it at the bottom-right corner of the parent frame.
+        self.theme_switch.place(relx=1.0, rely=1.0, anchor="se")
         ctk.CTkButton(parent_frame, text="Start Merge", command=self._start_merge).grid(
-            row=1, column=0, columnspan=3, pady=10)
+            row=2, column=0, columnspan=3, pady=10)
         parent_frame.grid_columnconfigure(1, weight=1)
+
+    def toggle_theme(self):
+        if self.theme_mode.get():
+            ctk.set_appearance_mode("dark")
+            print("Theme set to dark mode")
+        else:
+            ctk.set_appearance_mode("light")
+            print("Theme set to light mode")
+
+    # --- Drag and Drop Handlers ---
+    def drop_excel1(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel1_path.set(file_path)
+        self._load_excel1_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel1_button.configure(text=filename, fg_color="#217346")
+
+    def drop_excel2(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel2_path.set(file_path)
+        self._load_excel2_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel2_button.configure(text=filename, fg_color="#217346")
+
+    def drop_excel3(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel3_path.set(file_path)
+        self._load_excel3_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel3_button.configure(text=filename, fg_color="#217346")
 
     def _browse_excel1(self):
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
@@ -681,7 +859,9 @@ class MergerGUI:
         if file_path:
             self.excel1_path.set(file_path)
             self._load_excel1_headers(file_path)
-            self.excel1_button.configure(fg_color="#217346")  # Excel green
+            import os
+            filename = os.path.basename(file_path)
+            self.excel1_button.configure(text=filename, fg_color="#217346")
 
     def _browse_excel2(self):
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
@@ -689,7 +869,9 @@ class MergerGUI:
         if file_path:
             self.excel2_path.set(file_path)
             self._load_excel2_headers(file_path)
-            self.excel2_button.configure(fg_color="#217346")  # Excel green
+            import os
+            filename = os.path.basename(file_path)
+            self.excel2_button.configure(text=filename, fg_color="#217346")
 
     def _browse_excel3(self):
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
@@ -697,7 +879,9 @@ class MergerGUI:
         if file_path:
             self.excel3_path.set(file_path)
             self._load_excel3_headers(file_path)
-            self.excel3_button.configure(fg_color="#217346")  # Excel green
+            import os
+            filename = os.path.basename(file_path)
+            self.excel3_button.configure(text=filename, fg_color="#217346")
 
     def _load_excel1_headers(self, file_path):
         try:
@@ -706,9 +890,7 @@ class MergerGUI:
             self.excel1_headers = headers
             self.ref_option_menu1.configure(values=headers)
             self.title_option_menu1.configure(values=headers)
-            # Auto-select reference header: if any header contains "drawing number" or "sheet no" or "ref"
             self.ref_column1.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
-            # Auto-select title header: if any header contains "title"
             self.title_column1.set(auto_select_header(headers, ["title"]))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load headers from Excel File 1: {e}")
@@ -745,10 +927,11 @@ class MergerGUI:
             self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
 
     def _toggle_title_entries(self):
-        state = "normal" if self.generate_report.get() else "disabled"
-        self.title_option_menu1.configure(state=state)
-        self.title_option_menu2.configure(state=state)
-        self.title_option_menu3.configure(state=state)
+        state_12 = "normal" if self.generate_report.get() else "disabled"
+        self.title_option_menu1.configure(state=state_12)
+        self.title_option_menu2.configure(state=state_12)
+        state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
+        self.title_option_menu3.configure(state=state_3)
 
     def _start_merge(self):
         excel1_path = self.excel1_path.get()
@@ -756,15 +939,12 @@ class MergerGUI:
         excel3_path = self.excel3_path.get()
         ref_column1 = self.ref_column1.get()
         ref_column2 = self.ref_column2.get()
-        # Only use Excel3's header if a file was selected
         ref_column3 = self.ref_column3.get() if self.excel3_path.get().strip() else None
 
-        # Check for valid output path. If empty, show an error.
         output_path = self.output_path.get().strip()
         if not output_path:
             messagebox.showerror("Error", "Please provide a valid output path.")
             return
-        # If the output file already exists, add a timestamp to avoid overwriting.
         if os.path.exists(output_path):
             directory, file_name = os.path.split(output_path)
             base, ext = os.path.splitext(file_name)
@@ -808,7 +988,6 @@ class MergerGUI:
     def run(self):
         if isinstance(self.mergerApp, ctk.CTk):
             self.mergerApp.mainloop()
-
 
 if __name__ == "__main__":
     app = MergerGUI()
