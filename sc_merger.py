@@ -740,7 +740,7 @@ class MergerGUI:
 
         # Use our custom CTkDnD main window for drag-and-drop support.
         self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
-        self.mergerApp.title("XFusion")
+        self.mergerApp.title("[No Name Yet]")
 
         # File paths for three Excel files and the output file.
         self.excel1_path = tk.StringVar()
