@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
+from openpyxl.utils import get_column_letter
 import unicodedata
 
 # Import tkinterdnd2 for drag-and-drop
@@ -100,7 +101,7 @@ class ExcelMerger:
             on=['common_ref', 'refno_count'],
             how='outer',
             suffixes=("", "_3")
-        ).fillna("")
+        ).drop(columns=['refno_count']).fillna("")
 
         if 'original_row_index' in merged_df.columns:
             merged_df['original_row_index'] = pd.to_numeric(
@@ -112,12 +113,22 @@ class ExcelMerger:
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
         ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
 
-        # Highlight differences between title_excel1 and title_excel2
+        # *** IMPORTANT: First, reorder columns ***
+        ExcelMerger.reorder_columns(temp_file_path)
+
+        # *** Then apply title highlighting ***
+        # Highlight differences between title_excel1 and title_excel2 (update both columns)
         if title_column1 and title_column2:
-            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
-        # If the flag is set and title_column3 was provided, also compare title_excel3 against the baseline
+            ExcelMerger.apply_title_highlighting(
+                temp_file_path, merged_df, 'title_excel1', 'title_excel2',
+                reorder=False, update_baseline=True
+            )
+        # Highlight differences between title_excel1 and title_excel3, but update only title_excel3
         if title_column1 and title_column3 and compare_excel3:
-            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel3')
+            ExcelMerger.apply_title_highlighting(
+                temp_file_path, merged_df, 'title_excel1', 'title_excel3',
+                reorder=False, update_baseline=False
+            )
 
         return temp_file_path, merged_df
 
@@ -141,13 +152,14 @@ class ExcelMerger:
             excel1 = excel1.rename(columns={title_column1: 'title_excel1'})
         if title_column2:
             excel2 = excel2.rename(columns={title_column2: 'title_excel2'})
+
         merged_df = pd.merge(
             excel1, excel2,
-            left_on=['number_1', 'refno_count'],
-            right_on=['number_2', 'refno_count'],
+            on=['common_ref', 'refno_count'],
             how='outer',
             suffixes=('_1', '_2')
         ).drop(columns=['refno_count']).fillna("")
+
         merged_df['original_row_index'] = pd.to_numeric(
             merged_df['original_row_index'], errors='coerce').fillna(0).astype(int)
         print("Merged DataFrame columns:")
@@ -157,6 +169,42 @@ class ExcelMerger:
         if title_column1 and title_column2:
             ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
         return temp_file_path, merged_df
+
+    @staticmethod
+    def reorder_columns(file_path):
+        wb = load_workbook(file_path)
+        ws = wb.active
+
+        # Delete the original_row_index column.
+        # (Assume the header for that column is still "original_row_index".)
+        orig_index_col_idx = None
+        for cell in ws[1]:
+            if cell.value == "original_row_index":
+                orig_index_col_idx = cell.column
+                break
+        if orig_index_col_idx is not None:
+            ws.delete_cols(orig_index_col_idx, 1)
+            print(f"Dropped 'original_row_index' column at position {orig_index_col_idx}.")
+
+        # Now, move the common_ref column to the first column.
+        common_ref_col_idx = None
+        for cell in ws[1]:
+            if cell.value == "common_ref":
+                common_ref_col_idx = cell.column
+                break
+        if common_ref_col_idx is not None and common_ref_col_idx != 1:
+            # Save the values from the current common_ref column.
+            common_ref_values = [ws.cell(row=r, column=common_ref_col_idx).value
+                                 for r in range(1, ws.max_row + 1)]
+            ws.delete_cols(common_ref_col_idx, 1)
+            ws.insert_cols(1)
+            for r, value in enumerate(common_ref_values, start=1):
+                ws.cell(row=r, column=1).value = value
+            print(f"Moved 'common_ref' column from position {common_ref_col_idx} to column 1.")
+
+        wb.save(file_path)
+        wb.close()
+        print("Column reordering complete.")
 
     @staticmethod
     def _extract_hyperlinks(file_path):
@@ -204,24 +252,136 @@ class ExcelMerger:
         wb = load_workbook(file_path)
         ws = wb.active
         print("Applying formatting and hyperlinks to:", file_path)
-        fill_missing_refno1 = PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid")
-        fill_missing_refno2 = PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid")
+
         duplicate_font = Font(bold=True, color="FF3300")
-        refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
-        refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
-        refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
-        refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
-        for row_idx in range(2, len(merged_df) + 2):
-            refno1_value = ws.cell(row=row_idx, column=refno1_col_idx).value
-            refno2_value = ws.cell(row=row_idx, column=refno2_col_idx).value
-            if refno1_value and not refno2_value:
-                ws.cell(row=row_idx, column=refno1_col_idx).fill = fill_missing_refno1
-            if refno2_value and not refno1_value:
-                ws.cell(row=row_idx, column=refno2_col_idx).fill = fill_missing_refno2
-            if refno1_value in refno1_duplicates:
-                ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
-            if refno2_value in refno2_duplicates:
-                ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
+
+        # ------------------------------
+        # Branch based on whether we're merging 3 or 2 Excel files.
+        # ------------------------------
+        if 'number_3' in merged_df.columns:
+            # --- 3-file merging logic ---
+            refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
+            refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
+            refno3_col_idx = merged_df.columns.get_loc('number_3') + 1
+
+            # Define fill styles for each presence pattern.
+            fill_styles = {
+                (True, False, False): PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid"),
+                (False, True, False): PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid"),
+                (False, False, True): PatternFill(start_color="AACCFF", end_color="AACCFF", fill_type="solid"),
+                (True, True, False): PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid"),
+                (True, False, True): PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid"),
+                (False, True, True): PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid"),
+                # For rows with all drawing numbers or none, we won't apply any fill.
+                (True, True, True): None,
+                (False, False, False): None
+            }
+
+            # For duplicate highlighting, determine duplicates in each column.
+            refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
+            refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
+            refno3_duplicates = merged_df['number_3'][merged_df['number_3'].duplicated(keep=False)].tolist()
+
+            # Loop over each row (account for header row in Excel, hence i+2).
+            for row_idx in range(2, len(merged_df) + 2):
+                num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
+                num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
+                num3 = ws.cell(row=row_idx, column=refno3_col_idx).value
+
+                presence = (bool(num1), bool(num2), bool(num3))
+                # Only if the row is incomplete (i.e. not all present or all missing)
+                if presence not in [(True, True, True), (False, False, False)]:
+                    fill = fill_styles.get(presence)
+                    if fill is not None:
+                        # Instead of filling the blank cells, fill the cells that hold a drawing number.
+                        if num1:
+                            ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
+                        if num2:
+                            ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
+                        if num3:
+                            ws.cell(row=row_idx, column=refno3_col_idx).fill = fill
+
+                # Apply duplicate formatting (if the cell's value appears more than once).
+                if num1 in refno1_duplicates:
+                    ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
+                if num2 in refno2_duplicates:
+                    ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
+                if num3 in refno3_duplicates:
+                    ws.cell(row=row_idx, column=refno3_col_idx).font = duplicate_font
+
+            # --- Add an Instance column for 3-file merging ---
+            instance_mapping = {
+                (True, False, False): "Instance 1: Only number_1",
+                (False, True, False): "Instance 2: Only number_2",
+                (False, False, True): "Instance 3: Only number_3",
+                (True, True, False): "Instance 4: number_1 and number_2",
+                (True, False, True): "Instance 5: number_1 and number_3",
+                (False, True, True): "Instance 6: number_2 and number_3",
+                (True, True, True): "Complete",
+                (False, False, False): "None"
+            }
+            # Create a new column header for the instance info.
+            instance_col_idx = ws.max_column + 1
+            ws.cell(row=1, column=instance_col_idx, value="Instance")
+            for row_idx in range(2, len(merged_df) + 2):
+                # Read the cell values again to compute the presence tuple.
+                num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
+                num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
+                num3 = ws.cell(row=row_idx, column=refno3_col_idx).value
+                presence = (bool(num1), bool(num2), bool(num3))
+                instance_text = instance_mapping.get(presence, "Unknown")
+                ws.cell(row=row_idx, column=instance_col_idx, value=instance_text)
+
+        else:
+            # --- 2-file merging logic ---
+            refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
+            refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
+
+            fill_styles_2 = {
+                (True, False): PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid"),
+                (False, True): PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid"),
+                (True, True): None,
+                (False, False): None
+            }
+
+            refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
+            refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
+
+            for row_idx in range(2, len(merged_df) + 2):
+                num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
+                num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
+                presence = (bool(num1), bool(num2))
+                if presence not in [(True, True), (False, False)]:
+                    fill = fill_styles_2.get(presence)
+                    if fill is not None:
+                        if num1:
+                            ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
+                        if num2:
+                            ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
+
+                if num1 in refno1_duplicates:
+                    ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
+                if num2 in refno2_duplicates:
+                    ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
+
+            # --- Add an Instance column for 2-file merging ---
+            instance_mapping_2 = {
+                (True, False): "Instance 1: Only number_1",
+                (False, True): "Instance 2: Only number_2",
+                (True, True): "Complete",
+                (False, False): "None"
+            }
+            instance_col_idx = ws.max_column + 1
+            ws.cell(row=1, column=instance_col_idx, value="Instance")
+            for row_idx in range(2, len(merged_df) + 2):
+                num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
+                num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
+                presence = (bool(num1), bool(num2))
+                instance_text = instance_mapping_2.get(presence, "Unknown")
+                ws.cell(row=row_idx, column=instance_col_idx, value=instance_text)
+
+        # ------------------------------
+        # Process hyperlinks (unchanged from your original code)
         for original_row_index, columns in hyperlinks.items():
             new_row = merged_df[merged_df['original_row_index'] == original_row_index]
             if new_row.empty:
@@ -235,6 +395,7 @@ class ExcelMerger:
                     print(f"Applied hyperlink at row {new_row_idx}, col {col_idx}, link: {hyperlink}")
                 except Exception as e:
                     print(f"Error applying hyperlink for row {new_row_idx}, col {col_idx}: {e}")
+
         wb.save(file_path)
         wb.close()
 
@@ -335,215 +496,236 @@ class ExcelMerger:
         return rich_text
 
     @staticmethod
-    def apply_title_highlighting(file_path, merged_df, title_col1, title_col2):
+    def get_ws_column_index(ws, header_name):
+        header_name = header_name.strip().lower()
+        print(f"Looking for header '{header_name}' in row 1:")
+        for cell in ws[1]:
+            if isinstance(cell.value, str):
+                print(f"  Found header '{cell.value.strip().lower()}' at column {cell.column}")
+                if cell.value.strip().lower() == header_name:
+                    return cell.column  # openpyxl uses 1-based indexing
+        return None
+
+    @staticmethod
+    def apply_title_highlighting(file_path, merged_df, title_col1, title_col2, reorder=True, update_baseline=True):
         wb = load_workbook(file_path, rich_text=True)
         ws = wb.active
-        col_idx1 = merged_df.columns.get_loc(title_col1) + 1
-        col_idx2 = merged_df.columns.get_loc(title_col2) + 1
-        print("Applying title highlighting:")
-        print(f"Title column 1: {title_col1} (Column index: {col_idx1})")
-        print(f"Title column 2: {title_col2} (Column index: {col_idx2})")
+
+        # Get current column indices by scanning the header row
+        col_idx1 = ExcelMerger.get_ws_column_index(ws, title_col1)
+        col_idx2 = ExcelMerger.get_ws_column_index(ws, title_col2)
+        if col_idx1 is None or col_idx2 is None:
+            print(f"Could not find header {title_col1} or {title_col2} in the worksheet.")
+            wb.close()
+            return
+
+        print(f"Applying title highlighting on columns '{title_col1}' and '{title_col2}':")
         for i, row in merged_df.iterrows():
             excel_row = i + 2  # account for header row
-            title1 = str(row.get(title_col1, ""))
-            title2 = str(row.get(title_col2, ""))
-            print(f"Row {excel_row}: Comparing Title1: '{title1}' with Title2: '{title2}'")
-            tokens1 = ExcelMerger.tokenize_with_indices(title1)
-            tokens2 = ExcelMerger.tokenize_with_indices(title2)
+            baseline_text = str(row.get(title_col1, ""))
+            other_text = str(row.get(title_col2, ""))
+            tokens1 = ExcelMerger.tokenize_with_indices(baseline_text)
+            tokens2 = ExcelMerger.tokenize_with_indices(other_text)
             aligned_tokens1, aligned_tokens2, flags = ExcelMerger.dp_align_tokens(tokens1, tokens2)
-            rich_text1 = ExcelMerger.create_rich_text(title1, aligned_tokens1, flags)
-            rich_text2 = ExcelMerger.create_rich_text(title2, aligned_tokens2, flags)
-            ws.cell(row=excel_row, column=col_idx1).value = rich_text1
+            rich_text1 = ExcelMerger.create_rich_text(baseline_text, aligned_tokens1, flags)
+            rich_text2 = ExcelMerger.create_rich_text(other_text, aligned_tokens2, flags)
+            # Update baseline column only if update_baseline is True.
+            if update_baseline:
+                ws.cell(row=excel_row, column=col_idx1).value = rich_text1
+            # Always update the second column.
             ws.cell(row=excel_row, column=col_idx2).value = rich_text2
+
+        if reorder:
+            ExcelMerger.reorder_columns(file_path)
+
         wb.save(file_path)
         wb.close()
         print("Title highlighting applied and workbook saved:", file_path)
 
 
-class TitleComparison:
-    """Handles title comparison logic and generates a Word report."""
-
-    @staticmethod
-    def create_report(df, title_column1, title_column2, output_path, include_excel3=False):
-        """
-        Create a Word document highlighting differences between title columns.
-        The first column will be "common_ref", followed by "title_excel1", "title_excel2",
-        and, if include_excel3 is True, "title_excel3". In this report, title_excel1 is used
-        as the baseline; title_excel2 and (optionally) title_excel3 will be compared to title_excel1
-        and highlighted.
-        """
-        # Expected fixed column names in the merged DataFrame:
-        headers = ["common_ref", "title_excel1", "title_excel2"]
-        if include_excel3:
-            headers.append("title_excel3")
-        print("Creating report using headers:", headers)
-        doc = Document()
-        doc.add_heading('Title Differences Report', level=1)
-        # For summary, count mismatches between title_excel1 and title_excel2 only.
-        mismatches = df['title_excel1'] != df['title_excel2']
-        TitleComparison._add_summary(doc, len(df), len(df[mismatches]))
-        num_cols = len(headers)
-        table = doc.add_table(rows=1, cols=num_cols)
-        table.style = 'Table Grid'
-        header_cells = table.rows[0].cells
-        header_cells[0].text = "Common Ref"
-        header_cells[1].text = "title_excel1"
-        header_cells[2].text = "title_excel2"
-        if include_excel3:
-            header_cells[3].text = "title_excel3"
-        for cell in header_cells:
-            for paragraph in cell.paragraphs:
-                for run in paragraph.runs:
-                    run.font.name = 'Helvetica'
-                    run.font.size = Pt(9)
-                    run.bold = True
-        # Populate rows
-        for _, row in df.iterrows():
-            row_cells = table.add_row().cells
-            row_cells[0].text = str(row.get("common_ref", ""))
-            # Baseline title (Excel1) is added without highlighting.
-            row_cells[1].text = str(row.get("title_excel1", ""))
-            # For title_excel2, compare it against baseline (title_excel1)
-            baseline = str(row.get("title_excel1", ""))
-            text2 = str(row.get("title_excel2", ""))
-            para2 = row_cells[2].paragraphs[0]
-            clear_paragraph(para2)
-            tokens_base = TitleComparison.tokenize_with_indices(baseline)
-            tokens_2 = TitleComparison.tokenize_with_indices(text2)
-            aligned_tokens2, _, flags2 = TitleComparison.dp_align_tokens(tokens_2, tokens_base)
-            TitleComparison.reconstruct_text_with_flags(para2, aligned_tokens2, tokens_base, flags2)
-            if include_excel3:
-                text3 = str(row.get("title_excel3", ""))
-                para3 = row_cells[3].paragraphs[0]
-                clear_paragraph(para3)
-                tokens_3 = TitleComparison.tokenize_with_indices(text3)
-                aligned_tokens3, _, flags3 = TitleComparison.dp_align_tokens(tokens_3, tokens_base)
-                TitleComparison.reconstruct_text_with_flags(para3, aligned_tokens3, tokens_base, flags3)
-        doc.save(output_path)
-        print("Report saved at:", output_path)
-
-    @staticmethod
-    def _add_summary(doc, total_titles, mismatched_count):
-        doc.add_heading('Summary of Title Comparison', level=2)
-        total_para = doc.add_paragraph(f"Total Titles Compared: {total_titles}")
-        total_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-        total_run = total_para.runs[0]
-        total_run.font.name = 'Arial'
-        total_run.font.size = Pt(10)
-        mismatch_para = doc.add_paragraph(f"Titles with Differences: {mismatched_count}")
-        mismatch_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-        mismatch_run = mismatch_para.runs[0]
-        mismatch_run.font.name = 'Arial'
-        mismatch_run.font.size = Pt(10)
-
-    @staticmethod
-    def tokenize_with_indices(text):
-        tokens = []
-        # Use a regex that matches either whitespace or non-whitespace sequences.
-        for match in re.finditer(r'\s+|\S+', text):
-            tokens.append((match.group(), match.start()))
-        print("DEBUG (Report): Tokenized Text with Indices:", tokens)
-        return tokens
-
-    @staticmethod
-    def dp_align_tokens(tokens1, tokens2):
-        token_strs1 = [t[0] for t in tokens1]
-        token_strs2 = [t[0] for t in tokens2]
-        n, m = len(token_strs1), len(token_strs2)
-        dp = [[0] * (m + 1) for _ in range(n + 1)]
-        backtrack = [[None] * (m + 1) for _ in range(n + 1)]
-        for i in range(1, n + 1):
-            dp[i][0] = i
-            backtrack[i][0] = 'UP'
-        for j in range(1, m + 1):
-            dp[0][j] = j
-            backtrack[0][j] = 'LEFT'
-        for i in range(1, n + 1):
-            for j in range(1, m + 1):
-                similarity = SequenceMatcher(None, token_strs1[i - 1], token_strs2[j - 1]).ratio()
-                if token_strs1[i - 1] == token_strs2[j - 1]:
-                    replace_cost = dp[i - 1][j - 1]
-                    flag = "EXACT"
-                elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():
-                    replace_cost = dp[i - 1][j - 1] + 0.5
-                    flag = "CASE_ONLY"
-                elif similarity >= 0.8:
-                    replace_cost = dp[i - 1][j - 1] + (1 - similarity)
-                    flag = "CHAR_LEVEL"
-                elif similarity >= 0.4:
-                    replace_cost = dp[i - 1][j - 1] + 2
-                    flag = "CHAR_LEVEL"
-                else:
-                    replace_cost = float('inf')
-                delete_cost = dp[i - 1][j] + 1
-                insert_cost = dp[i][j - 1] + 1
-                dp[i][j] = min(replace_cost, delete_cost, insert_cost)
-                if dp[i][j] == replace_cost:
-                    backtrack[i][j] = 'DIAG'
-                elif dp[i][j] == delete_cost:
-                    backtrack[i][j] = 'UP'
-                else:
-                    backtrack[i][j] = 'LEFT'
-        aligned_tokens1, aligned_tokens2, flags = [], [], []
-        i, j = n, m
-        while i > 0 or j > 0:
-            if i > 0 and j > 0 and backtrack[i][j] == 'DIAG':
-                aligned_tokens1.append(tokens1[i - 1])
-                aligned_tokens2.append(tokens2[j - 1])
-                if token_strs1[i - 1] == token_strs2[j - 1]:
-                    flags.append("EXACT")
-                elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():
-                    flags.append("CASE_ONLY")
-                else:
-                    flags.append("CHAR_LEVEL")
-                i -= 1
-                j -= 1
-            elif i > 0 and (j == 0 or backtrack[i][j] == 'UP'):
-                aligned_tokens1.append(tokens1[i - 1])
-                aligned_tokens2.append((None, None))
-                flags.append("MISSING_2")
-                i -= 1
-            elif j > 0 and (i == 0 or backtrack[i][j] == 'LEFT'):
-                aligned_tokens1.append((None, None))
-                aligned_tokens2.append(tokens2[j - 1])
-                flags.append("MISSING_1")
-                j -= 1
-        return aligned_tokens1[::-1], aligned_tokens2[::-1], flags[::-1]
-
-    @staticmethod
-    def reconstruct_text_with_flags(paragraph, tokens1, tokens2, flags):
-        for (token1, index1), (token2, index2), flag in zip(tokens1, tokens2, flags):
-            if token1 is None:
-                continue
-            if index1 > 0:
-                paragraph.add_run(" ")
-            if flag == "EXACT":
-                paragraph.add_run(token1)
-            elif flag == "CASE_ONLY":
-                run = paragraph.add_run(token1)
-                run.font.color.rgb = RGBColor(128, 128, 128)
-            elif flag == "CHAR_LEVEL":
-                matcher = SequenceMatcher(None, token1, token2)
-                for op, i1, i2, j1, j2 in matcher.get_opcodes():
-                    text_part = token1[i1:i2]
-                    if op == "equal":
-                        paragraph.add_run(text_part)
-                    else:
-                        diff_run = paragraph.add_run(text_part)
-                        diff_run.font.color.rgb = RGBColor(255, 165, 0)
-            elif flag in ["MISSING_1", "MISSING_2"]:
-                run = paragraph.add_run(token1)
-                run.font.color.rgb = RGBColor(255, 0, 0)
-        return paragraph
-
+# class TitleComparison:
+#     """Handles title comparison logic and generates a Word report."""
+#
+#     @staticmethod
+#     def create_report(df, title_column1, title_column2, output_path, include_excel3=False):
+#         """
+#         Create a Word document highlighting differences between title columns.
+#         The first column will be "common_ref", followed by "title_excel1", "title_excel2",
+#         and, if include_excel3 is True, "title_excel3". In this report, title_excel1 is used
+#         as the baseline; title_excel2 and (optionally) title_excel3 will be compared to title_excel1
+#         and highlighted.
+#         """
+#         # Expected fixed column names in the merged DataFrame:
+#         headers = ["common_ref", "title_excel1", "title_excel2"]
+#         if include_excel3:
+#             headers.append("title_excel3")
+#         print("Creating report using headers:", headers)
+#         doc = Document()
+#         doc.add_heading('Title Differences Report', level=1)
+#         # For summary, count mismatches between title_excel1 and title_excel2 only.
+#         mismatches = df['title_excel1'] != df['title_excel2']
+#         TitleComparison._add_summary(doc, len(df), len(df[mismatches]))
+#         num_cols = len(headers)
+#         table = doc.add_table(rows=1, cols=num_cols)
+#         table.style = 'Table Grid'
+#         header_cells = table.rows[0].cells
+#         header_cells[0].text = "Common Ref"
+#         header_cells[1].text = "title_excel1"
+#         header_cells[2].text = "title_excel2"
+#         if include_excel3:
+#             header_cells[3].text = "title_excel3"
+#         for cell in header_cells:
+#             for paragraph in cell.paragraphs:
+#                 for run in paragraph.runs:
+#                     run.font.name = 'Helvetica'
+#                     run.font.size = Pt(9)
+#                     run.bold = True
+#         # Populate rows
+#         for _, row in df.iterrows():
+#             row_cells = table.add_row().cells
+#             row_cells[0].text = str(row.get("common_ref", ""))
+#             # Baseline title (Excel1) is added without highlighting.
+#             row_cells[1].text = str(row.get("title_excel1", ""))
+#             # For title_excel2, compare it against baseline (title_excel1)
+#             baseline = str(row.get("title_excel1", ""))
+#             text2 = str(row.get("title_excel2", ""))
+#             para2 = row_cells[2].paragraphs[0]
+#             clear_paragraph(para2)
+#             tokens_base = TitleComparison.tokenize_with_indices(baseline)
+#             tokens_2 = TitleComparison.tokenize_with_indices(text2)
+#             aligned_tokens2, _, flags2 = TitleComparison.dp_align_tokens(tokens_2, tokens_base)
+#             TitleComparison.reconstruct_text_with_flags(para2, aligned_tokens2, tokens_base, flags2)
+#             if include_excel3:
+#                 text3 = str(row.get("title_excel3", ""))
+#                 para3 = row_cells[3].paragraphs[0]
+#                 clear_paragraph(para3)
+#                 tokens_3 = TitleComparison.tokenize_with_indices(text3)
+#                 aligned_tokens3, _, flags3 = TitleComparison.dp_align_tokens(tokens_3, tokens_base)
+#                 TitleComparison.reconstruct_text_with_flags(para3, aligned_tokens3, tokens_base, flags3)
+#         doc.save(output_path)
+#         print("Report saved at:", output_path)
+#
+#     @staticmethod
+#     def _add_summary(doc, total_titles, mismatched_count):
+#         doc.add_heading('Summary of Title Comparison', level=2)
+#         total_para = doc.add_paragraph(f"Total Titles Compared: {total_titles}")
+#         total_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+#         total_run = total_para.runs[0]
+#         total_run.font.name = 'Arial'
+#         total_run.font.size = Pt(10)
+#         mismatch_para = doc.add_paragraph(f"Titles with Differences: {mismatched_count}")
+#         mismatch_para.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+#         mismatch_run = mismatch_para.runs[0]
+#         mismatch_run.font.name = 'Arial'
+#         mismatch_run.font.size = Pt(10)
+#
+#     @staticmethod
+#     def tokenize_with_indices(text):
+#         tokens = []
+#         # Use a regex that matches either whitespace or non-whitespace sequences.
+#         for match in re.finditer(r'\s+|\S+', text):
+#             tokens.append((match.group(), match.start()))
+#         print("DEBUG (Report): Tokenized Text with Indices:", tokens)
+#         return tokens
+#
+#     @staticmethod
+#     def dp_align_tokens(tokens1, tokens2):
+#         token_strs1 = [t[0] for t in tokens1]
+#         token_strs2 = [t[0] for t in tokens2]
+#         n, m = len(token_strs1), len(token_strs2)
+#         dp = [[0] * (m + 1) for _ in range(n + 1)]
+#         backtrack = [[None] * (m + 1) for _ in range(n + 1)]
+#         for i in range(1, n + 1):
+#             dp[i][0] = i
+#             backtrack[i][0] = 'UP'
+#         for j in range(1, m + 1):
+#             dp[0][j] = j
+#             backtrack[0][j] = 'LEFT'
+#         for i in range(1, n + 1):
+#             for j in range(1, m + 1):
+#                 similarity = SequenceMatcher(None, token_strs1[i - 1], token_strs2[j - 1]).ratio()
+#                 if token_strs1[i - 1] == token_strs2[j - 1]:
+#                     replace_cost = dp[i - 1][j - 1]
+#                     flag = "EXACT"
+#                 elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():
+#                     replace_cost = dp[i - 1][j - 1] + 0.5
+#                     flag = "CASE_ONLY"
+#                 elif similarity >= 0.8:
+#                     replace_cost = dp[i - 1][j - 1] + (1 - similarity)
+#                     flag = "CHAR_LEVEL"
+#                 elif similarity >= 0.4:
+#                     replace_cost = dp[i - 1][j - 1] + 2
+#                     flag = "CHAR_LEVEL"
+#                 else:
+#                     replace_cost = float('inf')
+#                 delete_cost = dp[i - 1][j] + 1
+#                 insert_cost = dp[i][j - 1] + 1
+#                 dp[i][j] = min(replace_cost, delete_cost, insert_cost)
+#                 if dp[i][j] == replace_cost:
+#                     backtrack[i][j] = 'DIAG'
+#                 elif dp[i][j] == delete_cost:
+#                     backtrack[i][j] = 'UP'
+#                 else:
+#                     backtrack[i][j] = 'LEFT'
+#         aligned_tokens1, aligned_tokens2, flags = [], [], []
+#         i, j = n, m
+#         while i > 0 or j > 0:
+#             if i > 0 and j > 0 and backtrack[i][j] == 'DIAG':
+#                 aligned_tokens1.append(tokens1[i - 1])
+#                 aligned_tokens2.append(tokens2[j - 1])
+#                 if token_strs1[i - 1] == token_strs2[j - 1]:
+#                     flags.append("EXACT")
+#                 elif token_strs1[i - 1].lower() == token_strs2[j - 1].lower():
+#                     flags.append("CASE_ONLY")
+#                 else:
+#                     flags.append("CHAR_LEVEL")
+#                 i -= 1
+#                 j -= 1
+#             elif i > 0 and (j == 0 or backtrack[i][j] == 'UP'):
+#                 aligned_tokens1.append(tokens1[i - 1])
+#                 aligned_tokens2.append((None, None))
+#                 flags.append("MISSING_2")
+#                 i -= 1
+#             elif j > 0 and (i == 0 or backtrack[i][j] == 'LEFT'):
+#                 aligned_tokens1.append((None, None))
+#                 aligned_tokens2.append(tokens2[j - 1])
+#                 flags.append("MISSING_1")
+#                 j -= 1
+#         return aligned_tokens1[::-1], aligned_tokens2[::-1], flags[::-1]
+#
+#     @staticmethod
+#     def reconstruct_text_with_flags(paragraph, tokens1, tokens2, flags):
+#         for (token1, index1), (token2, index2), flag in zip(tokens1, tokens2, flags):
+#             if token1 is None:
+#                 continue
+#             if index1 > 0:
+#                 paragraph.add_run(" ")
+#             if flag == "EXACT":
+#                 paragraph.add_run(token1)
+#             elif flag == "CASE_ONLY":
+#                 run = paragraph.add_run(token1)
+#                 run.font.color.rgb = RGBColor(128, 128, 128)
+#             elif flag == "CHAR_LEVEL":
+#                 matcher = SequenceMatcher(None, token1, token2)
+#                 for op, i1, i2, j1, j2 in matcher.get_opcodes():
+#                     text_part = token1[i1:i2]
+#                     if op == "equal":
+#                         paragraph.add_run(text_part)
+#                     else:
+#                         diff_run = paragraph.add_run(text_part)
+#                         diff_run.font.color.rgb = RGBColor(255, 165, 0)
+#             elif flag in ["MISSING_1", "MISSING_2"]:
+#                 run = paragraph.add_run(token1)
+#                 run.font.color.rgb = RGBColor(255, 0, 0)
+#         return paragraph
+#
 
 # Custom main window class that supports drag-and-drop.
+
 class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.TkdndVersion = TkinterDnD._require(self)
-
-
 
 
 class MergerGUI:
@@ -621,7 +803,7 @@ class MergerGUI:
         font_size = 12
         self.excel1_button = ctk.CTkButton(parent_frame,
             text="\n➕\n\nSelect File or\nDrag & Drop Here",
-            command=self._browse_excel2,
+            command=self._browse_excel1,
             border_width=3,
             fg_color="transparent",
             hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
@@ -678,7 +860,7 @@ class MergerGUI:
         font_size = 12
         self.excel3_button = ctk.CTkButton(parent_frame,
             text="\n➕\n\nSelect File or\nDrag & Drop Here",
-            command=self._browse_excel2,
+            command=self._browse_excel3,
             border_width=3,
             fg_color="transparent",
             hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
@@ -876,11 +1058,12 @@ class MergerGUI:
                 )
             messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
 
-            if self.generate_report.get() and self.generate_word_report.get():
-                report_path = os.path.splitext(merged_file_path)[0] + "-TitleComparison.docx"
-                include_excel3 = self.compare_excel3_title.get() and bool(excel3_path.strip())
-                TitleComparison.create_report(merged_df, 'title_excel1', 'title_excel2', report_path, include_excel3)
-                messagebox.showinfo("Success", f"Title comparison report saved at {report_path}")
+            ### TitleComparison is disabled
+            # if self.generate_report.get() and self.generate_word_report.get():
+            #     report_path = os.path.splitext(merged_file_path)[0] + "-TitleComparison.docx"
+            #     include_excel3 = self.compare_excel3_title.get() and bool(excel3_path.strip())
+            #     TitleComparison.create_report(merged_df, 'title_excel1', 'title_excel2', report_path, include_excel3)
+            #     messagebox.showinfo("Success", f"Title comparison report saved at {report_path}")
 
         except Exception as e:
             messagebox.showerror("Error", str(e))
