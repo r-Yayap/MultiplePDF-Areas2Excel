@@ -22,6 +22,8 @@ import unicodedata
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
 
+#Version 1
+
 # Helper to clear a docx paragraph's contents
 def clear_paragraph(paragraph):
     p = paragraph._element
