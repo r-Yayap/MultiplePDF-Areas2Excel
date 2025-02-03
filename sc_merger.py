@@ -317,7 +317,7 @@ class ExcelMerger:
                 (True, True, False): "Instance 4: number_1 and number_2",
                 (True, False, True): "Instance 5: number_1 and number_3",
                 (False, True, True): "Instance 6: number_2 and number_3",
-                (True, True, True): "Complete",
+                (True, True, True): "",
                 (False, False, False): "None"
             }
             # Create a new column header for the instance info.
