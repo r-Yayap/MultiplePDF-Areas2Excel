@@ -311,18 +311,18 @@ class ExcelMerger:
 
             # --- Add an Instance column for 3-file merging ---
             instance_mapping = {
-                (True, False, False): "Instance 1: Only number_1",
-                (False, True, False): "Instance 2: Only number_2",
-                (False, False, True): "Instance 3: Only number_3",
-                (True, True, False): "Instance 4: number_1 and number_2",
-                (True, False, True): "Instance 5: number_1 and number_3",
-                (False, True, True): "Instance 6: number_2 and number_3",
+                (True, False, False): "PDF Only",
+                (False, True, False): "number 2",
+                (False, False, True): "number 3",
+                (True, True, False): "4: PDF and number_2",
+                (True, False, True): "5: PDF and number_3",
+                (False, True, True): "No PDF but found on number_2 and number_3",
                 (True, True, True): "",
                 (False, False, False): "None"
             }
             # Create a new column header for the instance info.
             instance_col_idx = ws.max_column + 1
-            ws.cell(row=1, column=instance_col_idx, value="Instance")
+            ws.cell(row=1, column=instance_col_idx, value="Case")
             for row_idx in range(2, len(merged_df) + 2):
                 # Read the cell values again to compute the presence tuple.
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
