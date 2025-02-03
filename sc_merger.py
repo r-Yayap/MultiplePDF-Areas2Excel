@@ -740,7 +740,7 @@ class MergerGUI:
 
         # Use our custom CTkDnD main window for drag-and-drop support.
         self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
-        self.mergerApp.title("[No Name Yet]")
+        self.mergerApp.title("Conflux")
 
         # File paths for three Excel files and the output file.
         self.excel1_path = tk.StringVar()
@@ -802,7 +802,7 @@ class MergerGUI:
         font_name = "Helvetica"
         font_size = 12
         self.excel1_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            text="\n➕\n\nSelect Extracted Excel or\nDrag & Drop Here",
             command=self._browse_excel1,
             border_width=3,
             fg_color="transparent",
@@ -831,7 +831,7 @@ class MergerGUI:
         font_name = "Helvetica"
         font_size = 12
         self.excel2_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            text="\n➕\n\nSelect DC_LOD Excel or\nDrag & Drop Here",
             command=self._browse_excel2,
             border_width=3,
             fg_color="transparent",
@@ -859,7 +859,7 @@ class MergerGUI:
         font_name = "Helvetica"
         font_size = 12
         self.excel3_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect File or\nDrag & Drop Here",
+            text="\n➕\n\nSelect DD_LOD Excel or\nDrag & Drop Here",
             command=self._browse_excel3,
             border_width=3,
             fg_color="transparent",
