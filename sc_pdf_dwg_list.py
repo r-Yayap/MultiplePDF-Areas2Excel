@@ -144,7 +144,7 @@ def save_to_excel(df, excel_file):
 
     # Save the workbook
     wb.save(excel_file)
-
+    wb.close()
     print(f"Directory listing exported to {excel_file}")
 
 

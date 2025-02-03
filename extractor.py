@@ -229,8 +229,6 @@ class TextExtractor:
                             cell.hyperlink = absolute_path
                             cell.style = "Hyperlink"
 
-
-                    # Write extracted areas to columns starting from 6
                     # Write extracted areas to columns starting from 6
                     for index, area in enumerate(self.areas):  # Use the updated `self.areas` list
                         column_title = area.get("title", f"Area {index + 1}")
@@ -259,10 +257,18 @@ class TextExtractor:
                     print(f"Unexpected error consolidating data for {filename}: {e}")
                     ws.append([folder, filename, "Error"] + [""] * len(self.areas))
 
-        # Save to the output path
+        # Generate a unique filename if the output file already exists
+        output_filename = self.output_excel_path
+        if os.path.exists(output_filename):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name, file_ext = os.path.splitext(output_filename)
+            output_filename = f"{file_name}_{timestamp}{file_ext}"
+
+        # Save to the new filename
         try:
-            wb.save(self.output_excel_path)
-            print(f"Consolidated results saved to {self.output_excel_path}")
+            wb.save(output_filename)
+            wb.close()
+            print(f"Consolidated results saved to {output_filename}")
         except Exception as e:
             print(f"Error saving Excel file: {e}")
 

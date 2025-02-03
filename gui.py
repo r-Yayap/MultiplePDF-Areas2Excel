@@ -33,7 +33,7 @@ class XtractorGUI:
         self.ocr_settings = {'enable_ocr': 'Off', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
 
-        OPTION_ACTIONS["LOD Merger"] = self.open_lod_merger
+        OPTION_ACTIONS["LOD Merger"] = "" #self.open_lod_merger
 
         self.setup_widgets()
         self.setup_bindings()
@@ -67,6 +67,7 @@ class XtractorGUI:
 
                 # Save to Excel file
                 wb.save(export_file_path)
+                wb.close()
                 print(f"Exported areas to {export_file_path}")
 
             except Exception as e:
