@@ -57,7 +57,7 @@ class PDFViewer:
         self.context_menu.add_command(label="Delete Rectangle", command=self.delete_selected_rectangle)
 
         # Bind canvas resize and mouse events
-        self.canvas.master.bind("<Configure>", lambda event: self.resize_canvas())
+        self.canvas.master.bind("<Configure>", lambda event: self.resize_canvas(event.width, event.height))
         self.canvas.bind("<ButtonPress-1>", self.start_rectangle)
         self.canvas.bind("<B1-Motion>", self.draw_rectangle)
         self.canvas.bind("<ButtonRelease-1>", self.end_rectangle)
@@ -144,18 +144,13 @@ class PDFViewer:
             print("Error updating display: No valid page loaded.")
             return
 
-        # Set canvas dimensions based on the master window size
-        canvas_width = self.canvas.master.winfo_width() - 30
-        canvas_height = self.canvas.master.winfo_height() - 135
-
-        # Adjust scrollbars to fit the canvas dimensions
-        self.v_scrollbar.configure(command=self.canvas.yview, height=canvas_height)
-        self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)
-        self.h_scrollbar.configure(command=self.canvas.xview, width=canvas_width)
-        self.h_scrollbar.place_configure(x=10, y=canvas_height + 107)
-
-        # Resize the canvas to the calculated dimensions
-        self.canvas.config(width=canvas_width, height=canvas_height)
+        if self.canvas.find_all():  # Only scale if there are elements on the canvas
+            scale_x = self.canvas.winfo_width() / CANVAS_WIDTH
+            scale_y = self.canvas.winfo_height() / CANVAS_HEIGHT
+            self.canvas.scale("all", 0, 0, scale_x, scale_y)  # Scale only if items exist
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))  # Adjust scrolling
+        else:
+            print("Skipping scaling: No elements on the canvas yet.")
 
         # Check if there is a valid PDF page to display
         if self.page is None:
@@ -306,33 +301,38 @@ class PDFViewer:
         self.current_zoom = zoom_level
         self.update_display()  # Refresh the display with the new zoom level
 
-    def resize_canvas(self):
-        """Adjusts canvas dimensions based on the parent window size with a delay."""
-        if self.resize_job:
-            # Cancel any scheduled update if resizing is still happening
-            self.canvas.after_cancel(self.resize_job)
+    def resize_canvas(self, new_width, new_height):
+        """Dynamically resizes canvas and scrollbars to fit window size without breaking UI."""
 
-        # Schedule a new resize job after the delay
-        self.resize_job = self.canvas.after(RESIZE_DELAY, self._perform_resize)
+        # Keep margins for UI elements
+        canvas_width = new_width - 30  # Leave small margin
+        canvas_height = max(200, new_height )  # Reserve space for buttons
 
-    def _perform_resize(self):
-        """Performs the actual resize operation for the canvas."""
-        # Set new canvas dimensions based on master window size
-        canvas_width = self.canvas.master.winfo_width() - 30
-        canvas_height = self.canvas.master.winfo_height() - 135
-
-        # Update canvas size
+        # Update canvas dimensions
         self.canvas.config(width=canvas_width, height=canvas_height)
 
-        # Update scrollbar dimensions and positions
+        # Update scrollbar positions
         self.v_scrollbar.configure(height=canvas_height)
-        self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)  # Adjust position based on new width
-
         self.h_scrollbar.configure(width=canvas_width)
-        self.h_scrollbar.place_configure(x=10, y=canvas_height + 107)  # Adjust position based on new height
+        self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)
+        self.h_scrollbar.place_configure(x=10, y=canvas_height + 107)
 
-        # Refresh the PDF display to fit the new canvas size
-        self.update_display()
+        # Scale canvas elements only if needed
+        if self.canvas.find_all():
+            scale_x = canvas_width / CANVAS_WIDTH
+            scale_y = canvas_height / CANVAS_HEIGHT
+            self.canvas.scale("all", 0, 0, scale_x, scale_y)
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _perform_resize(self):
+        """Scales the canvas dynamically when the window resizes, only if elements exist."""
+        if self.canvas.find_all():  # Only scale if there are elements on the canvas
+            scale_x = self.canvas.winfo_width() / CANVAS_WIDTH
+            scale_y = self.canvas.winfo_height() / CANVAS_HEIGHT
+            self.canvas.scale("all", 0, 0, scale_x, scale_y)
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))  # Adjust scrolling
+        else:
+            print("Skipping scaling: No elements on the canvas yet.")
 
     def show_context_menu(self, event):
         """Displays context menu and highlights the rectangle if right-click occurs near the edge."""

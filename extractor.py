@@ -17,6 +17,7 @@ from utils import adjust_coordinates_for_rotation, find_tessdata
 
 class TextExtractor:
     def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders):
+        self.final_output_path = None
         self.pdf_folder = pdf_folder
         self.output_excel_path = output_excel_path
         self.areas = areas
@@ -46,7 +47,9 @@ class TextExtractor:
         # Step 4: Remove extra spaces between words
         return re.sub(r'\s+', ' ', text)
 
-    def start_extraction(self, progress_list, total_files):
+    def start_extraction(self, progress_list, total_files, final_output_path):
+        self.final_output_path = final_output_path  # ✅ Store reference for later use
+
         """Starts the extraction process using multiprocessing with progress tracking."""
         try:
             with multiprocessing.Pool() as pool:
@@ -58,10 +61,8 @@ class TextExtractor:
                 results = pool.starmap(self.process_single_pdf,
                                        [(pdf_path, progress_list, total_files) for pdf_path in pdf_files])
 
-                # Consolidate results into an Excel file
-                actual_output_filename = self.consolidate_results(results)  # Return the actual filename
-                return actual_output_filename  # Ensure GUI receives the correct filename
-
+                # Consolidate results into an Excel file after extraction is complete
+                self.consolidate_results(results, final_output_path)
         except Exception as e:
             print(f"Error during extraction: {e}")
             return None
@@ -123,6 +124,7 @@ class TextExtractor:
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
             progress_list.append(result_rows)
             return result_rows
+
 
     def get_pdf_files(self):
         """Gathers all PDF files within the specified folder."""
@@ -207,7 +209,7 @@ class TextExtractor:
         pix.save(img_path)
         return text_area, img_path
 
-    def consolidate_results(self, results):
+    def consolidate_results(self, results, final_output_path):
         """Consolidates all extracted results into an Excel file with each page as a row."""
         wb = Workbook()
         ws = wb.active
@@ -260,6 +262,10 @@ class TextExtractor:
                     print(f"Unexpected error consolidating data for {filename}: {e}")
                     ws.append([folder, filename, "Error"] + [""] * len(self.areas))
 
+        # Cleanup temporary images
+        if os.path.exists(self.temp_image_folder):
+            shutil.rmtree(self.temp_image_folder)
+
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path
         if os.path.exists(output_filename):
@@ -267,16 +273,18 @@ class TextExtractor:
             file_name, file_ext = os.path.splitext(output_filename)
             output_filename = f"{file_name}_{timestamp}{file_ext}"
 
+
+
         # Save to the new filename
         try:
             wb.save(output_filename)
             wb.close()
+            final_output_path.value = output_filename  # ✅ Save to shared multiprocessing Value
+
             print(f"Consolidated results saved to {output_filename}")
         except Exception as e:
             print(f"Error saving Excel file: {e}")
 
-        # Cleanup temporary images
-        if os.path.exists(self.temp_image_folder):
-            shutil.rmtree(self.temp_image_folder)
+
 
 

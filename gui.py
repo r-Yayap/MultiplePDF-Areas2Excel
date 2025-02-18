@@ -12,9 +12,11 @@ import customtkinter as ctk
 
 from constants import *
 from extractor import TextExtractor
+
 from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
+
 
 import sc_bulk_rename
 import sc_dir_list
@@ -171,7 +173,7 @@ class XtractorGUI:
                                              placeholder_text="Select Folder with PDFs", border_width=1,
                                              corner_radius=3)
         self.pdf_folder_entry.place(x=50, y=10)
-        self.pdf_folder_button = ctk.CTkButton(self.root, text="...", command=self.browse_pdf_folder,
+        self.pdf_folder_button = ctk.CTkButton(self.root, text="📂", command=self.browse_pdf_folder,
                                                font=(BUTTON_FONT, 9),
                                                width=25, height=10)
         self.pdf_folder_button.place(x=20, y=10)
@@ -196,31 +198,41 @@ class XtractorGUI:
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
         self.zoom_slider = ctk.CTkSlider(self.root, from_=0.1, to=3.5, variable=self.zoom_var,
                                          command=self.update_zoom, width=170)
-        self.zoom_slider.place(x=780, y=70)
+
+        # Create a frame to hold the zoom slider and labels
+        self.zoom_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+
+        self.zoom_out_label = ctk.CTkLabel(self.zoom_frame, text="➖", font=(BUTTON_FONT, 14))
+
+        self.zoom_slider = ctk.CTkSlider(self.zoom_frame, from_=0.1, to=4, variable=self.zoom_var,
+                                         command=self.update_zoom, width=170)
+
+        self.zoom_in_label = ctk.CTkLabel(self.zoom_frame, text="➕", font=(BUTTON_FONT, 14))
+
 
         # Open Sample PDF Button
-        self.open_sample_button = ctk.CTkButton(self.root, text="Open PDF", command=self.open_sample_pdf,
+        self.open_sample_button = ctk.CTkButton(self.root, text="📑 Select", command=self.open_sample_pdf,
                                                 font=(BUTTON_FONT, 9),
                                                 width=25, height=10)
         self.open_sample_button.place(x=20, y=35)
 
         # Recent PDF Button
-        self.recent_pdf_button = ctk.CTkButton(self.root, text="Recent", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 9), width=40, height=10)
-        self.recent_pdf_button.place(x=90, y=35)
+        self.recent_pdf_button = ctk.CTkButton(self.root, text="↩ Recent", command=self.open_recent_pdf,
+                                               font=(BUTTON_FONT, 9), width=28, height=10)
+        self.recent_pdf_button.place(x=85, y=35)
 
         # Close PDF Button
-        self.close_pdf_button = ctk.CTkButton(self.root, text="X", command=self.close_pdf,anchor="center",
+        self.close_pdf_button = ctk.CTkButton(self.root, text="❌", command=self.close_pdf,anchor="center",
                                               font=(BUTTON_FONT, 9), width=10, height=10, fg_color="red4")
-        self.close_pdf_button.place(x=143, y=35)
+        self.close_pdf_button.place(x=149, y=35)
 
         # Output Excel Path
         self.output_path_entry = ctk.CTkEntry(self.root, width=270, height=20, font=(BUTTON_FONT, 9),
                                               placeholder_text="Select Folder for Excel output",
                                               border_width=1, corner_radius=3)
         self.output_path_entry.place(x=50, y=60)
-        self.output_path_button = ctk.CTkButton(self.root, text="...", command=self.browse_output_path,
-                                                font=(BUTTON_FONT, 9),
+        self.output_path_button = ctk.CTkButton(self.root, text="📂", command=self.browse_output_path,
+                                                font=(BUTTON_FONT, 9), fg_color="#217346",
                                                 width=25, height=10)
         self.output_path_button.place(x=20, y=60)
 
@@ -233,8 +245,8 @@ class XtractorGUI:
         self.include_subfolders_checkbox.place(x=192, y=34)
 
         # Extract Button
-        self.extract_button = ctk.CTkButton(self.root, text="EXTRACT", font=("Arial Black", 12),
-                                            corner_radius=10, width=75, height=30, command=self.start_extraction)
+        self.extract_button = ctk.CTkButton(self.root, text="Extract", font=("Arial Black", 14),
+                                            corner_radius=10, width=75, height=30, command=self.start_extraction, anchor="center")
         self.extract_button.place(x=330, y=55)
 
         # Areas Treeview setup
@@ -269,16 +281,16 @@ class XtractorGUI:
         self.dpi_label.place(x=348, y=32)
 
         # Import, Export, and Clear Areas Buttons
-        self.import_button = ctk.CTkButton(self.root, text="Import Areas", command=self.import_rectangles,
-                                           font=(BUTTON_FONT, 9), width=88, height=10)
+        self.import_button = ctk.CTkButton(self.root, text="⬇️ Import", command=self.import_rectangles,
+                                           font=(BUTTON_FONT, 9), width=60, height=10)
         self.import_button.place(x=670, y=15)
 
-        self.export_button = ctk.CTkButton(self.root, text="Export Areas", command=self.export_rectangles,
-                                           font=(BUTTON_FONT, 9), width=88, height=10)
+        self.export_button = ctk.CTkButton(self.root, text="⬆️ Export", command=self.export_rectangles,
+                                           font=(BUTTON_FONT, 9), width=60, height=10)
         self.export_button.place(x=670, y=40)
 
-        self.clear_areas_button = ctk.CTkButton(self.root, text="Clear Areas", command=self.clear_all_areas,
-                                                font=(BUTTON_FONT, 9), width=88, height=10)
+        self.clear_areas_button = ctk.CTkButton(self.root, text="🗑 Clear", command=self.clear_all_areas,
+                                                font=(BUTTON_FONT, 9), width=60, height=10, fg_color = "red4")
         self.clear_areas_button.place(x=670, y=65)
 
         # Option Menu for Other Features
@@ -387,8 +399,6 @@ class XtractorGUI:
     def start_extraction(self):
         """Initiates the extraction process with a progress bar and total files count."""
 
-        """Initiates the extraction process with validation and a progress bar."""
-
         # Check if areas are defined
         if not self.pdf_viewer.areas:
             messagebox.showerror("Extraction Error", "No areas defined. Please select areas before extracting.")
@@ -405,8 +415,7 @@ class XtractorGUI:
         self.output_excel_path = self.output_path_entry.get()
         output_dir = os.path.dirname(self.output_excel_path)  # Extract folder path from full file path
         if not self.output_excel_path or not os.path.isdir(output_dir):
-            messagebox.showerror("Invalid Output Path",
-                                 "The specified output path is invalid. Please select a valid folder.")
+            messagebox.showerror("Invalid Output Path","The specified output path is invalid. Please select a valid folder.")
             return
 
         # Close any open PDF before extraction
@@ -444,6 +453,9 @@ class XtractorGUI:
         progress_list = manager.list()  # List to simulate a queue
         total_files = manager.Value('i', 0)  # Track total files
 
+        # ✅ Use multiprocessing.Value to store the final output file name
+        final_output_path = multiprocessing.Manager().Value("s", "")
+
         # Start extraction in a new Process
         extractor = TextExtractor(
             pdf_folder=self.pdf_folder,
@@ -452,16 +464,19 @@ class XtractorGUI:
             ocr_settings=self.ocr_settings,
             include_subfolders=self.include_subfolders)
 
-        # Start extraction and get the correct filename
-        extraction_process = multiprocessing.Process(target=self.run_extraction, args=(extractor,))
+        extraction_process = multiprocessing.Process(target=extractor.start_extraction,
+                                                     args=(progress_list, total_files, final_output_path))
         extraction_process.start()
+
+        # ✅ Store the reference to fetch the filename later
+        self.final_output_path = final_output_path
 
         # Monitor progress
         self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
 
     def update_progress(self, progress_list, total_files, extraction_process):
-        """Updates the progress bar and files processed count during PDF extraction."""
-        # Avoid division by zero
+        """Updates the progress bar and total files count during extraction."""
+
         if total_files.value > 0:
             processed_files = len(progress_list)
             self.total_files_label.configure(text=f"Processed: {processed_files}/{total_files.value}")  # Update label
@@ -471,45 +486,41 @@ class XtractorGUI:
 
         # Check if the extraction process is alive
         if extraction_process.is_alive():
-            # Repeat the check after 100 ms
             self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
         else:
-            # Ensure the progress bar is complete and close the progress window
+            # ✅ Ensure the progress bar is complete and close the progress window
             self.progress_var.set(1)
             self.progress_window.destroy()
 
-            # Calculate and display elapsed time
+            # ✅ Show completion message
             end_time = time.time()
             elapsed_time = end_time - self.start_time
             formatted_time = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
 
-            # Ask to open the Excel file
             response = messagebox.askyesno(
                 "Extraction Complete",
                 f"PDF extraction completed successfully in {formatted_time}.\nWould you like to open the Excel file?"
             )
 
-            # Open the Excel file if the user clicks 'Yes'
-            # Open the correct output file
-            if self.output_excel_path and os.path.exists(self.output_excel_path):
-                response = messagebox.askyesno("Extraction Complete",
-                                               f"PDF extraction completed in {formatted_time}.\n"
-                                               "Would you like to open the Excel file?")
-                if response:
-                    try:
-                        os.startfile(self.output_excel_path)
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Could not open the Excel file: {e}")
+            # ✅ Ensure the extraction process is finished before accessing filename
+            extraction_process.join()
 
-    def run_extraction(self, extractor):
-        """Runs the extraction and retrieves the correct output file name."""
-        actual_output_filename = extractor.start_extraction()
+            # ✅ Fetch the final output file name from multiprocessing.Value
+            final_output_file = self.final_output_path.value.strip()
 
-        if actual_output_filename:
-            self.output_excel_path = actual_output_filename  # Update the path in GUI
-        else:
-            messagebox.showerror("Extraction Error", "Extraction failed. No output file generated.")
+            if final_output_file:
+                print(f"DEBUG: Found final_output_path -> {final_output_file}")
+            else:
+                print("DEBUG: No final_output_path found. Using default -> {self.output_excel_path}")
+                final_output_file = self.output_excel_path  # Fallback
 
+            # ✅ Open the correct output file
+            if response and final_output_file and os.path.exists(final_output_file):
+                try:
+                    print(f"DEBUG: Opening {final_output_file}...")
+                    os.startfile(final_output_file)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""
@@ -519,9 +530,43 @@ class XtractorGUI:
         else:
             messagebox.showerror("Error", f"No action found for {choice}")
 
-    def on_window_resize(self, event):
-        """Handles window resizing and adjusts the canvas dimensions."""
-        self.pdf_viewer.resize_canvas()
+    def on_window_resize(self, event=None):
+        """Handles window resizing, ensuring only the canvas and scrollbars resize while keeping all buttons fixed."""
+        new_width = self.root.winfo_width()
+        new_height = self.root.winfo_height()
+
+        if hasattr(self, "prev_width") and hasattr(self, "prev_height"):
+            if new_width == self.prev_width and new_height == self.prev_height:
+                return  # Skip unnecessary updates
+
+        self.prev_width = new_width
+        self.prev_height = new_height
+
+        try:
+            # ✅ Resize only the canvas
+            canvas_width = new_width   # Adjust to fit within window width
+            canvas_height = max(200, new_height - 160)  # Ensure it keeps a reasonable height
+
+            self.pdf_viewer.resize_canvas(canvas_width, canvas_height)
+
+            # ✅ Adjust scrollbars to match the resized canvas
+            self.pdf_viewer.v_scrollbar.configure(height=canvas_height)
+            self.pdf_viewer.h_scrollbar.configure(width=canvas_width-25)
+            self.pdf_viewer.v_scrollbar.place_configure(x=canvas_width - self.pdf_viewer.v_scrollbar.winfo_width(), y=100)
+            self.pdf_viewer.h_scrollbar.place_configure(x=10, y=canvas_height + 107)
+
+            # ✅ Move version label **only horizontally**, not vertically
+            self.version_label.place_configure(x=new_width - 140, y=canvas_height + 127)
+
+            self.zoom_frame.place_configure(x=30, y=canvas_height + 127)
+            self.zoom_out_label.pack(side="left", padx=(5, 2))
+            self.zoom_slider.pack(side="left")
+            self.zoom_in_label.pack(side="left", padx=(2, 5))
+
+
+
+        except Exception as e:
+            print(f"Error resizing widgets: {e}")
 
     def display_version_info(self, event):
         version_text = """
