@@ -58,10 +58,13 @@ class TextExtractor:
                 results = pool.starmap(self.process_single_pdf,
                                        [(pdf_path, progress_list, total_files) for pdf_path in pdf_files])
 
-                # Consolidate results into an Excel file after extraction is complete
-                self.consolidate_results(results)
+                # Consolidate results into an Excel file
+                actual_output_filename = self.consolidate_results(results)  # Return the actual filename
+                return actual_output_filename  # Ensure GUI receives the correct filename
+
         except Exception as e:
             print(f"Error during extraction: {e}")
+            return None
 
     def process_single_pdf(self, pdf_path, progress_list, total_files):
         """Processes a single PDF file, extracting text and images as necessary."""

@@ -1,6 +1,6 @@
 # constants.py
 
-VERSION_TEXT = "Version 0.240915-00"
+VERSION_TEXT = "Version 0.240915-01"
 
 # Application settings
 INITIAL_WIDTH = 965
@@ -31,7 +31,6 @@ from sc_merger import MergerGUI
 from sc_bulk_rename import bulk_rename_gui
 
 OPTION_ACTIONS = {
-    "LOD Merger": None,  # Call a method that references self
     "PDF/DWG List": pdf_dwg_counter,
     "Directory List": generate_file_list_and_excel,
     "Bulk Renamer": bulk_rename_gui

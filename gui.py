@@ -33,7 +33,6 @@ class XtractorGUI:
         self.ocr_settings = {'enable_ocr': 'Off', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
 
-        OPTION_ACTIONS["LOD Merger"] = "" #self.open_lod_merger
 
         self.setup_widgets()
         self.setup_bindings()
@@ -387,6 +386,29 @@ class XtractorGUI:
 
     def start_extraction(self):
         """Initiates the extraction process with a progress bar and total files count."""
+
+        """Initiates the extraction process with validation and a progress bar."""
+
+        # Check if areas are defined
+        if not self.pdf_viewer.areas:
+            messagebox.showerror("Extraction Error", "No areas defined. Please select areas before extracting.")
+            return
+
+        # Validate PDF folder path
+        self.pdf_folder = self.pdf_folder_entry.get()
+        if not self.pdf_folder or not os.path.isdir(self.pdf_folder):
+            messagebox.showerror("Invalid Folder",
+                                 "The specified PDF folder does not exist. Please select a valid folder.")
+            return
+
+        # Validate Excel output path
+        self.output_excel_path = self.output_path_entry.get()
+        output_dir = os.path.dirname(self.output_excel_path)  # Extract folder path from full file path
+        if not self.output_excel_path or not os.path.isdir(output_dir):
+            messagebox.showerror("Invalid Output Path",
+                                 "The specified output path is invalid. Please select a valid folder.")
+            return
+
         # Close any open PDF before extraction
         self.pdf_viewer.close_pdf()
 
@@ -430,8 +452,8 @@ class XtractorGUI:
             ocr_settings=self.ocr_settings,
             include_subfolders=self.include_subfolders)
 
-        extraction_process = multiprocessing.Process(target=extractor.start_extraction,
-                                                     args=(progress_list, total_files))
+        # Start extraction and get the correct filename
+        extraction_process = multiprocessing.Process(target=self.run_extraction, args=(extractor,))
         extraction_process.start()
 
         # Monitor progress
@@ -468,12 +490,26 @@ class XtractorGUI:
             )
 
             # Open the Excel file if the user clicks 'Yes'
-            if response:
-                os.startfile(self.output_excel_path)
+            # Open the correct output file
+            if self.output_excel_path and os.path.exists(self.output_excel_path):
+                response = messagebox.askyesno("Extraction Complete",
+                                               f"PDF extraction completed in {formatted_time}.\n"
+                                               "Would you like to open the Excel file?")
+                if response:
+                    try:
+                        os.startfile(self.output_excel_path)
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
-    def open_lod_merger(self):
-        """Open the LOD Merger GUI as a child window."""
-        MergerGUI(master=self.root).run()  # Pass the parent window to the merger
+    def run_extraction(self, extractor):
+        """Runs the extraction and retrieves the correct output file name."""
+        actual_output_filename = extractor.start_extraction()
+
+        if actual_output_filename:
+            self.output_excel_path = actual_output_filename  # Update the path in GUI
+        else:
+            messagebox.showerror("Extraction Error", "Extraction failed. No output file generated.")
+
 
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""

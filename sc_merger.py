@@ -4,21 +4,14 @@ import tkinter as tk
 from difflib import SequenceMatcher
 from tkinter import filedialog, messagebox
 from datetime import datetime
-import functools
 
 import customtkinter as ctk
 import pandas as pd
-from docx import Document
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from docx.shared import Pt, RGBColor
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
-from openpyxl.utils import get_column_letter
-import unicodedata
 
-# Import tkinterdnd2 for drag-and-drop
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
 
@@ -759,7 +752,7 @@ class MergerGUI:
         self.title_column3 = tk.StringVar()
 
         # Boolean variables for report options and comparing Excel3 title.
-        self.generate_report = tk.BooleanVar(value=False)
+        self.compare_excel2 = tk.BooleanVar(value=False)
         self.generate_word_report = tk.BooleanVar(value=False)
         self.compare_excel3_title = tk.BooleanVar(value=False)
 
@@ -822,7 +815,7 @@ class MergerGUI:
         self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
         self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         ctk.CTkCheckBox(parent_frame, text="Compare Title",
-                        variable=self.generate_report, command=self._toggle_title_entries).grid(
+                        variable=self.compare_excel2, command=self._toggle_title_entries).grid(
             row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
             row=3, column=0, padx=5, pady=2, sticky="e")
@@ -1011,9 +1004,15 @@ class MergerGUI:
             self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
 
     def _toggle_title_entries(self):
-        state_12 = "normal" if self.generate_report.get() else "disabled"
-        self.title_option_menu1.configure(state=state_12)
-        self.title_option_menu2.configure(state=state_12)
+        # Enable title_option_menu1 if either checkbox is checked
+        state_1 = "normal" if (self.compare_excel2.get() or self.compare_excel3_title.get()) else "disabled"
+        self.title_option_menu1.configure(state=state_1)
+
+        # Enable title_option_menu2 only if compare_excel2 is checked
+        state_2 = "normal" if self.compare_excel2.get() else "disabled"
+        self.title_option_menu2.configure(state=state_2)
+
+        # Enable title_option_menu3 only if compare_excel3_title is checked
         state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
         self.title_option_menu3.configure(state=state_3)
 
@@ -1036,7 +1035,7 @@ class MergerGUI:
             output_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
 
         try:
-            if self.generate_report.get():
+            if self.compare_excel2.get():
                 title_col1 = self.title_column1.get()
                 title_col2 = self.title_column2.get()
                 title_col3 = self.title_column3.get() if self.excel3_path.get().strip() else None
