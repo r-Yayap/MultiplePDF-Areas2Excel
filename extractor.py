@@ -25,8 +25,28 @@ class TextExtractor:
         self.ocr_settings = ocr_settings
         self.include_subfolders = include_subfolders
         self.tessdata_folder = find_tessdata() if ocr_settings["enable_ocr"] != "Off" else None
-        self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"] + \
-                       [f"{area['title']}" if "title" in area else f"Area {i + 1}" for i, area in enumerate(self.areas)]
+
+        # Initialize headers with fixed metadata columns
+        self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
+
+        # Dictionary to store unique header assignments per area
+        self.unique_headers_mapping = {}  # Maps each rectangle index to a unique column header
+
+        header_count = {}  # To count occurrences of each title
+
+        for i, area in enumerate(self.areas):
+            title = area.get("title", f"Area {i + 1}")  # Default title if not manually set
+
+            # Ensure unique title for each rectangle
+            if title not in header_count:
+                header_count[title] = 1
+                unique_title = title
+            else:
+                header_count[title] += 1
+                unique_title = f"{title} ({header_count[title]})"
+
+            self.headers.append(unique_title)  # Add unique header to headers list
+            self.unique_headers_mapping[i] = unique_title  # Assign rectangle index to its specific column
 
         # Create a folder at %temp%
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -242,7 +262,9 @@ class TextExtractor:
 
                     # Write extracted areas to columns starting from 6
                     for index, area in enumerate(self.areas):  # Use the updated `self.areas` list
-                        column_title = area.get("title", f"Area {index + 1}")
+
+                        # Get the unique title assigned to this rectangle
+                        column_title = self.unique_headers_mapping.get(index, f"Area {index + 1}")
                         col_index = self.headers.index(column_title) + 1  # Excel columns are 1-based
 
                         # Retrieve text and image path from extracted areas
