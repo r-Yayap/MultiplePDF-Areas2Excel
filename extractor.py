@@ -3,9 +3,10 @@
 import multiprocessing
 import os
 import re
-import shutil
-from datetime import datetime
 
+from datetime import datetime
+import tempfile
+import getpass
 import pymupdf as fitz
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
@@ -24,12 +25,15 @@ class TextExtractor:
         self.ocr_settings = ocr_settings
         self.include_subfolders = include_subfolders
         self.tessdata_folder = find_tessdata() if ocr_settings["enable_ocr"] != "Off" else None
-        self.temp_image_folder = "temp_images"
         self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"] + \
                        [f"{area['title']}" if "title" in area else f"Area {i + 1}" for i, area in enumerate(self.areas)]
 
+        # Create a folder at %temp%
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        username = getpass.getuser()  # Get the current Windows username
+        self.temp_image_folder = os.path.join(tempfile.gettempdir(), "XtractorTemp", f"{username}-{timestamp}") # Define a unique temp folder inside the system temp directory
         if not os.path.exists(self.temp_image_folder):
-            os.makedirs(self.temp_image_folder)
+             os.makedirs(self.temp_image_folder, exist_ok=True)
 
     def clean_text(self, text):
         """Cleans text by replacing newlines, stripping, and removing illegal characters."""
@@ -93,6 +97,8 @@ class TextExtractor:
                     page = pdf_document[page_number]
                     extracted_areas = []
 
+
+
                     for area_index, area in enumerate(self.areas):
                         coordinates = area["coordinates"]
                         text_area, img_path = self.extract_text_from_area(page, coordinates, pdf_path, page_number,
@@ -124,7 +130,6 @@ class TextExtractor:
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
             progress_list.append(result_rows)
             return result_rows
-
 
     def get_pdf_files(self):
         """Gathers all PDF files within the specified folder."""
@@ -164,8 +169,9 @@ class TextExtractor:
             elif self.ocr_settings["enable_ocr"] == "Text1st+Image-beta":
                 text_area = page.get_text("text", clip=adjusted_coordinates)
                 pix = page.get_pixmap(clip=area_coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
-                img_path = os.path.join(self.temp_image_folder,
-                                        f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
+
+
+                img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
                 pix.save(img_path)
 
                 # Apply OCR if no text found
@@ -204,8 +210,8 @@ class TextExtractor:
         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=self.tessdata_folder)
         clipdoc = fitz.open("pdf", pdfdata)
         text_area = "_OCR_" + clipdoc[0].get_text()
-        img_path = os.path.join(self.temp_image_folder,
-                                f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
+
+        img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
         pix.save(img_path)
         return text_area, img_path
 
@@ -262,18 +268,12 @@ class TextExtractor:
                     print(f"Unexpected error consolidating data for {filename}: {e}")
                     ws.append([folder, filename, "Error"] + [""] * len(self.areas))
 
-        # Cleanup temporary images
-        if os.path.exists(self.temp_image_folder):
-            shutil.rmtree(self.temp_image_folder)
-
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path
         if os.path.exists(output_filename):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name, file_ext = os.path.splitext(output_filename)
             output_filename = f"{file_name}_{timestamp}{file_ext}"
-
-
 
         # Save to the new filename
         try:
