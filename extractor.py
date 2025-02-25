@@ -298,6 +298,7 @@ class TextExtractor:
 
         # Cleanup temporary images
         if os.path.exists(self.temp_image_folder):
+            print(f"Temp Images will be deleted: {self.temp_image_folder}")
             shutil.rmtree(self.temp_image_folder)
 
         # Generate a unique filename if the output file already exists
