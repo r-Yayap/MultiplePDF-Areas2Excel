@@ -106,7 +106,10 @@ class ExcelMerger:
         print(merged_df.columns.tolist())
 
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
-        ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
+        ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df,
+                                                     status_column="status", status_value="Expected Status",
+                                                     project_column="project name", project_value="Expected Project",
+                                                     custom_checks=[("custom_field", "Expected Value")])
 
         # *** IMPORTANT: First, reorder columns ***
         ExcelMerger.reorder_columns(temp_file_path)
@@ -238,17 +241,33 @@ class ExcelMerger:
 
     @staticmethod
     def _save_merged_to_excel(df, output_path):
-        temp_file_path = output_path if not os.path.isdir(output_path) else os.path.join(output_path, 'merged_result_temp.xlsx')
+        """Ensure Comments_1 exists before saving the merged Excel file."""
+        if "Comments_1" not in df.columns:
+            df["Comments_1"] = ""  # ✅ Add default value if missing
+
+        print("DEBUG: Final Columns Before Saving:", df.columns.tolist())  # ✅ Verify columns before saving
+
+        temp_file_path = output_path if not os.path.isdir(output_path) else os.path.join(output_path,
+                                                                                         'merged_result_temp.xlsx')
         df.to_excel(temp_file_path, index=False, header=True)
+
+        print(f"✅ Saved merged file with Comments_1: {temp_file_path}")  # ✅ Confirm file is saved
         return temp_file_path
 
     @staticmethod
-    def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df):
+    @staticmethod
+    def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df,
+                                         status_column=None, status_value=None,
+                                         project_column=None, project_value=None,
+                                         custom_checks=None):
+
         wb = load_workbook(file_path)
         ws = wb.active
         print("Applying formatting and hyperlinks to:", file_path)
 
         duplicate_font = Font(bold=True, color="FF3300")
+
+        light_red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
 
         # ------------------------------
         # Branch based on whether we're merging 3 or 2 Excel files.
@@ -277,6 +296,8 @@ class ExcelMerger:
             refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
             refno3_duplicates = merged_df['number_3'][merged_df['number_3'].duplicated(keep=False)].tolist()
 
+
+
             # Loop over each row (account for header row in Excel, hence i+2).
             for row_idx in range(2, len(merged_df) + 2):
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
@@ -303,6 +324,33 @@ class ExcelMerger:
                     ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
                 if num3 in refno3_duplicates:
                     ws.cell(row=row_idx, column=refno3_col_idx).font = duplicate_font
+
+
+
+            # Retrieve column indices BEFORE looping (avoid multiple `get_loc()` calls)
+            status_col_idx = merged_df.columns.get_loc(
+                status_column) + 1 if status_column and status_column in merged_df.columns else None
+            project_col_idx = merged_df.columns.get_loc(
+                project_column) + 1 if project_column and project_column in merged_df.columns else None
+            custom_col_indices = {col: merged_df.columns.get_loc(col) + 1 for col, _ in custom_checks if
+                                  col in merged_df.columns} if custom_checks else {}
+
+            # Highlight mismatched status, project, and custom checks (Light Red)
+            for i, row in merged_df.iterrows():
+                excel_row = i + 2  # Account for header row
+
+                # Highlight Status Column if mismatch exists
+                if status_col_idx and row[status_column] != status_value:
+                    ws.cell(row=excel_row, column=status_col_idx).fill = light_red_fill
+
+                # Highlight Project Name Column if mismatch exists
+                if project_col_idx and row[project_column] != project_value:
+                    ws.cell(row=excel_row, column=project_col_idx).fill = light_red_fill
+
+                # Highlight Custom Checks if mismatches exist
+                for custom_col, col_idx in custom_col_indices.items():
+                    if row[custom_col] != dict(custom_checks).get(custom_col, ""):
+                        ws.cell(row=excel_row, column=col_idx).fill = light_red_fill
 
             # --- Add an Instance column for 3-file merging ---
             instance_mapping = {
@@ -361,11 +409,13 @@ class ExcelMerger:
 
             # --- Add an Instance column for 2-file merging ---
             instance_mapping_2 = {
-                (True, False): "Instance 1: Only number_1",
-                (False, True): "Instance 2: Only number_2",
-                (True, True): "Complete",
+                (True, False): "PDF Only",
+                (False, True): "number 2",
+                (True, True): "",
                 (False, False): "None"
             }
+
+
             instance_col_idx = ws.max_column + 1
             ws.cell(row=1, column=instance_col_idx, value="Instance")
             for row_idx in range(2, len(merged_df) + 2):
@@ -375,21 +425,26 @@ class ExcelMerger:
                 instance_text = instance_mapping_2.get(presence, "Unknown")
                 ws.cell(row=row_idx, column=instance_col_idx, value=instance_text)
 
-        # ------------------------------
         # Process hyperlinks (unchanged from your original code)
+        # Apply hyperlinks
         for original_row_index, columns in hyperlinks.items():
             new_row = merged_df[merged_df['original_row_index'] == original_row_index]
+
             if new_row.empty:
                 print(f"No matching row for original_row_index: {original_row_index}")
                 continue
-            new_row_idx = new_row.index[0] + 2
+
+            new_row_idx = new_row.index[0] + 2  # DataFrame index is zero-based; Excel rows start at 2
+
             for col_idx, hyperlink in columns.items():
+                adjusted_col_idx = col_idx + 1  # Adjust for common_ref column shift
                 try:
-                    ws.cell(row=new_row_idx, column=col_idx).hyperlink = hyperlink
-                    ws.cell(row=new_row_idx, column=col_idx).style = "Hyperlink"
-                    print(f"Applied hyperlink at row {new_row_idx}, col {col_idx}, link: {hyperlink}")
+                    ws.cell(row=new_row_idx, column=adjusted_col_idx).hyperlink = hyperlink
+                    ws.cell(row=new_row_idx, column=adjusted_col_idx - 1).style = "Hyperlink"
+                    print(
+                        f"Applied hyperlink at new_row_idx: {new_row_idx}, adjusted_col_idx: {adjusted_col_idx}, link: {hyperlink}")
                 except Exception as e:
-                    print(f"Error applying hyperlink for row {new_row_idx}, col {col_idx}: {e}")
+                    print(f"Error applying hyperlink for row {new_row_idx}, column {adjusted_col_idx}: {e}")
 
         wb.save(file_path)
         wb.close()
@@ -502,17 +557,103 @@ class ExcelMerger:
         return None
 
     @staticmethod
-    def apply_title_highlighting(file_path, merged_df, title_col1, title_col2, reorder=True, update_baseline=True):
+    def update_comments_column(merged_df, status_column=None, status_value=None, project_column=None,
+                               project_value=None, custom_checks=None, filename_column=None):
+        """Ensures Comments_1 is correctly populated with mismatches before saving.
+           Leaves cells empty if there are no issues. Uses '\n' for better readability."""
+
+        # ✅ Ensure "Comments_1" exists
+        if "Comments_1" not in merged_df.columns:
+            merged_df["Comments_1"] = ""
+
+        def append_comment(existing, new_comment):
+            """Appends new_comment with '\n' for better readability."""
+            if new_comment.strip():  # Only append if there's a real issue
+                return f"{existing}\n{new_comment}".strip() if existing else new_comment.strip()
+            return existing  # Keep existing value if there's no new comment
+
+        # ✅ Perform Filename Check
+        # if filename_column and filename_column in merged_df.columns:
+        #     merged_df["Comments_1"] = merged_df.apply(
+        #         lambda row: append_comment(
+        #             row["Comments_1"],
+        #             f"Filename & Drawing Number Discrepancy: {row[filename_column]} <--> {row['number_1']}"
+        #         ) if pd.notna(row["number_1"]) and pd.notna(row[filename_column])
+        #              and not str(row[filename_column]).startswith(str(row["number_1"])) else row["Comments_1"],
+        #         axis=1
+        #     )
+
+        # ✅ Perform Status Check
+        if status_column and status_column in merged_df.columns:
+            merged_df["Comments_1"] = merged_df.apply(
+                lambda row: append_comment(row["Comments_1"],
+                                           f"{status_column} Mismatch: {row[status_column]} <--> {status_value}")
+                if pd.notna(row["number_1"]) and  # ✅ Skip rows where number_1 is empty
+                   (pd.isna(row[status_column]) or  # ✅ Flags None/NaN as Mismatch
+                    (pd.notna(row[status_column]) and pd.notna(status_value) and
+                     str(row[status_column]).strip().lower() != str(status_value).strip().lower()))
+                else row["Comments_1"],
+                axis=1
+            )
+
+        # ✅ Perform Project Name Check
+        if project_column and project_column in merged_df.columns:
+            merged_df["Comments_1"] = merged_df.apply(
+                lambda row: append_comment(row["Comments_1"],
+                                           f"{project_column} Mismatch: {row[project_column]} <--> {project_value}")
+                if pd.notna(row["number_1"]) and  # ✅ Skip rows where number_1 is empty
+                   (pd.isna(row[project_column]) or  # ✅ Flags None/NaN as Mismatch
+                    (pd.notna(row[project_column]) and pd.notna(project_value) and
+                     str(row[project_column]).strip().lower() != str(project_value).strip().lower()))
+                else row["Comments_1"],
+                axis=1
+            )
+
+        # ✅ Perform Custom Checks
+        if custom_checks:
+            for custom_col, custom_value in custom_checks:
+                if custom_col in merged_df.columns:
+                    merged_df["Comments_1"] = merged_df.apply(
+                        lambda row: append_comment(row["Comments_1"],
+                                                   f"{custom_col} Mismatch: {row[custom_col]} <--> {custom_value}")
+                        if pd.notna(row["number_1"]) and  # ✅ Skip rows where number_1 is empty
+                           (pd.isna(row[custom_col]) or  # ✅ Flags None/NaN as Mismatch
+                            (pd.notna(row[custom_col]) and pd.notna(custom_value) and
+                             str(row[custom_col]).strip().lower() != str(custom_value).strip().lower()))
+                        else row["Comments_1"],
+                        axis=1
+                    )
+
+
+
+        # ✅ Ensure empty cells remain truly empty
+        merged_df["Comments_1"] = merged_df["Comments_1"].str.strip().replace("", None)
+
+        return merged_df
+
+    @staticmethod
+    def apply_title_highlighting(file_path, merged_df, title_col1, title_col2, reorder=True, update_baseline=True,
+                                 status_column=None, status_value=None,
+                                 project_column=None, project_value=None,
+                                 custom_checks=None):
+        """Applies title highlighting and ensures 'Comments_1' updates persist in the final Excel file."""
         wb = load_workbook(file_path, rich_text=True)
         ws = wb.active
 
-        # Get current column indices by scanning the header row
+        # Get current column indices
         col_idx1 = ExcelMerger.get_ws_column_index(ws, title_col1)
         col_idx2 = ExcelMerger.get_ws_column_index(ws, title_col2)
+        comments_col_idx = ExcelMerger.get_ws_column_index(ws, "Comments_1")  # Ensure column exists
+
         if col_idx1 is None or col_idx2 is None:
             print(f"Could not find header {title_col1} or {title_col2} in the worksheet.")
             wb.close()
             return
+
+        # ✅ Fix: Update Comments_1 Before Saving
+        merged_df = ExcelMerger.update_comments_column(
+            merged_df, status_column, status_value, project_column, project_value, custom_checks
+        )
 
         print(f"Applying title highlighting on columns '{title_col1}' and '{title_col2}':")
         for i, row in merged_df.iterrows():
@@ -524,11 +665,23 @@ class ExcelMerger:
             aligned_tokens1, aligned_tokens2, flags = ExcelMerger.dp_align_tokens(tokens1, tokens2)
             rich_text1 = ExcelMerger.create_rich_text(baseline_text, aligned_tokens1, flags)
             rich_text2 = ExcelMerger.create_rich_text(other_text, aligned_tokens2, flags)
+
+            # ✅ Ensure Comments_1 updates persist in the Excel file
+            if comments_col_idx:
+                ws.cell(row=excel_row, column=comments_col_idx).value = row["Comments_1"]
+
             # Update baseline column only if update_baseline is True.
             if update_baseline:
                 ws.cell(row=excel_row, column=col_idx1).value = rich_text1
             # Always update the second column.
             ws.cell(row=excel_row, column=col_idx2).value = rich_text2
+
+        # ✅ Debug Before Saving
+        print("✅ DEBUG: Final 'Comments_1' Column Before Saving:")
+        print(merged_df["Comments_1"].value_counts(dropna=False))
+
+        # ✅ Save before reordering to retain comments
+        merged_df.to_excel(file_path, index=False, header=True)
 
         if reorder:
             ExcelMerger.reorder_columns(file_path)
@@ -536,6 +689,544 @@ class ExcelMerger:
         wb.save(file_path)
         wb.close()
         print("Title highlighting applied and workbook saved:", file_path)
+
+
+class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.TkdndVersion = TkinterDnD._require(self)
+
+
+class MergerGUI:
+    """Handles the GUI for the Excel merger with drag-and-drop file selection and theme toggle."""
+
+    def __init__(self, master=None):
+
+        #set_custom_theme("dark")  # or "light" if you prefer the light theme
+
+        ctk.set_appearance_mode("dark")  # Set dark mode at startup
+
+
+        # Use our custom CTkDnD main window for drag-and-drop support.
+        self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
+        self.mergerApp.title("Conflux")
+
+        # File paths for three Excel files and the output file.
+        self.excel1_path = tk.StringVar()
+        self.excel2_path = tk.StringVar()
+        self.excel3_path = tk.StringVar()
+        self.output_path = tk.StringVar()
+
+        # Header selections for each file (via drop-down lists).
+        self.ref_column1 = tk.StringVar()
+        self.title_column1 = tk.StringVar()
+        self.ref_column2 = tk.StringVar()
+        self.title_column2 = tk.StringVar()
+        self.ref_column3 = tk.StringVar()
+        self.title_column3 = tk.StringVar()
+
+        # Boolean variables for report options and comparing Excel3 title.
+        self.compare_excel2 = tk.BooleanVar(value=False)
+        self.generate_word_report = tk.BooleanVar(value=False)
+        self.compare_excel3_title = tk.BooleanVar(value=False)
+
+        # Boolean variable for theme mode; True = dark mode.
+        self.theme_mode = tk.BooleanVar(value=True)
+
+        self.excel1_headers = []
+        self.excel2_headers = []
+        self.excel3_headers = []
+
+        self._build_gui()
+
+    def _build_gui(self):
+        self.mergerApp.grid_rowconfigure(0, weight=1)
+        self.mergerApp.grid_columnconfigure(0, weight=1)
+        self.mergerApp.grid_columnconfigure(1, weight=1)
+        self.mergerApp.grid_columnconfigure(2, weight=1)
+
+        # Create three frames for Excel 1, 2, and 3.
+        self.excel1_frame = ctk.CTkFrame(self.mergerApp)
+        self.excel1_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        self.excel2_frame = ctk.CTkFrame(self.mergerApp)
+        self.excel2_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        self.excel3_frame = ctk.CTkFrame(self.mergerApp)
+        self.excel3_frame.grid(row=0, column=2, padx=10, pady=10, sticky="nsew")
+
+        for frame in (self.excel1_frame, self.excel2_frame, self.excel3_frame):
+            frame.grid_rowconfigure(0, weight=0)
+            frame.grid_columnconfigure(0, weight=0)
+            frame.grid_columnconfigure(1, weight=1)
+
+        self._build_excel1_section(self.excel1_frame)
+        self._build_excel2_section(self.excel2_frame)
+        self._build_excel3_section(self.excel3_frame)
+
+        # Create controls frame.
+        # Create the comparison check frame
+        self.comparison_frame = ctk.CTkFrame(self.mergerApp)
+        self.comparison_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        self._build_comparison_checks(self.comparison_frame)
+
+        # Create controls frame (move down)
+        self.controls_frame = ctk.CTkFrame(self.mergerApp)
+        self.controls_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        self._build_controls(self.controls_frame)
+
+    def _build_excel1_section(self, parent_frame):
+        font_name = "Helvetica"
+        font_size = 12
+        self.excel1_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect Extracted Excel or\nDrag & Drop Here",
+            command=self._browse_excel1,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel1_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        # Enable drag and drop on Excel1 button.
+        self.excel1_button.drop_target_register(DND_ALL)
+        self.excel1_button.dnd_bind('<<Drop>>', self.drop_excel1)
+        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
+            row=1, column=0, padx=5, pady=2, sticky="e")
+        self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
+        self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        # ctk.CTkCheckBox(parent_frame, text="Compare Title",
+        #                 variable=self.compare_excel2, command=self._toggle_title_entries).grid(
+        #     row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
+        # Spacer row for alignment.
+        ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
+            row=2, column=0, padx=5, pady=2, sticky="e")
+        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
+            row=3, column=0, padx=5, pady=2, sticky="e")
+        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[], state="disabled")
+        self.title_option_menu1.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+    def _build_excel2_section(self, parent_frame):
+        font_name = "Helvetica"
+        font_size = 12
+        self.excel2_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect DC_LOD Excel or\nDrag & Drop Here",
+            command=self._browse_excel2,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel2_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        self.excel2_button.drop_target_register(DND_ALL)
+        self.excel2_button.dnd_bind('<<Drop>>', self.drop_excel2)
+        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
+            row=1, column=0, padx=5, pady=2, sticky="e")
+        self.ref_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column2, values=[])
+        self.ref_option_menu2.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        ctk.CTkCheckBox(parent_frame, text="Compare Title",
+                        variable=self.compare_excel2, command=self._toggle_title_entries).grid(
+            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
+
+        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
+            row=3, column=0, padx=5, pady=2, sticky="e")
+        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[], state="disabled")
+        self.title_option_menu2.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+    def _build_excel3_section(self, parent_frame):
+        font_name = "Helvetica"
+        font_size = 12
+        self.excel3_button = ctk.CTkButton(parent_frame,
+            text="\n➕\n\nSelect DD_LOD Excel or\nDrag & Drop Here",
+            command=self._browse_excel3,
+            border_width=3,
+            fg_color="transparent",
+            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
+            text_color=("#333333", "#FFFFFF"),
+            corner_radius=10,
+            width=200,
+            height=150)
+        self.excel3_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
+        self.excel3_button.drop_target_register(DND_ALL)
+        self.excel3_button.dnd_bind('<<Drop>>', self.drop_excel3)
+        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
+            row=1, column=0, padx=5, pady=2, sticky="e")
+        self.ref_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column3, values=[])
+        self.ref_option_menu3.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+        # Place the compare title checkbox above the title dropdown.
+        ctk.CTkCheckBox(parent_frame, text="Compare Title",
+                        variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
+            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
+        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
+            row=3, column=0, padx=5, pady=2, sticky="e")
+        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[], state="disabled")
+        self.title_option_menu3.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+    def _build_comparison_checks(self, parent_frame):
+        """Builds the checkboxes, dropdowns, and textboxes for additional validation."""
+        # Add column labels
+        ctk.CTkLabel(parent_frame, text="Enable", font=("Helvetica", 12, "bold")).grid(row=0, column=0, padx=5, pady=2,
+                                                                                       sticky="w")
+        ctk.CTkLabel(parent_frame, text="Column Name", font=("Helvetica", 12, "bold")).grid(row=0, column=1, padx=5,
+                                                                                            pady=2, sticky="ew")
+        ctk.CTkLabel(parent_frame, text="Expected Value", font=("Helvetica", 12, "bold")).grid(row=0, column=2, padx=5,
+                                                                                               pady=2, sticky="ew")
+
+        # Status Check (Moved to row=1)
+        self.status_enabled = tk.BooleanVar(value=False)
+        self.status_column = tk.StringVar()
+        self.status_value = tk.StringVar()
+
+        self.status_check = ctk.CTkCheckBox(
+            parent_frame, text="Check 1",
+            variable=self.status_enabled, command=self._toggle_status
+        )
+        self.status_check.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+
+        self.status_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.status_column, values=[], state="disabled")
+        self.status_dropdown.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        self.status_entry = ctk.CTkEntry(parent_frame, textvariable=self.status_value, state="disabled")
+        self.status_entry.grid(row=1, column=2, padx=5, pady=2, sticky="ew")
+
+        # Project Name Check (Moved to row=2)
+        self.project_enabled = tk.BooleanVar(value=False)
+        self.project_column = tk.StringVar()
+        self.project_value = tk.StringVar()
+
+        self.project_check = ctk.CTkCheckBox(
+            parent_frame, text="Check 2",
+            variable=self.project_enabled, command=self._toggle_project
+        )
+        self.project_check.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+
+        self.project_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.project_column, values=[],
+                                                  state="disabled")
+        self.project_dropdown.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
+
+        self.project_entry = ctk.CTkEntry(parent_frame, textvariable=self.project_value, state="disabled")
+        self.project_entry.grid(row=2, column=2, padx=5, pady=2, sticky="ew")
+
+        # Add Custom Checks Button (Moved to row=3)
+        self.custom_checks = []
+        self.add_check_button = ctk.CTkButton(parent_frame, text="+ Add Check", command=self._add_custom_check)
+        self.add_check_button.grid(row=3, column=0, columnspan=3, padx=5, pady=2, sticky="ew")
+
+    def _build_filename_checker(self, parent_frame):
+        """Creates UI elements for filename validation"""
+
+        # Enable Filename Check
+        self.filename_enabled = tk.BooleanVar(value=False)
+        self.filename_column = tk.StringVar()
+
+        self.filename_check = ctk.CTkCheckBox(
+            parent_frame, text="Enable Filename Check",
+            variable=self.filename_enabled, command=self._toggle_filename_check
+        )
+        self.filename_check.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+        # Dropdown for selecting filename column
+        # self.filename_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.filename_column, values=[],
+        #                                            state="disabled")
+        # self.filename_dropdown.grid(row=1, column=0, padx=5, pady=2, sticky="ew")
+
+    def _build_controls(self, parent_frame):
+        font_name = "Helvetica"
+        font_size = 12
+        ctk.CTkLabel(parent_frame, text="Output Path:", font=(font_name, font_size)).grid(
+            row=0, column=0, padx=5, pady=2, sticky="e")
+        ctk.CTkEntry(parent_frame, textvariable=self.output_path, width=300).grid(
+            row=0, column=1, padx=5, pady=2, sticky="ew")
+        ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(
+            row=0, column=2, padx=5, pady=2)
+        # Theme toggle switch (no label) placed at the bottom-right of the controls frame.
+        self.theme_switch = ctk.CTkSwitch(parent_frame, text="", variable=self.theme_mode,
+                                          command=self.toggle_theme, switch_width=20, switch_height=10)
+        # Use place to anchor it at the bottom-right corner of the parent frame.
+        self.theme_switch.place(relx=1.0, rely=1.0, anchor="se")
+        ctk.CTkButton(parent_frame, text="Start Merge", command=self._start_merge).grid(
+            row=2, column=0, columnspan=3, pady=10)
+        parent_frame.grid_columnconfigure(1, weight=1)
+
+    def toggle_theme(self):
+        if self.theme_mode.get():
+            ctk.set_appearance_mode("dark")
+            print("Theme set to dark mode")
+        else:
+            ctk.set_appearance_mode("light")
+            print("Theme set to light mode")
+
+    def _toggle_status(self):
+        """Enable or disable status comparison fields and update custom checks."""
+        state = "normal" if self.status_enabled.get() else "disabled"
+        self.status_dropdown.configure(state=state)
+        self.status_entry.configure(state=state)
+
+        # ✅ Update all custom checks
+        self._toggle_custom_checks()
+
+    def _toggle_project(self):
+        """Enable or disable project name comparison fields and update custom checks."""
+        state = "normal" if self.project_enabled.get() else "disabled"
+        self.project_dropdown.configure(state=state)
+        self.project_entry.configure(state=state)
+
+        # ✅ Update all custom checks
+        self._toggle_custom_checks()
+
+    def _toggle_custom_checks(self):
+        """Enable or disable custom check dropdowns and entry fields dynamically."""
+        for enabled_var, column_var, value_var, dropdown_widget, entry_widget in self.custom_checks:
+            state = "normal" if enabled_var.get() else "disabled"
+            dropdown_widget.configure(state=state)
+            entry_widget.configure(state=state)
+
+    def _toggle_filename_check(self):
+        """Enable or disable filename validation fields."""
+        state = "normal" if self.filename_enabled.get() else "disabled"
+        self.filename_dropdown.configure(state=state)
+
+    def _add_custom_check(self):
+        """Adds a new custom check row dynamically and ensures dropdown values are populated."""
+        row_idx = len(self.custom_checks) + 3  # Start after Status and Project Name
+
+        enabled_var = tk.BooleanVar(value=False)
+        column_var = tk.StringVar()
+        value_var = tk.StringVar()
+
+        check = ctk.CTkCheckBox(
+            self.comparison_frame, text=f"Check {row_idx}",
+            variable=enabled_var
+        )
+        check.grid(row=row_idx, column=0, padx=5, pady=2, sticky="w")
+
+        dropdown = ctk.CTkOptionMenu(self.comparison_frame, variable=column_var, values=[], state="disabled")
+        dropdown.grid(row=row_idx, column=1, padx=5, pady=2, sticky="ew")
+
+        entry = ctk.CTkEntry(self.comparison_frame, textvariable=value_var, state="disabled")
+        entry.grid(row=row_idx, column=2, padx=5, pady=2, sticky="ew")
+
+        # ✅ Store all required elements (including dropdown widget) to update later
+        self.custom_checks.append((enabled_var, column_var, value_var, dropdown, entry))
+
+        # ✅ If Excel is already loaded, populate dropdown values immediately
+        if self.excel1_headers:
+            dropdown.configure(values=self.excel1_headers)
+            column_var.set(auto_select_header(self.excel1_headers, ["status", "project"]))
+
+        # ✅ Ensure new checks enable/disable properly when toggled
+        enabled_var.trace_add("write", lambda *args: self._toggle_custom_checks())
+
+        # ✅ Move the + button down
+        self.add_check_button.grid(row=row_idx + 1, column=0, columnspan=3, padx=5, pady=2, sticky="ew")
+
+    # --- Drag and Drop Handlers ---
+    def drop_excel1(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel1_path.set(file_path)
+        self._load_excel1_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel1_button.configure(text=filename, fg_color="#217346")
+
+    def drop_excel2(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel2_path.set(file_path)
+        self._load_excel2_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel2_button.configure(text=filename, fg_color="#217346")
+
+    def drop_excel3(self, event):
+        file_path = event.data.replace("{", "").replace("}", "")
+        self.excel3_path.set(file_path)
+        self._load_excel3_headers(file_path)
+        import os
+        filename = os.path.basename(file_path)
+        self.excel3_button.configure(text=filename, fg_color="#217346")
+
+    def _browse_excel1(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
+                                               title="Select Excel File 1")
+        if file_path:
+            self.excel1_path.set(file_path)
+            self._load_excel1_headers(file_path)
+            import os
+            filename = os.path.basename(file_path)
+            self.excel1_button.configure(text=filename, fg_color="#217346")
+
+    def _browse_excel2(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
+                                               title="Select Excel File 2")
+        if file_path:
+            self.excel2_path.set(file_path)
+            self._load_excel2_headers(file_path)
+            import os
+            filename = os.path.basename(file_path)
+            self.excel2_button.configure(text=filename, fg_color="#217346")
+
+    def _browse_excel3(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
+                                               title="Select Excel File 3")
+        if file_path:
+            self.excel3_path.set(file_path)
+            self._load_excel3_headers(file_path)
+            import os
+            filename = os.path.basename(file_path)
+            self.excel3_button.configure(text=filename, fg_color="#217346")
+
+    def _load_excel1_headers(self, file_path):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            headers = list(df.columns)
+
+            # Populate existing dropdowns
+            self.excel1_headers = headers
+            self.ref_option_menu1.configure(values=headers)
+            self.title_option_menu1.configure(values=headers)
+            self.ref_column1.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            self.title_column1.set(auto_select_header(headers, ["title"]))
+
+            # Populate Status and Project dropdowns
+            self.status_dropdown.configure(values=headers)
+            self.status_column.set(auto_select_header(headers, ["status"]))
+
+            self.project_dropdown.configure(values=headers)
+            self.project_column.set(auto_select_header(headers, ["project"]))
+
+            # # Populate Filename Checker
+            # self.filename_dropdown.configure(values=headers)
+            # self.filename_column.set(auto_select_header(headers, ["filename"]))
+
+            # ✅ Ensure correct widgets are updated for custom checks
+            for check in self.custom_checks:
+                enabled_var, column_var, value_var, dropdown_widget, _ = check
+                dropdown_widget.configure(values=headers)  # Populate dropdown options
+                column_var.set(auto_select_header(headers, ["status", "project"]))  # Auto-select if applicable
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load headers from Excel File 1: {e}")
+
+    def _load_excel2_headers(self, file_path):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            headers = list(df.columns)
+            self.excel2_headers = headers
+            self.ref_option_menu2.configure(values=headers)
+            self.title_option_menu2.configure(values=headers)
+            self.ref_column2.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            self.title_column2.set(auto_select_header(headers, ["title"]))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load headers from Excel File 2: {e}")
+
+    def _load_excel3_headers(self, file_path):
+        try:
+            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            headers = list(df.columns)
+            self.excel3_headers = headers
+            self.ref_option_menu3.configure(values=headers)
+            self.title_option_menu3.configure(values=headers)
+            self.ref_column3.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
+            self.title_column3.set(auto_select_header(headers, ["title"]))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load headers from Excel File 3: {e}")
+
+    def _use_excel1_path(self):
+        excel1 = self.excel1_path.get()
+        if excel1:
+            directory, file_name = os.path.split(excel1)
+            name, ext = os.path.splitext(file_name)
+            self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
+
+    def _toggle_title_entries(self):
+        # Enable title_option_menu1 if either checkbox is checked
+        state_1 = "normal" if (self.compare_excel2.get() or self.compare_excel3_title.get()) else "disabled"
+        self.title_option_menu1.configure(state=state_1)
+
+        # Enable title_option_menu2 only if compare_excel2 is checked
+        state_2 = "normal" if self.compare_excel2.get() else "disabled"
+        self.title_option_menu2.configure(state=state_2)
+
+        # Enable title_option_menu3 only if compare_excel3_title is checked
+        state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
+        self.title_option_menu3.configure(state=state_3)
+
+    def _start_merge(self):
+        excel1_path = self.excel1_path.get()
+        excel2_path = self.excel2_path.get()
+        excel3_path = self.excel3_path.get().strip()
+        ref_column1 = self.ref_column1.get()
+        ref_column2 = self.ref_column2.get()
+        ref_column3 = self.ref_column3.get() if excel3_path else None
+
+        output_path = self.output_path.get().strip()
+        if not output_path:
+            messagebox.showerror("Error", "Please provide a valid output path.")
+            return
+
+        if os.path.exists(output_path):
+            directory, file_name = os.path.split(output_path)
+            base, ext = os.path.splitext(file_name)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
+
+        try:
+            title_col1 = self.title_column1.get() if self.compare_excel2.get() else None
+            title_col2 = self.title_column2.get() if self.compare_excel2.get() else None
+            title_col3 = self.title_column3.get() if self.compare_excel3_title.get() and excel3_path else None
+
+            # Collect status & project name checks
+            status_col = self.status_column.get() if self.status_enabled.get() else None
+            status_value = self.status_value.get() if self.status_enabled.get() else None
+            project_col = self.project_column.get() if self.project_enabled.get() else None
+            project_value = self.project_value.get() if self.project_enabled.get() else None
+
+            # Collect custom checks
+            custom_checks = [
+                (column_var.get(), value_var.get()) for enabled_var, column_var, value_var, _, _ in self.custom_checks
+                if enabled_var.get() and column_var.get()
+            ]
+
+            # Call `ExcelMerger`
+            if excel3_path:
+                merged_file_path, merged_df = ExcelMerger.merge_3_excels(
+                    excel1_path, excel2_path, excel3_path,
+                    ref_column1, ref_column2, ref_column3,
+                    output_path,
+                    title_column1=title_col1, title_column2=title_col2, title_column3=title_col3,
+                    compare_excel3=self.compare_excel3_title.get()
+                )
+            else:
+                merged_file_path, merged_df = ExcelMerger.merge_excels(
+                    excel1_path, excel2_path,
+                    ref_column1, ref_column2,
+                    output_path,
+                    title_column1=title_col1, title_column2=title_col2
+                )
+
+            # ✅ Apply title highlighting & Comments_1 after merging
+            ExcelMerger.apply_title_highlighting(
+                merged_file_path, merged_df, 'title_excel1', 'title_excel2',
+                reorder=True, update_baseline=True,
+                status_column=status_col, status_value=status_value,
+                project_column=project_col, project_value=project_value,
+                custom_checks=custom_checks
+            )
+
+            messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def run(self):
+        if isinstance(self.mergerApp, ctk.CTk):
+            self.mergerApp.mainloop()
+
+if __name__ == "__main__":
+    app = MergerGUI()
+    app.run()
 
 
 # class TitleComparison:
@@ -717,362 +1408,4 @@ class ExcelMerger:
 
 # Custom main window class that supports drag-and-drop.
 
-class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.TkdndVersion = TkinterDnD._require(self)
 
-
-class MergerGUI:
-    """Handles the GUI for the Excel merger with drag-and-drop file selection and theme toggle."""
-
-    def __init__(self, master=None):
-
-        #set_custom_theme("dark")  # or "light" if you prefer the light theme
-
-        ctk.set_appearance_mode("dark")  # Set dark mode at startup
-
-
-        # Use our custom CTkDnD main window for drag-and-drop support.
-        self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
-        self.mergerApp.title("Conflux")
-
-        # File paths for three Excel files and the output file.
-        self.excel1_path = tk.StringVar()
-        self.excel2_path = tk.StringVar()
-        self.excel3_path = tk.StringVar()
-        self.output_path = tk.StringVar()
-
-        # Header selections for each file (via drop-down lists).
-        self.ref_column1 = tk.StringVar()
-        self.title_column1 = tk.StringVar()
-        self.ref_column2 = tk.StringVar()
-        self.title_column2 = tk.StringVar()
-        self.ref_column3 = tk.StringVar()
-        self.title_column3 = tk.StringVar()
-
-        # Boolean variables for report options and comparing Excel3 title.
-        self.compare_excel2 = tk.BooleanVar(value=False)
-        self.generate_word_report = tk.BooleanVar(value=False)
-        self.compare_excel3_title = tk.BooleanVar(value=False)
-
-        # Boolean variable for theme mode; True = dark mode.
-        self.theme_mode = tk.BooleanVar(value=True)
-
-        self.excel1_headers = []
-        self.excel2_headers = []
-        self.excel3_headers = []
-
-        self._build_gui()
-
-    def _build_gui(self):
-        self.mergerApp.grid_rowconfigure(0, weight=1)
-        self.mergerApp.grid_columnconfigure(0, weight=1)
-        self.mergerApp.grid_columnconfigure(1, weight=1)
-        self.mergerApp.grid_columnconfigure(2, weight=1)
-
-        # Create three frames for Excel 1, 2, and 3.
-        self.excel1_frame = ctk.CTkFrame(self.mergerApp)
-        self.excel1_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        self.excel2_frame = ctk.CTkFrame(self.mergerApp)
-        self.excel2_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
-        self.excel3_frame = ctk.CTkFrame(self.mergerApp)
-        self.excel3_frame.grid(row=0, column=2, padx=10, pady=10, sticky="nsew")
-
-        for frame in (self.excel1_frame, self.excel2_frame, self.excel3_frame):
-            frame.grid_rowconfigure(0, weight=0)
-            frame.grid_columnconfigure(0, weight=0)
-            frame.grid_columnconfigure(1, weight=1)
-
-        self._build_excel1_section(self.excel1_frame)
-        self._build_excel2_section(self.excel2_frame)
-        self._build_excel3_section(self.excel3_frame)
-
-        # Create controls frame.
-        self.controls_frame = ctk.CTkFrame(self.mergerApp)
-        self.controls_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
-        self._build_controls(self.controls_frame)
-
-    def _build_excel1_section(self, parent_frame):
-        font_name = "Helvetica"
-        font_size = 12
-        self.excel1_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect Extracted Excel or\nDrag & Drop Here",
-            command=self._browse_excel1,
-            border_width=3,
-            fg_color="transparent",
-            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
-            text_color=("#333333", "#FFFFFF"),
-            corner_radius=10,
-            width=200,
-            height=150)
-        self.excel1_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
-        # Enable drag and drop on Excel1 button.
-        self.excel1_button.drop_target_register(DND_ALL)
-        self.excel1_button.dnd_bind('<<Drop>>', self.drop_excel1)
-        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
-            row=1, column=0, padx=5, pady=2, sticky="e")
-        self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
-        self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkCheckBox(parent_frame, text="Compare Title",
-                        variable=self.compare_excel2, command=self._toggle_title_entries).grid(
-            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
-        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
-            row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column1, values=[], state="disabled")
-        self.title_option_menu1.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-
-    def _build_excel2_section(self, parent_frame):
-        font_name = "Helvetica"
-        font_size = 12
-        self.excel2_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect DC_LOD Excel or\nDrag & Drop Here",
-            command=self._browse_excel2,
-            border_width=3,
-            fg_color="transparent",
-            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
-            text_color=("#333333", "#FFFFFF"),
-            corner_radius=10,
-            width=200,
-            height=150)
-        self.excel2_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
-        self.excel2_button.drop_target_register(DND_ALL)
-        self.excel2_button.dnd_bind('<<Drop>>', self.drop_excel2)
-        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
-            row=1, column=0, padx=5, pady=2, sticky="e")
-        self.ref_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column2, values=[])
-        self.ref_option_menu2.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Spacer row for alignment.
-        ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
-            row=2, column=0, padx=5, pady=2, sticky="e")
-        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
-            row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column2, values=[], state="disabled")
-        self.title_option_menu2.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-
-    def _build_excel3_section(self, parent_frame):
-        font_name = "Helvetica"
-        font_size = 12
-        self.excel3_button = ctk.CTkButton(parent_frame,
-            text="\n➕\n\nSelect DD_LOD Excel or\nDrag & Drop Here",
-            command=self._browse_excel3,
-            border_width=3,
-            fg_color="transparent",
-            hover_color=("#D6D6D6", "#505050"),  # Light and dark hover color
-            text_color=("#333333", "#FFFFFF"),
-            corner_radius=10,
-            width=200,
-            height=150)
-        self.excel3_button.grid(row=0, column=0, columnspan=2, padx=33, pady=33, sticky="ew")
-        self.excel3_button.drop_target_register(DND_ALL)
-        self.excel3_button.dnd_bind('<<Drop>>', self.drop_excel3)
-        ctk.CTkLabel(parent_frame, text="Reference Column:", font=(font_name, font_size)).grid(
-            row=1, column=0, padx=5, pady=2, sticky="e")
-        self.ref_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column3, values=[])
-        self.ref_option_menu3.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # Place the compare title checkbox above the title dropdown.
-        ctk.CTkCheckBox(parent_frame, text="Compare Title",
-                        variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
-            row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
-        ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
-            row=3, column=0, padx=5, pady=2, sticky="e")
-        self.title_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.title_column3, values=[], state="disabled")
-        self.title_option_menu3.grid(row=3, column=1, padx=5, pady=2, sticky="ew")
-
-    def _build_controls(self, parent_frame):
-        font_name = "Helvetica"
-        font_size = 12
-        ctk.CTkLabel(parent_frame, text="Output Path:", font=(font_name, font_size)).grid(
-            row=0, column=0, padx=5, pady=2, sticky="e")
-        ctk.CTkEntry(parent_frame, textvariable=self.output_path, width=300).grid(
-            row=0, column=1, padx=5, pady=2, sticky="ew")
-        ctk.CTkButton(parent_frame, text="Use Excel 1 Path", command=self._use_excel1_path).grid(
-            row=0, column=2, padx=5, pady=2)
-        # Theme toggle switch (no label) placed at the bottom-right of the controls frame.
-        self.theme_switch = ctk.CTkSwitch(parent_frame, text="", variable=self.theme_mode,
-                                          command=self.toggle_theme, switch_width=20, switch_height=10)
-        # Use place to anchor it at the bottom-right corner of the parent frame.
-        self.theme_switch.place(relx=1.0, rely=1.0, anchor="se")
-        ctk.CTkButton(parent_frame, text="Start Merge", command=self._start_merge).grid(
-            row=2, column=0, columnspan=3, pady=10)
-        parent_frame.grid_columnconfigure(1, weight=1)
-
-    def toggle_theme(self):
-        if self.theme_mode.get():
-            ctk.set_appearance_mode("dark")
-            print("Theme set to dark mode")
-        else:
-            ctk.set_appearance_mode("light")
-            print("Theme set to light mode")
-
-    # --- Drag and Drop Handlers ---
-    def drop_excel1(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel1_path.set(file_path)
-        self._load_excel1_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel1_button.configure(text=filename, fg_color="#217346")
-
-    def drop_excel2(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel2_path.set(file_path)
-        self._load_excel2_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel2_button.configure(text=filename, fg_color="#217346")
-
-    def drop_excel3(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel3_path.set(file_path)
-        self._load_excel3_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel3_button.configure(text=filename, fg_color="#217346")
-
-    def _browse_excel1(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
-                                               title="Select Excel File 1")
-        if file_path:
-            self.excel1_path.set(file_path)
-            self._load_excel1_headers(file_path)
-            import os
-            filename = os.path.basename(file_path)
-            self.excel1_button.configure(text=filename, fg_color="#217346")
-
-    def _browse_excel2(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
-                                               title="Select Excel File 2")
-        if file_path:
-            self.excel2_path.set(file_path)
-            self._load_excel2_headers(file_path)
-            import os
-            filename = os.path.basename(file_path)
-            self.excel2_button.configure(text=filename, fg_color="#217346")
-
-    def _browse_excel3(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
-                                               title="Select Excel File 3")
-        if file_path:
-            self.excel3_path.set(file_path)
-            self._load_excel3_headers(file_path)
-            import os
-            filename = os.path.basename(file_path)
-            self.excel3_button.configure(text=filename, fg_color="#217346")
-
-    def _load_excel1_headers(self, file_path):
-        try:
-            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
-            headers = list(df.columns)
-            self.excel1_headers = headers
-            self.ref_option_menu1.configure(values=headers)
-            self.title_option_menu1.configure(values=headers)
-            self.ref_column1.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
-            self.title_column1.set(auto_select_header(headers, ["title"]))
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load headers from Excel File 1: {e}")
-
-    def _load_excel2_headers(self, file_path):
-        try:
-            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
-            headers = list(df.columns)
-            self.excel2_headers = headers
-            self.ref_option_menu2.configure(values=headers)
-            self.title_option_menu2.configure(values=headers)
-            self.ref_column2.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
-            self.title_column2.set(auto_select_header(headers, ["title"]))
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load headers from Excel File 2: {e}")
-
-    def _load_excel3_headers(self, file_path):
-        try:
-            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
-            headers = list(df.columns)
-            self.excel3_headers = headers
-            self.ref_option_menu3.configure(values=headers)
-            self.title_option_menu3.configure(values=headers)
-            self.ref_column3.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
-            self.title_column3.set(auto_select_header(headers, ["title"]))
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load headers from Excel File 3: {e}")
-
-    def _use_excel1_path(self):
-        excel1 = self.excel1_path.get()
-        if excel1:
-            directory, file_name = os.path.split(excel1)
-            name, ext = os.path.splitext(file_name)
-            self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
-
-    def _toggle_title_entries(self):
-        # Enable title_option_menu1 if either checkbox is checked
-        state_1 = "normal" if (self.compare_excel2.get() or self.compare_excel3_title.get()) else "disabled"
-        self.title_option_menu1.configure(state=state_1)
-
-        # Enable title_option_menu2 only if compare_excel2 is checked
-        state_2 = "normal" if self.compare_excel2.get() else "disabled"
-        self.title_option_menu2.configure(state=state_2)
-
-        # Enable title_option_menu3 only if compare_excel3_title is checked
-        state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
-        self.title_option_menu3.configure(state=state_3)
-
-    def _start_merge(self):
-        excel1_path = self.excel1_path.get()
-        excel2_path = self.excel2_path.get()
-        excel3_path = self.excel3_path.get()
-        ref_column1 = self.ref_column1.get()
-        ref_column2 = self.ref_column2.get()
-        ref_column3 = self.ref_column3.get() if self.excel3_path.get().strip() else None
-
-        output_path = self.output_path.get().strip()
-        if not output_path:
-            messagebox.showerror("Error", "Please provide a valid output path.")
-            return
-        if os.path.exists(output_path):
-            directory, file_name = os.path.split(output_path)
-            base, ext = os.path.splitext(file_name)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
-
-        try:
-            if self.compare_excel2.get():
-                title_col1 = self.title_column1.get()
-                title_col2 = self.title_column2.get()
-                title_col3 = self.title_column3.get() if self.excel3_path.get().strip() else None
-            else:
-                title_col1 = title_col2 = title_col3 = None
-
-            if excel3_path.strip():
-                merged_file_path, merged_df = ExcelMerger.merge_3_excels(
-                    excel1_path, excel2_path, excel3_path,
-                    ref_column1, ref_column2, ref_column3,
-                    output_path,
-                    title_column1=title_col1, title_column2=title_col2, title_column3=title_col3,
-                    compare_excel3=self.compare_excel3_title.get()
-                )
-            else:
-                merged_file_path, merged_df = ExcelMerger.merge_excels(
-                    excel1_path, excel2_path,
-                    ref_column1, ref_column2,
-                    output_path,
-                    title_column1=title_col1, title_column2=title_col2
-                )
-            messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
-
-            ### TitleComparison is disabled
-            # if self.generate_report.get() and self.generate_word_report.get():
-            #     report_path = os.path.splitext(merged_file_path)[0] + "-TitleComparison.docx"
-            #     include_excel3 = self.compare_excel3_title.get() and bool(excel3_path.strip())
-            #     TitleComparison.create_report(merged_df, 'title_excel1', 'title_excel2', report_path, include_excel3)
-            #     messagebox.showinfo("Success", f"Title comparison report saved at {report_path}")
-
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
-    def run(self):
-        if isinstance(self.mergerApp, ctk.CTk):
-            self.mergerApp.mainloop()
-
-if __name__ == "__main__":
-    app = MergerGUI()
-    app.run()
