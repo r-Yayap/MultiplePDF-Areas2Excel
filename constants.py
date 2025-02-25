@@ -52,6 +52,7 @@ TESSDATA_FOLDER = None
 Version 02
 - fixed duplicate Title issue
 - revised creation of temp folder for images.
+- added tessdata check beside the Xtractor app
 
 Version 01
 - re-added error handling for folders/textboxes
