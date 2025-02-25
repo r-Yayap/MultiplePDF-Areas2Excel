@@ -4,14 +4,14 @@ import multiprocessing
 import os
 import re
 import shutil
-from datetime import datetime
 import getpass
 import pymupdf as fitz
+import sys
+from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-
 from utils import adjust_coordinates_for_rotation, find_tessdata
 
 
@@ -48,7 +48,12 @@ class TextExtractor:
             self.unique_headers_mapping[i] = unique_title  # Assign rectangle index to its specific column
 
         # Define application directory (where the script is located)
-        app_directory = os.path.dirname(os.path.abspath(__file__))
+
+
+        if getattr(sys, 'frozen', False):  # Check if running as PyInstaller EXE
+            app_directory = os.path.dirname(sys.executable)  # Use the real EXE location
+        else:
+            app_directory = os.path.dirname(os.path.abspath(__file__))  # Running as script
 
         # Create a main "temp" folder beside the application
         main_temp_folder = os.path.join(app_directory, "temp")
