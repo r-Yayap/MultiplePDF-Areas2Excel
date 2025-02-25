@@ -154,50 +154,46 @@ def create_tooltip(widget, message,
 
 def find_tessdata():
     """
-    Attempts to locate the Tesseract OCR tessdata folder. Searches typical installation
-    directories, and if not found, prompts the user to manually select the folder.
-
-    Returns:
-        str: Path to the tessdata folder if found, or None if not found.
+    Searches for the Tesseract OCR 'tessdata' folder in multiple locations.
+    Priority:
+    1. The folder beside the Xtractor app (same directory as the script/executable).
+    2. Common installation locations: Program Files, Local AppData, Roaming AppData.
+    3. Manual selection if not found.
     """
-    global tessdata_folder  # Use the global variable
 
-    # Define the subdirectories
-    tesseract_subdirectory = "Tesseract-OCR"
-    tessdata_subdirectory = "tessdata"
+    global tessdata_folder
 
-    # Check Program Files directory
-    program_files_dir = os.path.join("C:", os.sep, "Program Files", tesseract_subdirectory, tessdata_subdirectory)
-    if os.path.exists(program_files_dir):
-        tessdata_folder = program_files_dir
-        os.environ["TESSDATA_PREFIX"] = program_files_dir
-        return tessdata_folder
+    # Get the directory where Xtractor is running
+    app_directory = os.path.dirname(os.path.abspath(__file__))
+    xtractor_tessdata = os.path.join(app_directory, "tessdata")
 
-    # Get the local application data directory
-    local_programs_dir = os.path.join(os.getenv("LOCALAPPDATA"), "Programs")
-    local_programs_path = os.path.join(local_programs_dir, tesseract_subdirectory, tessdata_subdirectory)
-    if os.path.exists(local_programs_path):
-        tessdata_folder = local_programs_path
-        os.environ["TESSDATA_PREFIX"] = local_programs_path
-        return tessdata_folder
+    # List of locations to check (prioritized)
+    locations = [
+        xtractor_tessdata,  # 🔹 1st: Look for 'tessdata' beside Xtractor
+        os.path.join("C:", os.sep, "Program Files", "Tesseract-OCR", "tessdata"),  # 2nd: Program Files
+        os.path.join(os.getenv("LOCALAPPDATA"), "Programs", "Tesseract-OCR", "tessdata"),  # 3rd: Local AppData
+        os.path.join(os.getenv("APPDATA"), "Tesseract-OCR", "tessdata"),  # 4th: Roaming AppData
+    ]
 
-    # Platform-independent local application data directory
-    app_data_dir = os.path.join(os.getenv("APPDATA"), tesseract_subdirectory, tessdata_subdirectory)
-    if os.path.exists(app_data_dir):
-        tessdata_folder = app_data_dir
-        os.environ["TESSDATA_PREFIX"] = app_data_dir
-        return tessdata_folder
+    # Check each location
+    for path in locations:
+        print(f"Checking: {path}")  # Debugging: Print the paths being checked
+        if os.path.exists(path):
+            print(f"✅ Found tessdata at: {path}")  # Debugging: Print where tessdata is found
+            tessdata_folder = path
+            os.environ["TESSDATA_PREFIX"] = path
+            return tessdata_folder
 
-    # Manual selection if not found
+    # If not found, prompt user to manually select 'tessdata' folder
     manual_path = filedialog.askdirectory(title="Select Tesseract TESSDATA folder manually")
     if os.path.exists(manual_path):
+        print(f"✅ Manually selected tessdata at: {manual_path}")  # Debugging
         tessdata_folder = manual_path
         os.environ["TESSDATA_PREFIX"] = manual_path
         return tessdata_folder
-    else:
-        print("Invalid path. Tesseract tessdata folder not found.")
-        return None
 
+    print("❌ Tessdata folder not found.")
+    return None
 
 def adjust_coordinates_for_rotation(coordinates, rotation, pdf_height, pdf_width):
     """
