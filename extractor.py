@@ -5,7 +5,6 @@ import os
 import re
 
 from datetime import datetime
-import tempfile
 import getpass
 import pymupdf as fitz
 from openpyxl import Workbook
@@ -48,12 +47,20 @@ class TextExtractor:
             self.headers.append(unique_title)  # Add unique header to headers list
             self.unique_headers_mapping[i] = unique_title  # Assign rectangle index to its specific column
 
-        # Create a folder at %temp%
+        # Define application directory (where the script is located)
+        app_directory = os.path.dirname(os.path.abspath(__file__))
+
+        # Create a main "temp" folder beside the application
+        main_temp_folder = os.path.join(app_directory, "temp")
+
+        # Create a unique subfolder for each session
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         username = getpass.getuser()  # Get the current Windows username
-        self.temp_image_folder = os.path.join(tempfile.gettempdir(), "XtractorTemp", f"{username}-{timestamp}") # Define a unique temp folder inside the system temp directory
-        if not os.path.exists(self.temp_image_folder):
-             os.makedirs(self.temp_image_folder, exist_ok=True)
+        self.temp_image_folder = os.path.join(main_temp_folder, f"{username}-{timestamp}")
+
+
+
+
 
     def clean_text(self, text):
         """Cleans text by replacing newlines, stripping, and removing illegal characters."""
@@ -190,6 +197,8 @@ class TextExtractor:
                 text_area = page.get_text("text", clip=adjusted_coordinates)
                 pix = page.get_pixmap(clip=area_coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
 
+                if not os.path.exists(self.temp_image_folder):
+                    os.makedirs(self.temp_image_folder, exist_ok=True)
 
                 img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
                 pix.save(img_path)
@@ -225,6 +234,9 @@ class TextExtractor:
         if not self.tessdata_folder:
             print("Tessdata folder not found. OCR cannot proceed.")
             return "", ""
+
+        if not os.path.exists(self.temp_image_folder):
+             os.makedirs(self.temp_image_folder, exist_ok=True)
 
         pix = page.get_pixmap(clip=coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=self.tessdata_folder)
