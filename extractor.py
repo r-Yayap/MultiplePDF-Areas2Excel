@@ -3,7 +3,7 @@
 import multiprocessing
 import os
 import re
-
+import shutil
 from datetime import datetime
 import getpass
 import pymupdf as fitz
@@ -57,9 +57,6 @@ class TextExtractor:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         username = getpass.getuser()  # Get the current Windows username
         self.temp_image_folder = os.path.join(main_temp_folder, f"{username}-{timestamp}")
-
-
-
 
 
     def clean_text(self, text):
@@ -123,8 +120,6 @@ class TextExtractor:
                 try:
                     page = pdf_document[page_number]
                     extracted_areas = []
-
-
 
                     for area_index, area in enumerate(self.areas):
                         coordinates = area["coordinates"]
@@ -242,7 +237,6 @@ class TextExtractor:
         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=self.tessdata_folder)
         clipdoc = fitz.open("pdf", pdfdata)
         text_area = "_OCR_" + clipdoc[0].get_text()
-
         img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
         pix.save(img_path)
         return text_area, img_path
@@ -301,6 +295,10 @@ class TextExtractor:
                 except Exception as e:
                     print(f"Unexpected error consolidating data for {filename}: {e}")
                     ws.append([folder, filename, "Error"] + [""] * len(self.areas))
+
+        # Cleanup temporary images
+        if os.path.exists(self.temp_image_folder):
+            shutil.rmtree(self.temp_image_folder)
 
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path

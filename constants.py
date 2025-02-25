@@ -49,6 +49,14 @@ TESSDATA_FOLDER = None
 
 
 '''
+Version 02
+- fixed duplicate Title issue
+- revised creation of temp folder for images.
+
+Version 01
+- re-added error handling for folders/textboxes
+
+
 Version 00
 - subprocessing (now x5 speed!!)
 - Progress bar added again
