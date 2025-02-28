@@ -301,10 +301,7 @@ class TextExtractor:
                     print(f"Unexpected error consolidating data for {filename}: {e}")
                     ws.append([folder, filename, "Error"] + [""] * len(self.areas))
 
-        # Cleanup temporary images
-        if os.path.exists(self.temp_image_folder):
-            print(f"Temp Images will be deleted: {self.temp_image_folder}")
-            shutil.rmtree(self.temp_image_folder)
+
 
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path
@@ -312,6 +309,11 @@ class TextExtractor:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name, file_ext = os.path.splitext(output_filename)
             output_filename = f"{file_name}_{timestamp}{file_ext}"
+
+        # Cleanup temporary images
+        if os.path.exists(self.temp_image_folder):
+            print(f"Temp Images will be deleted: {self.temp_image_folder}")
+            shutil.rmtree(self.temp_image_folder)
 
         # Save to the new filename
         try:
