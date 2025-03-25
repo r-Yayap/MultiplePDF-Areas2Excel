@@ -310,11 +310,6 @@ class TextExtractor:
             file_name, file_ext = os.path.splitext(output_filename)
             output_filename = f"{file_name}_{timestamp}{file_ext}"
 
-        # Cleanup temporary images
-        if os.path.exists(self.temp_image_folder):
-            print(f"Temp Images will be deleted: {self.temp_image_folder}")
-            shutil.rmtree(self.temp_image_folder)
-
         # Save to the new filename
         try:
             wb.save(output_filename)
@@ -325,6 +320,9 @@ class TextExtractor:
         except Exception as e:
             print(f"Error saving Excel file: {e}")
 
-
+        # Cleanup temporary images
+        if os.path.exists(self.temp_image_folder):
+            print(f"Temp Images will be deleted: {self.temp_image_folder}")
+            shutil.rmtree(self.temp_image_folder)
 
 
