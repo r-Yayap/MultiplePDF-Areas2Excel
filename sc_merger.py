@@ -35,11 +35,17 @@ class ExcelMerger:
     and title rich-text highlighting (using tokenization and dynamic programming)."""
 
     @staticmethod
-    def merge_3_excels(excel1_path, excel2_path, excel3_path,
-                       ref_column1, ref_column2, ref_column3,
-                       output_path,
-                       title_column1=None, title_column2=None, title_column3=None,
-                       compare_excel3=False):
+    def merge_3_excels(
+            excel1_path, excel2_path, excel3_path,
+            ref_column1, ref_column2, ref_column3,
+            output_path,
+            title_column1=None, title_column2=None, title_column3=None,
+            compare_excel3=False,
+            status_column=None, status_value=None,
+            project_column=None, project_value=None,
+            custom_checks=None
+    ):
+
         # Read Excel files
         df1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
         df2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
@@ -103,13 +109,25 @@ class ExcelMerger:
         print(merged_df.columns.tolist())
 
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
-        ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df,
-                                                     status_column="status", status_value="Expected Status",
-                                                     project_column="project name", project_value="Expected Project",
-                                                     custom_checks=[("custom_field", "Expected Value")])
+
 
         # *** IMPORTANT: First, reorder columns ***
         ExcelMerger.reorder_columns(temp_file_path)
+
+        # Reload headers to reflect changes after reorder_columns
+        wb = load_workbook(temp_file_path)
+        ws = wb.active
+        updated_headers = [cell.value for cell in ws[1]]
+        col_name_to_excel_idx = {col: idx + 1 for idx, col in enumerate(updated_headers)}
+        wb.close()
+
+        ExcelMerger._apply_formatting_and_hyperlinks(
+            temp_file_path, hyperlinks, merged_df,
+            status_column=status_column, status_value=status_value,
+            project_column=project_column, project_value=project_value,
+            custom_checks=custom_checks,
+            col_name_to_excel_idx=col_name_to_excel_idx  # <-- Pass the mapping here
+        )
 
         # *** Then apply title highlighting ***
         # Highlight differences between title_excel1 and title_excel2 (update both columns)
@@ -128,8 +146,16 @@ class ExcelMerger:
         return temp_file_path, merged_df
 
     @staticmethod
-    def merge_excels(excel1_path, excel2_path, ref_column1, ref_column2, output_path,
-                     title_column1=None, title_column2=None):
+    def merge_excels(
+            excel1_path, excel2_path,
+            ref_column1, ref_column2,
+            output_path,
+            title_column1=None, title_column2=None,
+            status_column=None, status_value=None,
+            project_column=None, project_value=None,
+            custom_checks=None
+    ):
+
         # Two-file merge code (same as before)
         excel1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
         excel2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
@@ -160,9 +186,25 @@ class ExcelMerger:
         print("Merged DataFrame columns:")
         print(merged_df.columns.tolist())
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
-        ExcelMerger._apply_formatting_and_hyperlinks(temp_file_path, hyperlinks, merged_df)
+        ExcelMerger._apply_formatting_and_hyperlinks(
+            temp_file_path, hyperlinks, merged_df,
+            status_column=status_column, status_value=status_value,
+            project_column=project_column, project_value=project_value,
+            custom_checks=custom_checks
+        )
+
         if title_column1 and title_column2:
-            ExcelMerger.apply_title_highlighting(temp_file_path, merged_df, 'title_excel1', 'title_excel2')
+            ExcelMerger.apply_title_highlighting(
+                temp_file_path, merged_df,
+                title_col1='title_excel1',
+                title_col2='title_excel2',
+                reorder=False,
+                update_baseline=True,
+                status_column=status_column, status_value=status_value,
+                project_column=project_column, project_value=project_value,
+                custom_checks=custom_checks
+            )
+
         return temp_file_path, merged_df
 
     @staticmethod
@@ -170,51 +212,83 @@ class ExcelMerger:
         wb = load_workbook(file_path)
         ws = wb.active
 
-        # Delete the original_row_index column.
-        # (Assume the header for that column is still "original_row_index".)
-        orig_index_col_idx = None
-        for cell in ws[1]:
-            if cell.value == "original_row_index":
-                orig_index_col_idx = cell.column
-                break
-        if orig_index_col_idx is not None:
-            ws.delete_cols(orig_index_col_idx, 1)
-            print(f"Dropped 'original_row_index' column at position {orig_index_col_idx}.")
+        # Extract current headers
+        existing_headers = [cell.value for cell in ws[1]]
 
-        # Now, move the common_ref column to the first column.
-        common_ref_col_idx = None
-        for cell in ws[1]:
-            if cell.value == "common_ref":
-                common_ref_col_idx = cell.column
-                break
-        if common_ref_col_idx is not None and common_ref_col_idx != 1:
-            # Save the values from the current common_ref column.
-            common_ref_values = [ws.cell(row=r, column=common_ref_col_idx).value
-                                 for r in range(1, ws.max_row + 1)]
-            ws.delete_cols(common_ref_col_idx, 1)
-            ws.insert_cols(1)
-            for r, value in enumerate(common_ref_values, start=1):
-                ws.cell(row=r, column=1).value = value
-            print(f"Moved 'common_ref' column from position {common_ref_col_idx} to column 1.")
+        # Safely delete "original_row_index"
+        if "original_row_index" in existing_headers:
+            idx = existing_headers.index("original_row_index") + 1
+            ws.delete_cols(idx)
+            existing_headers.pop(idx - 1)
+            print("Deleted original_row_index column.")
 
+        # Move "common_ref" to column 1 (if it's not already there)
+        if "common_ref" in existing_headers:
+            current_idx = existing_headers.index("common_ref") + 1
+            if current_idx != 1:
+                common_ref_data = [ws.cell(row=i, column=current_idx).value for i in range(1, ws.max_row + 1)]
+                ws.delete_cols(current_idx)
+                ws.insert_cols(1)
+                for i, value in enumerate(common_ref_data, start=1):
+                    ws.cell(row=i, column=1).value = value
+                existing_headers.pop(current_idx - 1)
+                existing_headers.insert(0, "common_ref")
+                print("Moved common_ref to the first column.")
+
+        # Now explicitly reorder title columns
+        desired_titles_order = ["title_excel1", "title_excel2", "title_excel3"]
+
+        # Check which titles actually exist
+        title_columns_existing = [col for col in desired_titles_order if col in existing_headers]
+
+        # Remove existing title columns first
+        for title_col in title_columns_existing:
+            idx_to_remove = existing_headers.index(title_col) + 1
+            ws.delete_cols(idx_to_remove)
+            existing_headers.pop(idx_to_remove - 1)
+            print(f"Removed {title_col} column temporarily for reordering.")
+
+        # Find position of 'Comments_1' or 'Case' (whichever comes first)
+        if "Comments_1" in existing_headers:
+            insert_idx = existing_headers.index("Comments_1") + 1
+        elif "Case" in existing_headers:
+            insert_idx = existing_headers.index("Case") + 1
+        else:
+            insert_idx = ws.max_column + 1  # at the end if both not present
+
+        # Insert the title columns back in desired order at the correct position
+        for title_col in reversed(title_columns_existing):  # reversed due to insertions
+            ws.insert_cols(insert_idx)
+            ws.cell(row=1, column=insert_idx).value = title_col
+            existing_headers.insert(insert_idx - 1, title_col)
+            print(f"Inserted {title_col} at position {insert_idx}.")
+
+        # Finally, save the workbook
         wb.save(file_path)
         wb.close()
-        print("Column reordering complete.")
+        print("✅ Column reordering completed and file saved.")
 
     @staticmethod
     def _extract_hyperlinks(file_path):
+        """
+        Extract hyperlinks from the original Excel file mapped by original_row_index and column headers.
+        """
         print("Extracting hyperlinks from:", file_path)
         hyperlinks = {}
         wb = load_workbook(file_path, data_only=False)
         ws = wb.active
+
+        headers = [cell.value for cell in next(ws.iter_rows(max_row=1))]
+
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
             row_number = row[0].row
             hyperlinks[row_number] = {}
-            for cell in row:
+            for idx, cell in enumerate(row):
                 if cell.hyperlink:
-                    col_idx = cell.column
-                    print(f"Hyperlink found at row {row_number}, col {col_idx}: {cell.hyperlink.target}")
-                    hyperlinks[row_number][col_idx] = cell.hyperlink.target
+                    col_name = headers[idx]  # Use column header names instead of index
+                    print(f"Hyperlink found at row {row_number}, column '{col_name}': {cell.hyperlink.target}")
+                    hyperlinks[row_number][col_name] = cell.hyperlink.target
+
         print("Extracted Hyperlinks:", hyperlinks)
         return hyperlinks
 
@@ -256,7 +330,15 @@ class ExcelMerger:
     def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df,
                                          status_column=None, status_value=None,
                                          project_column=None, project_value=None,
-                                         custom_checks=None):
+                                         custom_checks=None,
+                                         col_name_to_excel_idx=None):  # <-- New parameter
+        # Check and reload headers only if mapping is not explicitly provided
+        if col_name_to_excel_idx is None:
+            wb_temp = load_workbook(file_path)
+            ws_temp = wb_temp.active
+            updated_headers = [cell.value for cell in ws_temp[1]]
+            col_name_to_excel_idx = {col: idx + 1 for idx, col in enumerate(updated_headers)}
+            wb_temp.close()
 
         wb = load_workbook(file_path)
         ws = wb.active
@@ -271,9 +353,22 @@ class ExcelMerger:
         # ------------------------------
         if 'number_3' in merged_df.columns:
             # --- 3-file merging logic ---
-            refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
-            refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
-            refno3_col_idx = merged_df.columns.get_loc('number_3') + 1
+            # Get the actual column positions directly from Excel headers
+            header_row = [cell.value for cell in ws[1]]
+            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
+
+            refno1_col_idx = col_name_to_excel_idx.get('number_1')
+            refno2_col_idx = col_name_to_excel_idx.get('number_2')
+            refno3_col_idx = col_name_to_excel_idx.get('number_3')
+
+            missing_columns = [name for name, idx in [('number_1', refno1_col_idx),
+                                                      ('number_2', refno2_col_idx),
+                                                      ('number_3', refno3_col_idx)] if idx is None]
+
+            if missing_columns:
+                print(f"⚠️ Warning: Missing columns in Excel headers: {missing_columns}. Color highlighting aborted.")
+                wb.close()
+                return
 
             # Define fill styles for each presence pattern.
             fill_styles = {
@@ -374,8 +469,20 @@ class ExcelMerger:
 
         else:
             # --- 2-file merging logic ---
-            refno1_col_idx = merged_df.columns.get_loc('number_1') + 1
-            refno2_col_idx = merged_df.columns.get_loc('number_2') + 1
+            # Get actual Excel column positions for two-file merge scenario
+            header_row = [cell.value for cell in ws[1]]
+            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
+
+            refno1_col_idx = col_name_to_excel_idx.get('number_1')
+            refno2_col_idx = col_name_to_excel_idx.get('number_2')
+
+            missing_columns = [name for name, idx in [('number_1', refno1_col_idx),
+                                                      ('number_2', refno2_col_idx)] if idx is None]
+
+            if missing_columns:
+                print(f"⚠️ Warning: Missing columns in Excel headers: {missing_columns}. Color highlighting aborted.")
+                wb.close()
+                return
 
             fill_styles_2 = {
                 (True, False): PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid"),
@@ -424,6 +531,7 @@ class ExcelMerger:
 
         # Process hyperlinks (unchanged from your original code)
         # Apply hyperlinks
+        # Replace with these corrected lines:
         for original_row_index, columns in hyperlinks.items():
             new_row = merged_df[merged_df['original_row_index'] == original_row_index]
 
@@ -431,17 +539,23 @@ class ExcelMerger:
                 print(f"No matching row for original_row_index: {original_row_index}")
                 continue
 
-            new_row_idx = new_row.index[0] + 2  # DataFrame index is zero-based; Excel rows start at 2
+            new_row_idx = new_row.index[0] + 2  # Excel rows start at 2
 
-            for col_idx, hyperlink in columns.items():
-                adjusted_col_idx = col_idx + 1  # Adjust for common_ref column shift
-                try:
-                    ws.cell(row=new_row_idx, column=adjusted_col_idx).hyperlink = hyperlink
-                    ws.cell(row=new_row_idx, column=adjusted_col_idx - 1).style = "Hyperlink"
-                    print(
-                        f"Applied hyperlink at new_row_idx: {new_row_idx}, adjusted_col_idx: {adjusted_col_idx}, link: {hyperlink}")
-                except Exception as e:
-                    print(f"Error applying hyperlink for row {new_row_idx}, column {adjusted_col_idx}: {e}")
+            # First, build an accurate mapping from column names to current Excel column indices
+            header_row = [cell.value for cell in ws[1]]
+            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
+
+            for col_name, hyperlink in columns.items():
+                excel_col_idx = col_name_to_excel_idx.get(col_name)
+                if excel_col_idx:
+                    try:
+                        ws.cell(row=new_row_idx, column=excel_col_idx).hyperlink = hyperlink
+                        ws.cell(row=new_row_idx, column=excel_col_idx).style = "Hyperlink"
+                        print(f"✅ Applied hyperlink at row {new_row_idx}, column '{col_name}', link: {hyperlink}")
+                    except Exception as e:
+                        print(f"❌ Error applying hyperlink at row {new_row_idx}, column '{col_name}': {e}")
+                else:
+                    print(f"⚠️ Column '{col_name}' not found in Excel worksheet headers.")
 
         wb.save(file_path)
         wb.close()
@@ -638,9 +752,23 @@ class ExcelMerger:
         ws = wb.active
 
         # Get current column indices
-        col_idx1 = ExcelMerger.get_ws_column_index(ws, title_col1)
-        col_idx2 = ExcelMerger.get_ws_column_index(ws, title_col2)
+        col_idx1 = ExcelMerger.get_ws_column_index(ws, title_col1.strip().lower())
+        col_idx2 = ExcelMerger.get_ws_column_index(ws, title_col2.strip().lower())
+
         comments_col_idx = ExcelMerger.get_ws_column_index(ws, "Comments_1")  # Ensure column exists
+
+        missing_cols = []
+        if col_idx1 is None:
+            missing_cols.append(title_col1)
+        if col_idx2 is None:
+            missing_cols.append(title_col2)
+        if comments_col_idx is None:
+            missing_cols.append("Comments_1")
+
+        if missing_cols:
+            print(f"⚠️ Warning: Columns not found: {missing_cols}. Highlighting aborted.")
+            wb.close()
+            return
 
         if col_idx1 is None or col_idx2 is None:
             print(f"Could not find header {title_col1} or {title_col2} in the worksheet.")
@@ -678,7 +806,7 @@ class ExcelMerger:
         print(merged_df["Comments_1"].value_counts(dropna=False))
 
         # ✅ Save before reordering to retain comments
-        merged_df.to_excel(file_path, index=False, header=True)
+        wb.save(file_path)
 
         if reorder:
             ExcelMerger.reorder_columns(file_path)
@@ -692,6 +820,7 @@ class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.TkdndVersion = TkinterDnD._require(self)
+
 
 
 class MergerGUI:
@@ -1021,28 +1150,34 @@ class MergerGUI:
 
     # --- Drag and Drop Handlers ---
     def drop_excel1(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel1_path.set(file_path)
-        self._load_excel1_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel1_button.configure(text=filename, fg_color="#217346")
+        file_path = event.data.strip().replace("{", "").replace("}", "")
+        if file_path.lower().endswith((".xlsx", ".xls")):
+            self.excel1_path.set(file_path)
+            self._load_excel1_headers(file_path)
+            filename = os.path.basename(file_path)
+            self.excel1_button.configure(text=filename, fg_color="#217346")
+        else:
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
 
     def drop_excel2(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel2_path.set(file_path)
-        self._load_excel2_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel2_button.configure(text=filename, fg_color="#217346")
+        file_path = event.data.strip().replace("{", "").replace("}", "")
+        if file_path.lower().endswith((".xlsx", ".xls")):
+            self.excel2_path.set(file_path)
+            self._load_excel2_headers(file_path)
+            filename = os.path.basename(file_path)
+            self.excel2_button.configure(text=filename, fg_color="#217346")
+        else:
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
 
     def drop_excel3(self, event):
-        file_path = event.data.replace("{", "").replace("}", "")
-        self.excel3_path.set(file_path)
-        self._load_excel3_headers(file_path)
-        import os
-        filename = os.path.basename(file_path)
-        self.excel3_button.configure(text=filename, fg_color="#217346")
+        file_path = event.data.strip().replace("{", "").replace("}", "")
+        if file_path.lower().endswith((".xlsx", ".xls")):
+            self.excel3_path.set(file_path)
+            self._load_excel3_headers(file_path)
+            filename = os.path.basename(file_path)
+            self.excel3_button.configure(text=filename, fg_color="#217346")
+        else:
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
 
     def _browse_excel1(self):
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
