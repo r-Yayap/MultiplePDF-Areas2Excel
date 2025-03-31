@@ -40,7 +40,7 @@ class ExcelMerger:
             ref_column1, ref_column2, ref_column3,
             output_path,
             title_column1=None, title_column2=None, title_column3=None,
-            compare_excel3=False,
+            compare_excel2=False, compare_excel3=False,
             status_column=None, status_value=None,
             project_column=None, project_value=None,
             custom_checks=None
@@ -108,6 +108,28 @@ class ExcelMerger:
         print("Merged DataFrame columns (3 files):")
         print(merged_df.columns.tolist())
 
+        # --- NEW: Add title_match column ---
+        if title_column1 and title_column2 and title_column3 and compare_excel2 and compare_excel3:
+            merged_df['title_match'] = merged_df.apply(
+                lambda row: f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel2', ''))}, "
+                            f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel3', ''))}",
+                axis=1
+            )
+        elif title_column1 and title_column2 and compare_excel2:
+            merged_df['title_match'] = merged_df.apply(
+                lambda
+                    row: f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel2', ''))}",
+                axis=1
+            )
+        elif title_column1 and title_column3 and compare_excel3:
+            merged_df['title_match'] = merged_df.apply(
+                lambda
+                    row: f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel3', ''))}",
+                axis=1
+            )
+        else:
+            merged_df['title_match'] = "N/A, N/A"
+
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
 
@@ -121,6 +143,8 @@ class ExcelMerger:
         col_name_to_excel_idx = {col: idx + 1 for idx, col in enumerate(updated_headers)}
         wb.close()
 
+
+        # *** Then apply formatting and Hyperlinks ***
         ExcelMerger._apply_formatting_and_hyperlinks(
             temp_file_path, hyperlinks, merged_df,
             status_column=status_column, status_value=status_value,
@@ -129,18 +153,39 @@ class ExcelMerger:
             col_name_to_excel_idx=col_name_to_excel_idx  # <-- Pass the mapping here
         )
 
+        # *** Then apply colors to True or False ***
+        ExcelMerger.apply_title_match_highlighting(temp_file_path, merged_df)
+
+
         # *** Then apply title highlighting ***
-        # Highlight differences between title_excel1 and title_excel2 (update both columns)
-        if title_column1 and title_column2:
+
+        if title_column1 and title_column2 and title_column3 and compare_excel2 and compare_excel3:
+            if title_column1 and title_column2:
+                ExcelMerger.apply_title_highlighting(
+                    temp_file_path, merged_df, title_col1='title_excel1',title_col2='title_excel2',
+                    reorder=False, update_baseline=True,
+                    status_column=status_column, status_value=status_value,
+                    project_column=project_column, project_value=project_value,
+                    custom_checks=custom_checks
+                )
+
+            ExcelMerger.apply_title_highlighting(
+                temp_file_path, merged_df, 'title_excel1', 'title_excel3',
+                reorder=False, update_baseline=True
+            )
+
+        # Explicitly handle Excel 2 independently
+        elif title_column1 and title_column2 and compare_excel2:
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df, 'title_excel1', 'title_excel2',
                 reorder=False, update_baseline=True
             )
-        # Highlight differences between title_excel1 and title_excel3, but update only title_excel3
-        if title_column1 and title_column3 and compare_excel3:
+
+        # Explicitly handle Excel 3 independently
+        elif title_column1 and title_column3 and compare_excel3:
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df, 'title_excel1', 'title_excel3',
-                reorder=False, update_baseline=False
+                reorder=False, update_baseline=True
             )
 
         return temp_file_path, merged_df
@@ -212,58 +257,44 @@ class ExcelMerger:
         wb = load_workbook(file_path)
         ws = wb.active
 
-        # Extract current headers
+        # Extract current headers and data
         existing_headers = [cell.value for cell in ws[1]]
+        data = list(ws.iter_rows(min_row=2, values_only=True))
 
-        # Safely delete "original_row_index"
-        if "original_row_index" in existing_headers:
-            idx = existing_headers.index("original_row_index") + 1
-            ws.delete_cols(idx)
-            existing_headers.pop(idx - 1)
-            print("Deleted original_row_index column.")
+        # Separate title-related and final special columns
+        title_cols = [col for col in ["title_excel1", "title_excel2", "title_excel3"] if col in existing_headers]
+        final_cols = [col for col in ["title_match", "Comments_1", "Case"] if col in existing_headers]
 
-        # Move "common_ref" to column 1 (if it's not already there)
+        # All columns that should be excluded from the general pool
+        excluded = {"common_ref", "original_row_index"} | set(title_cols) | set(final_cols)
+
+        # General non-title, non-final columns
+        other_columns = [col for col in existing_headers if col not in excluded]
+
+        # Build final order:
+        desired_order = other_columns  # first: general columns
         if "common_ref" in existing_headers:
-            current_idx = existing_headers.index("common_ref") + 1
-            if current_idx != 1:
-                common_ref_data = [ws.cell(row=i, column=current_idx).value for i in range(1, ws.max_row + 1)]
-                ws.delete_cols(current_idx)
-                ws.insert_cols(1)
-                for i, value in enumerate(common_ref_data, start=1):
-                    ws.cell(row=i, column=1).value = value
-                existing_headers.pop(current_idx - 1)
-                existing_headers.insert(0, "common_ref")
-                print("Moved common_ref to the first column.")
+            desired_order.append("common_ref")  # second: place common_ref
+        desired_order.extend(title_cols)  # third: title columns
+        desired_order.extend(final_cols)  # fourth: final columns
 
-        # Now explicitly reorder title columns
-        desired_titles_order = ["title_excel1", "title_excel2", "title_excel3"]
+        # Remove all current columns
+        ws.delete_cols(1, ws.max_column)
 
-        # Check which titles actually exist
-        title_columns_existing = [col for col in desired_titles_order if col in existing_headers]
+        # Reinsert columns clearly in desired order
+        for col_idx, header in enumerate(desired_order, start=1):
+            ws.cell(row=1, column=col_idx, value=header)
 
-        # Remove existing title columns first
-        for title_col in title_columns_existing:
-            idx_to_remove = existing_headers.index(title_col) + 1
-            ws.delete_cols(idx_to_remove)
-            existing_headers.pop(idx_to_remove - 1)
-            print(f"Removed {title_col} column temporarily for reordering.")
+        # Re-map original data to the new column order
+        header_to_idx = {h: existing_headers.index(h) for h in existing_headers}
+        for row_idx, row_data in enumerate(data, start=2):
+            for col_idx, header in enumerate(desired_order, start=1):
+                original_idx = header_to_idx.get(header)
+                if original_idx is not None:
+                    ws.cell(row=row_idx, column=col_idx, value=row_data[original_idx])
+                else:
+                    ws.cell(row=row_idx, column=col_idx, value=None)  # If header wasn't in original data
 
-        # Find position of 'Comments_1' or 'Case' (whichever comes first)
-        if "Comments_1" in existing_headers:
-            insert_idx = existing_headers.index("Comments_1") + 1
-        elif "Case" in existing_headers:
-            insert_idx = existing_headers.index("Case") + 1
-        else:
-            insert_idx = ws.max_column + 1  # at the end if both not present
-
-        # Insert the title columns back in desired order at the correct position
-        for title_col in reversed(title_columns_existing):  # reversed due to insertions
-            ws.insert_cols(insert_idx)
-            ws.cell(row=1, column=insert_idx).value = title_col
-            existing_headers.insert(insert_idx - 1, title_col)
-            print(f"Inserted {title_col} at position {insert_idx}.")
-
-        # Finally, save the workbook
         wb.save(file_path)
         wb.close()
         print("✅ Column reordering completed and file saved.")
@@ -326,13 +357,11 @@ class ExcelMerger:
         return temp_file_path
 
     @staticmethod
-    @staticmethod
     def _apply_formatting_and_hyperlinks(file_path, hyperlinks, merged_df,
                                          status_column=None, status_value=None,
                                          project_column=None, project_value=None,
                                          custom_checks=None,
-                                         col_name_to_excel_idx=None):  # <-- New parameter
-        # Check and reload headers only if mapping is not explicitly provided
+                                         col_name_to_excel_idx=None):
         if col_name_to_excel_idx is None:
             wb_temp = load_workbook(file_path)
             ws_temp = wb_temp.active
@@ -345,32 +374,19 @@ class ExcelMerger:
         print("Applying formatting and hyperlinks to:", file_path)
 
         duplicate_font = Font(bold=True, color="FF3300")
-
         light_red_fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
 
-        # ------------------------------
-        # Branch based on whether we're merging 3 or 2 Excel files.
-        # ------------------------------
-        if 'number_3' in merged_df.columns:
-            # --- 3-file merging logic ---
-            # Get the actual column positions directly from Excel headers
-            header_row = [cell.value for cell in ws[1]]
-            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
+        header_row = [cell.value for cell in ws[1]]
+        col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
 
+        common_ref_col_idx = col_name_to_excel_idx.get('common_ref')
+        common_ref_duplicates = merged_df['common_ref'][merged_df['common_ref'].duplicated(keep=False)].tolist()
+
+        if 'number_3' in merged_df.columns:
             refno1_col_idx = col_name_to_excel_idx.get('number_1')
             refno2_col_idx = col_name_to_excel_idx.get('number_2')
             refno3_col_idx = col_name_to_excel_idx.get('number_3')
 
-            missing_columns = [name for name, idx in [('number_1', refno1_col_idx),
-                                                      ('number_2', refno2_col_idx),
-                                                      ('number_3', refno3_col_idx)] if idx is None]
-
-            if missing_columns:
-                print(f"⚠️ Warning: Missing columns in Excel headers: {missing_columns}. Color highlighting aborted.")
-                wb.close()
-                return
-
-            # Define fill styles for each presence pattern.
             fill_styles = {
                 (True, False, False): PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid"),
                 (False, True, False): PatternFill(start_color="FFCC66", end_color="FFCC66", fill_type="solid"),
@@ -378,38 +394,31 @@ class ExcelMerger:
                 (True, True, False): PatternFill(start_color="FFC0CB", end_color="FFC0CB", fill_type="solid"),
                 (True, False, True): PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid"),
                 (False, True, True): PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid"),
-                # For rows with all drawing numbers or none, we won't apply any fill.
                 (True, True, True): None,
                 (False, False, False): None
             }
 
-            # For duplicate highlighting, determine duplicates in each column.
             refno1_duplicates = merged_df['number_1'][merged_df['number_1'].duplicated(keep=False)].tolist()
             refno2_duplicates = merged_df['number_2'][merged_df['number_2'].duplicated(keep=False)].tolist()
             refno3_duplicates = merged_df['number_3'][merged_df['number_3'].duplicated(keep=False)].tolist()
 
-
-
-            # Loop over each row (account for header row in Excel, hence i+2).
             for row_idx in range(2, len(merged_df) + 2):
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
                 num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
                 num3 = ws.cell(row=row_idx, column=refno3_col_idx).value
-
                 presence = (bool(num1), bool(num2), bool(num3))
-                # Only if the row is incomplete (i.e. not all present or all missing)
-                if presence not in [(True, True, True), (False, False, False)]:
-                    fill = fill_styles.get(presence)
-                    if fill is not None:
-                        # Instead of filling the blank cells, fill the cells that hold a drawing number.
-                        if num1:
-                            ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
-                        if num2:
-                            ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
-                        if num3:
-                            ws.cell(row=row_idx, column=refno3_col_idx).fill = fill
+                fill = fill_styles.get(presence)
 
-                # Apply duplicate formatting (if the cell's value appears more than once).
+                if fill:
+                    if num1:
+                        ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
+                    if num2:
+                        ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
+                    if num3:
+                        ws.cell(row=row_idx, column=refno3_col_idx).fill = fill
+                    if common_ref_col_idx:
+                        ws.cell(row=row_idx, column=common_ref_col_idx).fill = fill
+
                 if num1 in refno1_duplicates:
                     ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
                 if num2 in refno2_duplicates:
@@ -417,34 +426,25 @@ class ExcelMerger:
                 if num3 in refno3_duplicates:
                     ws.cell(row=row_idx, column=refno3_col_idx).font = duplicate_font
 
+                if common_ref_col_idx and ws.cell(row=row_idx, column=common_ref_col_idx).value in common_ref_duplicates:
+                    ws.cell(row=row_idx, column=common_ref_col_idx).font = duplicate_font
 
+            status_col_idx = col_name_to_excel_idx.get(status_column) if status_column else None
+            project_col_idx = col_name_to_excel_idx.get(project_column) if project_column else None
+            custom_col_indices = {
+                col: col_name_to_excel_idx.get(col) for col, _ in custom_checks if col in col_name_to_excel_idx
+            } if custom_checks else {}
 
-            # Retrieve column indices BEFORE looping (avoid multiple `get_loc()` calls)
-            status_col_idx = merged_df.columns.get_loc(
-                status_column) + 1 if status_column and status_column in merged_df.columns else None
-            project_col_idx = merged_df.columns.get_loc(
-                project_column) + 1 if project_column and project_column in merged_df.columns else None
-            custom_col_indices = {col: merged_df.columns.get_loc(col) + 1 for col, _ in custom_checks if
-                                  col in merged_df.columns} if custom_checks else {}
-
-            # Highlight mismatched status, project, and custom checks (Light Red)
             for i, row in merged_df.iterrows():
-                excel_row = i + 2  # Account for header row
-
-                # Highlight Status Column if mismatch exists
+                excel_row = i + 2
                 if status_col_idx and row[status_column] != status_value:
                     ws.cell(row=excel_row, column=status_col_idx).fill = light_red_fill
-
-                # Highlight Project Name Column if mismatch exists
                 if project_col_idx and row[project_column] != project_value:
                     ws.cell(row=excel_row, column=project_col_idx).fill = light_red_fill
-
-                # Highlight Custom Checks if mismatches exist
                 for custom_col, col_idx in custom_col_indices.items():
                     if row[custom_col] != dict(custom_checks).get(custom_col, ""):
                         ws.cell(row=excel_row, column=col_idx).fill = light_red_fill
 
-            # --- Add an Instance column for 3-file merging ---
             instance_mapping = {
                 (True, False, False): "PDF Only",
                 (False, True, False): "number 2",
@@ -455,34 +455,18 @@ class ExcelMerger:
                 (True, True, True): "",
                 (False, False, False): "None"
             }
-            # Create a new column header for the instance info.
             instance_col_idx = ws.max_column + 1
             ws.cell(row=1, column=instance_col_idx, value="Case")
             for row_idx in range(2, len(merged_df) + 2):
-                # Read the cell values again to compute the presence tuple.
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
                 num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
                 num3 = ws.cell(row=row_idx, column=refno3_col_idx).value
                 presence = (bool(num1), bool(num2), bool(num3))
-                instance_text = instance_mapping.get(presence, "Unknown")
-                ws.cell(row=row_idx, column=instance_col_idx, value=instance_text)
+                ws.cell(row=row_idx, column=instance_col_idx, value=instance_mapping.get(presence, "Unknown"))
 
         else:
-            # --- 2-file merging logic ---
-            # Get actual Excel column positions for two-file merge scenario
-            header_row = [cell.value for cell in ws[1]]
-            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
-
             refno1_col_idx = col_name_to_excel_idx.get('number_1')
             refno2_col_idx = col_name_to_excel_idx.get('number_2')
-
-            missing_columns = [name for name, idx in [('number_1', refno1_col_idx),
-                                                      ('number_2', refno2_col_idx)] if idx is None]
-
-            if missing_columns:
-                print(f"⚠️ Warning: Missing columns in Excel headers: {missing_columns}. Color highlighting aborted.")
-                wb.close()
-                return
 
             fill_styles_2 = {
                 (True, False): PatternFill(start_color="CC99FF", end_color="CC99FF", fill_type="solid"),
@@ -498,53 +482,43 @@ class ExcelMerger:
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
                 num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
                 presence = (bool(num1), bool(num2))
-                if presence not in [(True, True), (False, False)]:
-                    fill = fill_styles_2.get(presence)
-                    if fill is not None:
-                        if num1:
-                            ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
-                        if num2:
-                            ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
+                fill = fill_styles_2.get(presence)
+
+                if fill:
+                    if num1:
+                        ws.cell(row=row_idx, column=refno1_col_idx).fill = fill
+                    if num2:
+                        ws.cell(row=row_idx, column=refno2_col_idx).fill = fill
+                    if common_ref_col_idx:
+                        ws.cell(row=row_idx, column=common_ref_col_idx).fill = fill
 
                 if num1 in refno1_duplicates:
                     ws.cell(row=row_idx, column=refno1_col_idx).font = duplicate_font
                 if num2 in refno2_duplicates:
                     ws.cell(row=row_idx, column=refno2_col_idx).font = duplicate_font
+                if common_ref_col_idx and ws.cell(row=row_idx, column=common_ref_col_idx).value in common_ref_duplicates:
+                    ws.cell(row=row_idx, column=common_ref_col_idx).font = duplicate_font
 
-            # --- Add an Instance column for 2-file merging ---
             instance_mapping_2 = {
                 (True, False): "PDF Only",
                 (False, True): "number 2",
                 (True, True): "",
                 (False, False): "None"
             }
-
-
             instance_col_idx = ws.max_column + 1
             ws.cell(row=1, column=instance_col_idx, value="Instance")
             for row_idx in range(2, len(merged_df) + 2):
                 num1 = ws.cell(row=row_idx, column=refno1_col_idx).value
                 num2 = ws.cell(row=row_idx, column=refno2_col_idx).value
                 presence = (bool(num1), bool(num2))
-                instance_text = instance_mapping_2.get(presence, "Unknown")
-                ws.cell(row=row_idx, column=instance_col_idx, value=instance_text)
+                ws.cell(row=row_idx, column=instance_col_idx, value=instance_mapping_2.get(presence, "Unknown"))
 
-        # Process hyperlinks (unchanged from your original code)
-        # Apply hyperlinks
-        # Replace with these corrected lines:
         for original_row_index, columns in hyperlinks.items():
             new_row = merged_df[merged_df['original_row_index'] == original_row_index]
-
             if new_row.empty:
                 print(f"No matching row for original_row_index: {original_row_index}")
                 continue
-
-            new_row_idx = new_row.index[0] + 2  # Excel rows start at 2
-
-            # First, build an accurate mapping from column names to current Excel column indices
-            header_row = [cell.value for cell in ws[1]]
-            col_name_to_excel_idx = {col_name: idx + 1 for idx, col_name in enumerate(header_row)}
-
+            new_row_idx = new_row.index[0] + 2
             for col_name, hyperlink in columns.items():
                 excel_col_idx = col_name_to_excel_idx.get(col_name)
                 if excel_col_idx:
@@ -559,6 +533,54 @@ class ExcelMerger:
 
         wb.save(file_path)
         wb.close()
+
+    @staticmethod
+    def build_colored_title_match(text):
+        """Create a rich text object for title_match like 'True, False'."""
+        rich = CellRichText()
+        tokens = [t.strip() for t in text.split(",")]
+
+        for i, token in enumerate(tokens):
+            font = InlineFont(rFont="Calibri", sz=11)
+
+            if token.lower() == "true":
+                font.color = "008000"  # Green
+            elif token.lower() == "false":
+                font.color = "FF0000"  # Red
+            else:
+                font.color = "000000"  # Default black
+
+            rich.append(TextBlock(font, token))  # ✅ proper text block
+
+            # ✅ Add comma separator with default font (not string!)
+            if i < len(tokens) - 1:
+                sep_font = InlineFont(rFont="Calibri", sz=11, color="000000")
+                rich.append(TextBlock(sep_font, ", "))
+
+        return rich
+
+    @staticmethod
+    def apply_title_match_highlighting(file_path, merged_df):
+        print("🎯 Applying rich-text to 'title_match'...")
+
+        wb = load_workbook(file_path, rich_text=True)
+        ws = wb.active
+
+        col_idx = ExcelMerger.get_ws_column_index(ws, "title_match")
+        if col_idx is None:
+            print("❌ 'title_match' column not found.")
+            wb.close()
+            return
+
+        for i, row in merged_df.iterrows():
+            cell_value = str(row.get("title_match", ""))
+            rich = ExcelMerger.build_colored_title_match(cell_value)
+            print(type(rich), rich)
+            ws.cell(row=i + 2, column=col_idx).value = rich
+
+        wb.save(file_path)
+        wb.close()
+        print("✅ title_match rich-text coloring applied.")
 
     @staticmethod
     def tokenize_with_indices(text):
@@ -668,6 +690,11 @@ class ExcelMerger:
         return None
 
     @staticmethod
+    def titles_match(title1, title2):
+        """Check exact match between two titles after trimming and normalizing."""
+        return str(title1).strip().lower() == str(title2).strip().lower()
+
+    @staticmethod
     def update_comments_column(merged_df, status_column=None, status_value=None, project_column=None,
                                project_value=None, custom_checks=None, filename_column=None):
         """Ensures Comments_1 is correctly populated with mismatches before saving.
@@ -722,25 +749,37 @@ class ExcelMerger:
 
         # ✅ Perform Custom Checks
         if custom_checks:
+            print(f"🧪 Detected custom_checks: {custom_checks}")
+            print(f"🧾 DataFrame columns: {merged_df.columns.tolist()}")
+
             for custom_col, custom_value in custom_checks:
-                if custom_col in merged_df.columns:
-                    merged_df["Comments_1"] = merged_df.apply(
-                        lambda row: append_comment(row["Comments_1"],
-                                                   f"{custom_col} Mismatch: {row[custom_col]} <--> {custom_value}")
-                        if pd.notna(row["number_1"]) and  # ✅ Skip rows where number_1 is empty
-                           (pd.isna(row[custom_col]) or  # ✅ Flags None/NaN as Mismatch
-                            (pd.notna(row[custom_col]) and pd.notna(custom_value) and
-                             str(row[custom_col]).strip().lower() != str(custom_value).strip().lower()))
-                        else row["Comments_1"],
-                        axis=1
-                    )
+                print(f"🔍 Checking Custom: {custom_col=} {custom_value=}")
+                if custom_col not in merged_df.columns:
+                    print(f"❌ Column '{custom_col}' not found in merged_df. Skipping.")
+                    continue
 
+                def check_and_comment(row):
+                    value = row.get(custom_col, "")
+                    number_1 = row.get("number_1", "")
+                    if pd.notna(number_1):
+                        mismatch = (
+                                pd.isna(value) or
+                                (pd.notna(value) and pd.notna(custom_value) and
+                                 str(value).strip().lower() != str(custom_value).strip().lower())
+                        )
+                        if mismatch:
+                            print(f"❗ Row {row.name + 2}: {custom_col} mismatch -> {value} ≠ {custom_value}")
+                            return append_comment(
+                                row["Comments_1"],
+                                f"{custom_col} Mismatch: {value} <--> {custom_value}"
+                            )
+                    return row["Comments_1"]
 
-
-        # ✅ Ensure empty cells remain truly empty
-        merged_df["Comments_1"] = merged_df["Comments_1"].str.strip().replace("", None)
+                merged_df["Comments_1"] = merged_df.apply(check_and_comment, axis=1)
 
         return merged_df
+
+
 
     @staticmethod
     def apply_title_highlighting(file_path, merged_df, title_col1, title_col2, reorder=True, update_baseline=True,
@@ -805,12 +844,6 @@ class ExcelMerger:
         print("✅ DEBUG: Final 'Comments_1' Column Before Saving:")
         print(merged_df["Comments_1"].value_counts(dropna=False))
 
-        # ✅ Save before reordering to retain comments
-        wb.save(file_path)
-
-        if reorder:
-            ExcelMerger.reorder_columns(file_path)
-
         wb.save(file_path)
         wb.close()
         print("Title highlighting applied and workbook saved:", file_path)
@@ -852,7 +885,7 @@ class MergerGUI:
         self.title_column3 = tk.StringVar()
 
         # Boolean variables for report options and comparing Excel3 title.
-        self.compare_excel2 = tk.BooleanVar(value=False)
+        self.compare_excel2_title = tk.BooleanVar(value=False)
         self.generate_word_report = tk.BooleanVar(value=False)
         self.compare_excel3_title = tk.BooleanVar(value=False)
 
@@ -920,10 +953,6 @@ class MergerGUI:
             row=1, column=0, padx=5, pady=2, sticky="e")
         self.ref_option_menu1 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column1, values=[])
         self.ref_option_menu1.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        # ctk.CTkCheckBox(parent_frame, text="Compare Title",
-        #                 variable=self.compare_excel2, command=self._toggle_title_entries).grid(
-        #     row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
-        # Spacer row for alignment.
         ctk.CTkLabel(parent_frame, text="", font=(font_name, font_size)).grid(
             row=2, column=0, padx=5, pady=2, sticky="e")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
@@ -952,8 +981,8 @@ class MergerGUI:
         self.ref_option_menu2 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column2, values=[])
         self.ref_option_menu2.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
 
-        ctk.CTkCheckBox(parent_frame, text="Compare Title",
-                        variable=self.compare_excel2, command=self._toggle_title_entries).grid(
+        ctk.CTkCheckBox(parent_frame, text="Compare Title 2",
+                        variable=self.compare_excel2_title, command=self._toggle_title_entries).grid(
             row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
 
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
@@ -982,7 +1011,7 @@ class MergerGUI:
         self.ref_option_menu3 = ctk.CTkOptionMenu(parent_frame, variable=self.ref_column3, values=[])
         self.ref_option_menu3.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
         # Place the compare title checkbox above the title dropdown.
-        ctk.CTkCheckBox(parent_frame, text="Compare Title",
+        ctk.CTkCheckBox(parent_frame, text="Compare Title 3",
                         variable=self.compare_excel3_title, command=self._toggle_title_entries).grid(
             row=2, column=0, columnspan=2, padx=5, pady=2, sticky="w")
         ctk.CTkLabel(parent_frame, text="Drawing Title:", font=(font_name, font_size)).grid(
@@ -1274,11 +1303,11 @@ class MergerGUI:
 
     def _toggle_title_entries(self):
         # Enable title_option_menu1 if either checkbox is checked
-        state_1 = "normal" if (self.compare_excel2.get() or self.compare_excel3_title.get()) else "disabled"
+        state_1 = "normal" if (self.compare_excel2_title.get() or self.compare_excel3_title.get()) else "disabled"
         self.title_option_menu1.configure(state=state_1)
 
         # Enable title_option_menu2 only if compare_excel2 is checked
-        state_2 = "normal" if self.compare_excel2.get() else "disabled"
+        state_2 = "normal" if self.compare_excel2_title.get() else "disabled"
         self.title_option_menu2.configure(state=state_2)
 
         # Enable title_option_menu3 only if compare_excel3_title is checked
@@ -1305,8 +1334,8 @@ class MergerGUI:
             output_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
 
         try:
-            title_col1 = self.title_column1.get() if self.compare_excel2.get() else None
-            title_col2 = self.title_column2.get() if self.compare_excel2.get() else None
+            title_col1 = self.title_column1.get() if (self.compare_excel2_title.get() or self.compare_excel3_title.get()) else None
+            title_col2 = self.title_column2.get() if self.compare_excel2_title.get() else None
             title_col3 = self.title_column3.get() if self.compare_excel3_title.get() and excel3_path else None
 
             # Collect status & project name checks
@@ -1328,24 +1357,27 @@ class MergerGUI:
                     ref_column1, ref_column2, ref_column3,
                     output_path,
                     title_column1=title_col1, title_column2=title_col2, title_column3=title_col3,
-                    compare_excel3=self.compare_excel3_title.get()
+                    compare_excel2=self.compare_excel2_title.get(),
+                    compare_excel3=self.compare_excel3_title.get(),
+                    status_column=status_col,
+                    status_value=status_value,
+                    project_column=project_col,
+                    project_value=project_value,
+                    custom_checks=custom_checks
                 )
             else:
                 merged_file_path, merged_df = ExcelMerger.merge_excels(
                     excel1_path, excel2_path,
                     ref_column1, ref_column2,
                     output_path,
-                    title_column1=title_col1, title_column2=title_col2
+                    title_column1=title_col1,
+                    title_column2=title_col2,
+                    status_column=status_col,
+                    status_value=status_value,
+                    project_column=project_col,
+                    project_value=project_value,
+                    custom_checks=custom_checks
                 )
-
-            # ✅ Apply title highlighting & Comments_1 after merging
-            ExcelMerger.apply_title_highlighting(
-                merged_file_path, merged_df, 'title_excel1', 'title_excel2',
-                reorder=True, update_baseline=True,
-                status_column=status_col, status_value=status_value,
-                project_column=project_col, project_value=project_value,
-                custom_checks=custom_checks
-            )
 
             messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
 
