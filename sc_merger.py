@@ -14,12 +14,6 @@ from openpyxl.cell.text import InlineFont
 
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
-# Helper to clear a docx paragraph's contents
-def clear_paragraph(paragraph):
-    p = paragraph._element
-    for child in list(p):
-        p.remove(child)
-
 # Helper to auto-select a header based on keywords.
 def auto_select_header(headers, keywords):
     for header in headers:
@@ -43,7 +37,8 @@ class ExcelMerger:
             compare_excel2=False, compare_excel3=False,
             status_column=None, status_value=None,
             project_column=None, project_value=None,
-            custom_checks=None
+            custom_checks=None, filename_column=None
+
     ):
 
         # Read Excel files
@@ -130,8 +125,16 @@ class ExcelMerger:
         else:
             merged_df['title_match'] = "N/A, N/A"
 
-        temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
+        # ✅ Ensure Comments_1 is updated even if title comparison is off
+        merged_df = ExcelMerger.update_comments_column(
+            merged_df,
+            status_column=status_column, status_value=status_value,
+            project_column=project_column, project_value=project_value,
+            custom_checks=custom_checks,
+            filename_column=filename_column
+        )
 
+        temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
         # *** IMPORTANT: First, reorder columns ***
         ExcelMerger.reorder_columns(temp_file_path)
@@ -166,26 +169,30 @@ class ExcelMerger:
                     reorder=False, update_baseline=True,
                     status_column=status_column, status_value=status_value,
                     project_column=project_column, project_value=project_value,
-                    custom_checks=custom_checks
+                    custom_checks=custom_checks, filename_column=filename_column
+
                 )
 
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df, 'title_excel1', 'title_excel3',
-                reorder=False, update_baseline=True
+                reorder=False, update_baseline=True, filename_column=filename_column
+
             )
 
         # Explicitly handle Excel 2 independently
         elif title_column1 and title_column2 and compare_excel2:
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df, 'title_excel1', 'title_excel2',
-                reorder=False, update_baseline=True
+                reorder=False, update_baseline=True, filename_column=filename_column
+
             )
 
         # Explicitly handle Excel 3 independently
         elif title_column1 and title_column3 and compare_excel3:
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df, 'title_excel1', 'title_excel3',
-                reorder=False, update_baseline=True
+                reorder=False, update_baseline=True, filename_column=filename_column
+
             )
 
         return temp_file_path, merged_df
@@ -198,7 +205,8 @@ class ExcelMerger:
             title_column1=None, title_column2=None,
             status_column=None, status_value=None,
             project_column=None, project_value=None,
-            custom_checks=None
+            custom_checks=None,filename_column=None
+
     ):
 
         # Two-file merge code (same as before)
@@ -230,7 +238,18 @@ class ExcelMerger:
             merged_df['original_row_index'], errors='coerce').fillna(0).astype(int)
         print("Merged DataFrame columns:")
         print(merged_df.columns.tolist())
+
+        # ✅ Ensure Comments_1 is updated even if title comparison is off
+        merged_df = ExcelMerger.update_comments_column(
+            merged_df,
+            status_column=status_column, status_value=status_value,
+            project_column=project_column, project_value=project_value,
+            custom_checks=custom_checks,
+            filename_column=filename_column
+        )
+
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
+
         ExcelMerger._apply_formatting_and_hyperlinks(
             temp_file_path, hyperlinks, merged_df,
             status_column=status_column, status_value=status_value,
@@ -247,7 +266,8 @@ class ExcelMerger:
                 update_baseline=True,
                 status_column=status_column, status_value=status_value,
                 project_column=project_column, project_value=project_value,
-                custom_checks=custom_checks
+                custom_checks=custom_checks, filename_column=filename_column
+
             )
 
         return temp_file_path, merged_df
@@ -711,15 +731,20 @@ class ExcelMerger:
             return existing  # Keep existing value if there's no new comment
 
         # ✅ Perform Filename Check
-        # if filename_column and filename_column in merged_df.columns:
-        #     merged_df["Comments_1"] = merged_df.apply(
-        #         lambda row: append_comment(
-        #             row["Comments_1"],
-        #             f"Filename & Drawing Number Discrepancy: {row[filename_column]} <--> {row['number_1']}"
-        #         ) if pd.notna(row["number_1"]) and pd.notna(row[filename_column])
-        #              and not str(row[filename_column]).startswith(str(row["number_1"])) else row["Comments_1"],
-        #         axis=1
-        #     )
+        if filename_column and filename_column in merged_df.columns:
+            for i, row in merged_df.iterrows():
+                number_1 = str(row.get("number_1", "")).strip()
+                filename = str(row.get(filename_column, "")).strip()
+                comment = row.get("Comments_1", "")
+
+                # Skip if any is missing
+                if not number_1 or not filename:
+                    continue
+
+                # Check mismatch
+                if not filename.startswith(number_1):
+                    mismatch_msg = f"Filename & Drawing Number Mismatch: {filename} vs {number_1}"
+                    merged_df.at[i, "Comments_1"] = append_comment(comment, mismatch_msg)
 
         # ✅ Perform Status Check
         if status_column and status_column in merged_df.columns:
@@ -785,7 +810,8 @@ class ExcelMerger:
     def apply_title_highlighting(file_path, merged_df, title_col1, title_col2, reorder=True, update_baseline=True,
                                  status_column=None, status_value=None,
                                  project_column=None, project_value=None,
-                                 custom_checks=None):
+                                 custom_checks=None, filename_column=None):
+
         """Applies title highlighting and ensures 'Comments_1' updates persist in the final Excel file."""
         wb = load_workbook(file_path, rich_text=True)
         ws = wb.active
@@ -814,10 +840,6 @@ class ExcelMerger:
             wb.close()
             return
 
-        # ✅ Fix: Update Comments_1 Before Saving
-        merged_df = ExcelMerger.update_comments_column(
-            merged_df, status_column, status_value, project_column, project_value, custom_checks
-        )
 
         print(f"Applying title highlighting on columns '{title_col1}' and '{title_col2}':")
         for i, row in merged_df.iterrows():
@@ -921,11 +943,16 @@ class MergerGUI:
         self._build_excel2_section(self.excel2_frame)
         self._build_excel3_section(self.excel3_frame)
 
-        # Create controls frame.
+
         # Create the comparison check frame
         self.comparison_frame = ctk.CTkFrame(self.mergerApp)
         self.comparison_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
         self._build_comparison_checks(self.comparison_frame)
+
+        # Build Filename Checker frame to the right
+        self.filename_frame = ctk.CTkFrame(self.mergerApp)
+        self.filename_frame.grid(row=1, column=3, padx=10, pady=5, sticky="nsew")
+        self._build_filename_checker(self.filename_frame)
 
         # Create controls frame (move down)
         self.controls_frame = ctk.CTkFrame(self.mergerApp)
@@ -1070,22 +1097,27 @@ class MergerGUI:
         self.add_check_button.grid(row=3, column=0, columnspan=3, padx=5, pady=2, sticky="ew")
 
     def _build_filename_checker(self, parent_frame):
-        """Creates UI elements for filename validation"""
+        """Builds the UI for filename comparison against reference column."""
 
-        # Enable Filename Check
         self.filename_enabled = tk.BooleanVar(value=False)
         self.filename_column = tk.StringVar()
 
+        ctk.CTkLabel(parent_frame, text="Filename Checker", font=("Helvetica", 12, "bold")).grid(
+            row=0, column=0, columnspan=2, padx=5, pady=(5, 2), sticky="w")
+
         self.filename_check = ctk.CTkCheckBox(
             parent_frame, text="Enable Filename Check",
-            variable=self.filename_enabled, command=self._toggle_filename_check
+            variable=self.filename_enabled,
+            command=self._toggle_filename_check
         )
-        self.filename_check.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.filename_check.grid(row=1, column=0, columnspan=2, padx=5, pady=2, sticky="w")
 
-        # Dropdown for selecting filename column
-        # self.filename_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.filename_column, values=[],
-        #                                            state="disabled")
-        # self.filename_dropdown.grid(row=1, column=0, padx=5, pady=2, sticky="ew")
+        ctk.CTkLabel(parent_frame, text="Filename Column:", font=("Helvetica", 11)).grid(
+            row=2, column=0, padx=5, pady=2, sticky="e")
+
+        self.filename_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.filename_column, values=[],
+                                                   state="disabled")
+        self.filename_dropdown.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
 
     def _build_controls(self, parent_frame):
         font_name = "Helvetica"
@@ -1138,8 +1170,20 @@ class MergerGUI:
             dropdown_widget.configure(state=state)
             entry_widget.configure(state=state)
 
+    def _toggle_title_entries(self):
+        # Enable title_option_menu1 if either checkbox is checked
+        state_1 = "normal" if (self.compare_excel2_title.get() or self.compare_excel3_title.get()) else "disabled"
+        self.title_option_menu1.configure(state=state_1)
+
+        # Enable title_option_menu2 only if compare_excel2 is checked
+        state_2 = "normal" if self.compare_excel2_title.get() else "disabled"
+        self.title_option_menu2.configure(state=state_2)
+
+        # Enable title_option_menu3 only if compare_excel3_title is checked
+        state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
+        self.title_option_menu3.configure(state=state_3)
+
     def _toggle_filename_check(self):
-        """Enable or disable filename validation fields."""
         state = "normal" if self.filename_enabled.get() else "disabled"
         self.filename_dropdown.configure(state=state)
 
@@ -1257,9 +1301,9 @@ class MergerGUI:
             self.project_dropdown.configure(values=headers)
             self.project_column.set(auto_select_header(headers, ["project"]))
 
-            # # Populate Filename Checker
-            # self.filename_dropdown.configure(values=headers)
-            # self.filename_column.set(auto_select_header(headers, ["filename"]))
+            # Populate filename dropdown and auto-select
+            self.filename_dropdown.configure(values=headers)
+            self.filename_column.set(auto_select_header(headers, ["filename", "file name"]))
 
             # ✅ Ensure correct widgets are updated for custom checks
             for check in self.custom_checks:
@@ -1301,19 +1345,6 @@ class MergerGUI:
             name, ext = os.path.splitext(file_name)
             self.output_path.set(os.path.join(directory, f"{name}_merged{ext}"))
 
-    def _toggle_title_entries(self):
-        # Enable title_option_menu1 if either checkbox is checked
-        state_1 = "normal" if (self.compare_excel2_title.get() or self.compare_excel3_title.get()) else "disabled"
-        self.title_option_menu1.configure(state=state_1)
-
-        # Enable title_option_menu2 only if compare_excel2 is checked
-        state_2 = "normal" if self.compare_excel2_title.get() else "disabled"
-        self.title_option_menu2.configure(state=state_2)
-
-        # Enable title_option_menu3 only if compare_excel3_title is checked
-        state_3 = "normal" if self.compare_excel3_title.get() else "disabled"
-        self.title_option_menu3.configure(state=state_3)
-
     def _start_merge(self):
         excel1_path = self.excel1_path.get()
         excel2_path = self.excel2_path.get()
@@ -1337,6 +1368,9 @@ class MergerGUI:
             title_col1 = self.title_column1.get() if (self.compare_excel2_title.get() or self.compare_excel3_title.get()) else None
             title_col2 = self.title_column2.get() if self.compare_excel2_title.get() else None
             title_col3 = self.title_column3.get() if self.compare_excel3_title.get() and excel3_path else None
+
+            # Filename check
+            filename_col = self.filename_column.get() if self.filename_enabled.get() else None
 
             # Collect status & project name checks
             status_col = self.status_column.get() if self.status_enabled.get() else None
@@ -1363,7 +1397,8 @@ class MergerGUI:
                     status_value=status_value,
                     project_column=project_col,
                     project_value=project_value,
-                    custom_checks=custom_checks
+                    custom_checks=custom_checks,
+                    filename_column=filename_col
                 )
             else:
                 merged_file_path, merged_df = ExcelMerger.merge_excels(
@@ -1376,7 +1411,8 @@ class MergerGUI:
                     status_value=status_value,
                     project_column=project_col,
                     project_value=project_value,
-                    custom_checks=custom_checks
+                    custom_checks=custom_checks,
+                    filename_column=filename_col
                 )
 
             messagebox.showinfo("Success", f"Merged file saved at {merged_file_path}")
