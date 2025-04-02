@@ -206,23 +206,28 @@ class ExcelMerger:
             title_column1=None, title_column2=None,
             status_column=None, status_value=None,
             project_column=None, project_value=None,
-            custom_checks=None,filename_column=None
+            custom_checks=None, filename_column=None
 
     ):
 
-        # Two-file merge code (same as before)
+        # Two-file merge code
         excel1 = pd.read_excel(excel1_path, engine='openpyxl', dtype=str).fillna("")
         excel2 = pd.read_excel(excel2_path, engine='openpyxl', dtype=str).fillna("")
+
         if ref_column1 not in excel1.columns or ref_column2 not in excel2.columns:
             raise KeyError("Reference columns not found in one or both Excel files.")
+
         excel1 = ExcelMerger.add_original_row_index_to_dataframe(excel1, excel1_path)
         hyperlinks = ExcelMerger._extract_hyperlinks(excel1_path)
+
         excel1['refno_count'] = excel1.groupby(ref_column1).cumcount()
         excel2['refno_count'] = excel2.groupby(ref_column2).cumcount()
+
         excel1 = excel1.rename(columns={ref_column1: 'number_1'})
         excel2 = excel2.rename(columns={ref_column2: 'number_2'})
         excel1['common_ref'] = excel1['number_1']
         excel2['common_ref'] = excel2['number_2']
+
         if title_column1:
             excel1 = excel1.rename(columns={title_column1: 'title_excel1'})
         if title_column2:
@@ -237,10 +242,11 @@ class ExcelMerger:
 
         merged_df['original_row_index'] = pd.to_numeric(
             merged_df['original_row_index'], errors='coerce').fillna(0).astype(int)
+
         print("Merged DataFrame columns:")
         print(merged_df.columns.tolist())
 
-        # ✅ Ensure Comments_1 is updated even if title comparison is off
+        # ✅ Add Comments_1 if needed
         merged_df = ExcelMerger.update_comments_column(
             merged_df,
             status_column=status_column, status_value=status_value,
@@ -251,13 +257,27 @@ class ExcelMerger:
 
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
+        # ✅ Reorder columns and reload headers
+        ExcelMerger.reorder_columns(temp_file_path)
+        wb = load_workbook(temp_file_path)
+        ws = wb.active
+        updated_headers = [cell.value for cell in ws[1]]
+        col_name_to_excel_idx = {col: idx + 1 for idx, col in enumerate(updated_headers)}
+        wb.close()
+
+        # ✅ Apply formatting and hyperlinks
         ExcelMerger._apply_formatting_and_hyperlinks(
             temp_file_path, hyperlinks, merged_df,
             status_column=status_column, status_value=status_value,
             project_column=project_column, project_value=project_value,
-            custom_checks=custom_checks
+            custom_checks=custom_checks,
+            col_name_to_excel_idx=col_name_to_excel_idx
         )
 
+        # ✅ Apply rich text coloring on title_match
+        ExcelMerger.apply_title_match_highlighting(temp_file_path, merged_df)
+
+        # ✅ Apply title highlighting
         if title_column1 and title_column2:
             ExcelMerger.apply_title_highlighting(
                 temp_file_path, merged_df,
@@ -267,8 +287,8 @@ class ExcelMerger:
                 update_baseline=True,
                 status_column=status_column, status_value=status_value,
                 project_column=project_column, project_value=project_value,
-                custom_checks=custom_checks, filename_column=filename_column
-
+                custom_checks=custom_checks,
+                filename_column=filename_column
             )
 
         return temp_file_path, merged_df
@@ -467,12 +487,12 @@ class ExcelMerger:
                         ws.cell(row=excel_row, column=col_idx).fill = light_red_fill
 
             instance_mapping = {
-                (True, False, False): "PDF Only",
-                (False, True, False): "number 2",
-                (False, False, True): "number 3",
-                (True, True, False): "4: PDF and number_2",
-                (True, False, True): "5: PDF and number_3",
-                (False, True, True): "No PDF but found on number_2 and number_3",
+                (True, False, False): "PDF is provided but not listed in LOD",
+                (False, True, False): "LOD_2 only",
+                (False, False, True): "LOD_3 only",
+                (True, True, False): "PDF is provided and number_2",
+                (True, False, True): "PDF is provided and number_3",
+                (False, True, True): "No PDF but found in LOD_2 and LOD_3",
                 (True, True, True): "",
                 (False, False, False): "None"
             }
@@ -521,8 +541,8 @@ class ExcelMerger:
                     ws.cell(row=row_idx, column=common_ref_col_idx).font = duplicate_font
 
             instance_mapping_2 = {
-                (True, False): "PDF Only",
-                (False, True): "number 2",
+                (True, False): "PDF is provided but not listed in LOD",
+                (False, True): "LOD_2",
                 (True, True): "",
                 (False, False): "None"
             }
