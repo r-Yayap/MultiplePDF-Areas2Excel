@@ -40,89 +40,92 @@ class XtractorGUI:
         self.setup_bindings()
         self.setup_tooltips()
 
-    from openpyxl import Workbook, load_workbook
-    from tkinter import filedialog, messagebox
 
     def export_rectangles(self):
-        """Exports the currently selected areas (rectangles) to an Excel file."""
         export_file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("Excel 97-2003 files", "*.xls"),
-                       ("Excel Macro-Enabled Workbook", "*.xlsm"), ("All files", "*.*")],
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
             title="Save Rectangles As"
         )
-        if export_file_path:
-            try:
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Rectangles"
+        if not export_file_path:
+            return
 
-                # Add headers
-                ws.append(["Title", "x0", "y0", "x1", "y1"])
+        try:
+            wb = Workbook()
+            ws_area = wb.active
+            ws_area.title = "Rectangles"
+            ws_area.append(["Title", "x0", "y0", "x1", "y1"])
+            for area in self.pdf_viewer.areas:
+                ws_area.append([area["title"]] + area["coordinates"])
 
-                # Write rectangle data
-                for area in self.pdf_viewer.areas:
-                    title = area.get("title", "Untitled")
-                    coordinates = area["coordinates"]
-                    ws.append([title] + coordinates)
+            if self.pdf_viewer.revision_area:
+                ws_rev = wb.create_sheet("RevisionTable")
+                ws_rev.append(["Title", "x0", "y0", "x1", "y1"])
+                rev = self.pdf_viewer.revision_area
+                ws_rev.append([rev["title"]] + rev["coordinates"])
 
-                # Save to Excel file
-                wb.save(export_file_path)
-                wb.close()
-                print(f"Exported areas to {export_file_path}")
-
-            except Exception as e:
-                messagebox.showerror("Export Error", f"Could not export areas: {e}")
+            wb.save(export_file_path)
+            wb.close()
+            print(f"Exported areas to {export_file_path}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not export areas: {e}")
 
     def import_rectangles(self):
-        """Imports area selections from an Excel file."""
         import_file_path = filedialog.askopenfilename(
             filetypes=[("Excel files", "*.xlsx;*.xls;*.xlsm"), ("All files", "*.*")],
             title="Import Rectangles"
         )
-        if import_file_path:
-            try:
-                wb = load_workbook(import_file_path)
-                ws = wb.active  # Assume first sheet contains data
+        if not import_file_path:
+            return
 
-                # Read all areas from the sheet
-                imported_areas = []
-                for row in ws.iter_rows(min_row=2, values_only=True):  # Skip header row
+        try:
+            wb = load_workbook(import_file_path)
+            ws_area = wb["Rectangles"] if "Rectangles" in wb.sheetnames else wb.active
+
+            self.pdf_viewer.areas = []
+            for row in ws_area.iter_rows(min_row=2, values_only=True):
+                title, x0, y0, x1, y1 = row
+                self.pdf_viewer.areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
+
+            # Handle revision area
+            revision_area_set = False
+            if "RevisionTable" in wb.sheetnames:
+                ws_rev = wb["RevisionTable"]
+                for row in ws_rev.iter_rows(min_row=2, values_only=True):
                     title, x0, y0, x1, y1 = row
-                    imported_areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
+                    # ✅ Only set revision area if all coordinates are present
+                    if all(isinstance(coord, (int, float)) for coord in [x0, y0, x1, y1]):
+                        self.pdf_viewer.revision_area = {"title": title, "coordinates": [x0, y0, x1, y1]}
+                        revision_area_set = True
 
-                # Update the areas in the PDF viewer
-                self.pdf_viewer.areas = imported_areas
-                self.pdf_viewer.update_rectangles()  # Refresh rectangles on the canvas
-                self.update_areas_treeview()  # Refresh the Treeview to show imported areas
-                print(f"Imported areas from {import_file_path}")
+            if not revision_area_set:
+                self.pdf_viewer.revision_area = None  # ✅ Clear revision area if nothing valid was set
 
-            except Exception as e:
-                messagebox.showerror("Import Error", f"Could not import areas: {e}")
+            self.pdf_viewer.update_rectangles()
+            self.update_areas_treeview()
+            print(f"Imported areas from {import_file_path}")
+        except Exception as e:
+            messagebox.showerror("Import Error", f"Could not import areas: {e}")
 
     def clear_all_areas(self):
         """Clears all areas and updates the display."""
-        self.pdf_viewer.clear_areas()  # Clear areas from the PDF viewer
+        self.pdf_viewer.clear_areas()  # Clear area rectangles
+        self.pdf_viewer.revision_area = None  # ✅ Clear revision area rectangle
         self.areas_tree.delete(*self.areas_tree.get_children())  # Clear all entries in the Treeview
-        print("All areas cleared.")
+        self.pdf_viewer.update_rectangles()  # ✅ Ensure canvas refresh reflects the change
+        print("All areas and revision table cleared.")
 
     def update_areas_treeview(self):
-        """Refreshes the Treeview to display the current areas and their titles."""
-
-        # Clear existing entries
+        """Updates the Treeview with only area mode rectangles (excludes revision)."""
         self.areas_tree.delete(*self.areas_tree.get_children())
-
-        # Insert each area with its title and coordinates into the Treeview and keep track of each item ID
-        self.treeview_item_ids = {}  # Dictionary to track Treeview item IDs to canvas rectangle IDs
-
+        self.treeview_item_ids = {}
 
         for index, area in enumerate(self.pdf_viewer.areas):
             coordinates = area["coordinates"]
             title = area["title"]
-            # Insert row into the Treeview and get its item ID
             item_id = self.areas_tree.insert("", "end", values=(title, *coordinates))
-            # Store the item ID associated with the canvas rectangle index
             self.treeview_item_ids[item_id] = index
+
 
     def open_sample_pdf(self):
         # Opens a file dialog to select a PDF file, then displays it in the PDFViewer
@@ -192,6 +195,14 @@ class XtractorGUI:
 
         self.ocr_menu.place(x=330, y=10)
 
+        # Mode Toggle Buttons
+        self.mode_area_btn = ctk.CTkButton(self.root, text="🟥 Area Mode", width=85, height=10,
+                                           font=(BUTTON_FONT, 9), command=self.set_mode_area)
+        self.mode_area_btn.place(x=740, y=15)
+
+        self.mode_revision_btn = ctk.CTkButton(self.root, text="🟩 Revision Mode", width=85, height=10,
+                                               font=(BUTTON_FONT, 9), command=self.set_mode_revision)
+        self.mode_revision_btn.place(x=740, y=40)
 
 
         # Zoom Slider
@@ -311,6 +322,26 @@ class XtractorGUI:
         self.pdf_folder_entry.bind("<KeyRelease>", self.update_pdf_folder)
         self.output_path_entry.bind("<KeyRelease>", self.update_output_path)
         self.root.bind("<Configure>", self.on_window_resize)
+
+    def set_mode_area(self):
+        self.pdf_viewer.selection_mode = "area"
+        print("🟥 Switched to Area Mode")
+        self.highlight_mode_button(self.mode_area_btn)
+        self.reset_mode_button(self.mode_revision_btn)
+
+    def set_mode_revision(self):
+        self.pdf_viewer.selection_mode = "revision"
+        print("🟩 Switched to Revision History Mode")
+        self.highlight_mode_button(self.mode_revision_btn)
+        self.reset_mode_button(self.mode_area_btn)
+
+    def highlight_mode_button(self, button):
+        """Visually highlight the active mode button."""
+        button.configure(fg_color="#3949AB", text_color="white", border_color="white", border_width=2)
+
+    def reset_mode_button(self, button):
+        """Reset the visual style of inactive buttons."""
+        button.configure(fg_color="gray25", text_color="white", border_width=0)
 
     def setup_tooltips(self):
         create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
@@ -463,6 +494,9 @@ class XtractorGUI:
             areas=self.pdf_viewer.areas,
             ocr_settings=self.ocr_settings,
             include_subfolders=self.include_subfolders)
+
+        # ✅ Pass the revision area from the viewer to the extractor
+        extractor.revision_area = self.pdf_viewer.revision_area
 
         extraction_process = multiprocessing.Process(target=extractor.start_extraction,
                                                      args=(progress_list, total_files, final_output_path))

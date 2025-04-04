@@ -76,6 +76,12 @@ class PDFViewer:
         self.canvas.bind("<Shift-MouseWheel>", self.handle_mousewheel)  # Shift for horizontal scroll
         self.canvas.bind("<Control-MouseWheel>", self.handle_mousewheel)  # Ctrl for zoom
 
+        # Added for Revision History Table
+        self.selection_mode = "area"  # Options: "area" or "revision"
+        self.revision_area = None  # Holds single revision table rectangle
+        self.revision_rectangle_id = None
+        self.selection_mode = "area"  # Can be "area" or "revision"
+
 
     def set_custom_title(self):
         """Prompts user for a custom title and assigns it to the selected rectangle."""
@@ -190,7 +196,8 @@ class PDFViewer:
         """Begins the rectangle selection process on mouse press."""
         x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
         self.original_coordinates = [x, y]
-        self.current_rectangle = self.canvas.create_rectangle(x, y, x, y, outline="red", width=2)
+        color = "red" if self.selection_mode == "area" else "green"
+        self.current_rectangle = self.canvas.create_rectangle(x, y, x, y, outline=color, width=2)
 
     def draw_rectangle(self, event):
         """Adjusts the rectangle dimensions as the mouse is dragged."""
@@ -199,37 +206,42 @@ class PDFViewer:
             self.canvas.coords(self.current_rectangle, self.original_coordinates[0], self.original_coordinates[1], x, y)
             self.auto_scroll_canvas(event.x, event.y)
 
+
     def end_rectangle(self, event):
         """Finalizes the rectangle selection and saves its coordinates."""
         if self.current_rectangle:
             x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
             self.canvas.coords(self.current_rectangle, self.original_coordinates[0], self.original_coordinates[1], x, y)
-
             bbox = self.canvas.bbox(self.current_rectangle)
-            if bbox:
-                x0, y0, x1, y1 = bbox
-                adjusted_coordinates = [
-                    x0 / self.current_zoom,
-                    y0 / self.current_zoom,
-                    x1 / self.current_zoom,
-                    y1 / self.current_zoom
-                ]
+            if not bbox:
+                print("Error: Failed to retrieve bounding box coordinates")
+                return
 
-                # Add rectangle entry with default title based on its position
+            x0, y0, x1, y1 = bbox
+            adjusted_coordinates = [
+                x0 / self.current_zoom,
+                y0 / self.current_zoom,
+                x1 / self.current_zoom,
+                y1 / self.current_zoom
+            ]
+
+            if self.selection_mode == "area":
                 self.areas.append({
                     "coordinates": adjusted_coordinates,
-                    "title": f"Rectangle {len(self.areas) + 1}"  # Default title based on position
+                    "title": f"Rectangle {len(self.areas) + 1}"
                 })
                 self.rectangle_list.append(self.current_rectangle)
-
-                # Update the Treeview to show this new rectangle with its default title
                 self.parent.update_areas_treeview()
-                print("Updated Areas List:", self.areas)
             else:
-                print("Error: Failed to retrieve bounding box coordinates")
+                # Only allow one revision area
+                if self.revision_rectangle_id:
+                    self.canvas.delete(self.revision_rectangle_id)
+                self.revision_area = {"coordinates": adjusted_coordinates, "title": "Revision Table"}
+                self.revision_rectangle_id = self.current_rectangle
+                print("Set Revision Table Rectangle:", self.revision_area)
 
-        # Clear the current rectangle reference
         self.current_rectangle = None
+
 
     def auto_scroll_canvas(self, x, y):
         """Auto-scrolls the canvas if the mouse is near the edges during a drag operation."""
@@ -279,21 +291,26 @@ class PDFViewer:
         print("Cleared All Areas")
 
     def update_rectangles(self):
-        """Updates rectangle overlays on the canvas and refreshes the Treeview with adjusted coordinates."""
-        # Clear existing rectangles from the canvas
+        """Redraws area and revision rectangles on the canvas."""
         for rect_id in self.rectangle_list:
             self.canvas.delete(rect_id)
         self.rectangle_list.clear()
 
-        # Redraw rectangles based on the updated `self.areas` list
-        for rect_info in self.areas:
-            x0, y0, x1, y1 = [coord * self.current_zoom for coord in rect_info["coordinates"]]
+        if self.revision_rectangle_id:
+            self.canvas.delete(self.revision_rectangle_id)
+            self.revision_rectangle_id = None
 
-            # Draw the rectangle on the canvas
+        for area in self.areas:
+            x0, y0, x1, y1 = [coord * self.current_zoom for coord in area["coordinates"]]
             rect_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="red", width=2)
             self.rectangle_list.append(rect_id)
 
-        # Update the Treeview in the main GUI
+        # Draw revision area if present
+        if self.revision_area:
+            x0, y0, x1, y1 = [c * self.current_zoom for c in self.revision_area["coordinates"]]
+            self.revision_rectangle_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="green", width=2)
+
+        # Update Treeview only for normal areas
         self.parent.update_areas_treeview()
 
     def set_zoom(self, zoom_level):

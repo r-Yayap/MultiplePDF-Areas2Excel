@@ -15,8 +15,101 @@ from openpyxl.utils import get_column_letter
 from utils import adjust_coordinates_for_rotation, find_tessdata
 
 
+# Define patterns
+REVISION_REGEX = re.compile(r"^(?:[paPA]?0?\d{1,2}|[A-Z])$", re.IGNORECASE)
+DATE_REGEX = re.compile(r"""
+    (?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}) |               # 01/01/24 or 1-1-2025
+    (?:\d{1,2}\s*[-]?\s*[A-Za-z]{3,9}\s*[-]?\s*\d{2,4})  # 3-Apr-2025 or 3 April 25
+""", re.VERBOSE)
+DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission"]
+
+def detect_column_indices(sample_rows, max_rows=3):
+    col_scores = {}
+
+    for row in sample_rows[:max_rows]:
+        for col_idx, cell in enumerate(row):
+            text = str(cell).strip().lower()
+            if not text:
+                continue
+            if col_idx not in col_scores:
+                col_scores[col_idx] = {"rev": 0, "date": 0, "desc": 0}
+
+            if REVISION_REGEX.fullmatch(text.upper()):
+                col_scores[col_idx]["rev"] += 1
+            elif DATE_REGEX.search(text):
+                col_scores[col_idx]["date"] += 1
+            elif any(kw in text for kw in DESC_KEYWORDS):
+                col_scores[col_idx]["desc"] += 1
+
+    rev_idx = max(col_scores.items(), key=lambda x: x[1]["rev"], default=(None, {}))[0]
+    desc_idx = max(col_scores.items(), key=lambda x: x[1]["desc"], default=(None, {}))[0]
+    date_idx = max(col_scores.items(), key=lambda x: x[1]["date"], default=(None, {}))[0]
+
+    print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
+    return rev_idx, desc_idx, date_idx
+
+def parse_revision_row(row, rev_idx, desc_idx, date_idx):
+    rev = row[rev_idx].strip() if rev_idx is not None and rev_idx < len(row) else None
+    desc = row[desc_idx].strip() if desc_idx is not None and desc_idx < len(row) else None
+    date = row[date_idx].strip() if date_idx is not None and date_idx < len(row) else None
+
+    # Validate formats
+    if rev and not REVISION_REGEX.fullmatch(rev.upper()):
+        rev = None
+    if date and not DATE_REGEX.search(date):
+        date = None
+
+    return rev, desc, date
+
+def extract_revision_history_from_page_obj(page, revision_coordinates):
+    try:
+
+        if not revision_coordinates or len(revision_coordinates) != 4:
+            return []
+
+        # Skip if area is too small or outside page
+        clip_rect = fitz.Rect(revision_coordinates)
+        if clip_rect.is_empty or clip_rect.get_area() < 100:  # Skip tiny boxes
+            print(f"⚠️ Revision area too small or empty, skipping.")
+            return []
+
+        tables = page.find_tables(clip=clip_rect)
+        print(f"📋 Running revision extraction")
+        if not tables or not tables.tables:
+            print("❌ No tables found.")
+            return []
+
+        table = tables.tables[0]
+        data = table.extract()
+        if not data or len(data) < 2:
+            print("❌ Not enough rows to detect header or parse data.")
+            return []
+
+        data = data[::-1]
+        print("📋 Table Detected:")
+        for i, row in enumerate(data):
+            print(f"🔹 Row {i}: {row}")
+
+        rev_idx, desc_idx, date_idx = detect_column_indices(data[1:])
+        extracted = []
+        non_empty_rows = (row for row in data if any(row))
+        for row in non_empty_rows:
+            rev, desc, date = parse_revision_row(row, rev_idx, desc_idx, date_idx)
+            if rev and desc and date:
+                print(f"✅ Parsed → {rev} | {desc} | {date}")
+                extracted.append(f"{rev} | {desc} | {date}")
+            else:
+                print(f"⛔ Incomplete fields → Skipped")
+
+        return extracted
+    except Exception as e:
+        print(f"❌ Error during revision extraction: {e}")
+        return []
+
+
 class TextExtractor:
     def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders):
+        self.header_column_map = None
         self.final_output_path = None
         self.pdf_folder = pdf_folder
         self.output_excel_path = output_excel_path
@@ -63,6 +156,9 @@ class TextExtractor:
         username = getpass.getuser()  # Get the current Windows username
         self.temp_image_folder = os.path.join(main_temp_folder, f"{username}-{timestamp}")
 
+        # Revision Area
+        self.revision_area = None  # Will be set externally if needed
+        self.revision_data_mapping = {}  # (filename, page_number) → list of revision strings
 
     def clean_text(self, text):
         """Cleans text by replacing newlines, stripping, and removing illegal characters."""
@@ -124,6 +220,7 @@ class TextExtractor:
             for page_number in range(pdf_document.page_count):
                 try:
                     page = pdf_document[page_number]
+                    page.remove_rotation()
                     extracted_areas = []
 
                     for area_index, area in enumerate(self.areas):
@@ -134,9 +231,15 @@ class TextExtractor:
                         # If text_area is empty, treat it as blank rather than "Error"
                         extracted_areas.append((text_area if text_area != "Error" else "", img_path or ""))
 
+                    revision_data = []
+                    if self.revision_area:
+                        revision_data = extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
+
                     # Append all relevant data for this page as a row in results
                     result_rows.append(
-                        [file_size, last_modified_date, folder, filename, page_number + 1, extracted_areas])
+                        [file_size, last_modified_date, folder, filename, page_number + 1, extracted_areas,
+                         revision_data]
+                    )
 
                 except Exception as e:
                     print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
@@ -246,17 +349,58 @@ class TextExtractor:
         pix.save(img_path)
         return text_area, img_path
 
+    def extract_revision_history_from_page(self, pdf_path, page, filename, page_number):
+        try:
+            if (
+                    self.revision_area and
+                    isinstance(self.revision_area, dict) and
+                    "coordinates" in self.revision_area and
+                    isinstance(self.revision_area["coordinates"], list) and
+                    len(self.revision_area["coordinates"]) == 4
+            ):
+
+                revision_data = extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
+                self.revision_data_mapping[(filename, page_number + 1)] = revision_data
+            else:
+                print(f"⚠️ Invalid revision area format for {filename} Page {page_number + 1}: {self.revision_area}")
+        except Exception as e:
+            print(f"⚠️ Revision extraction failed for {filename} Page {page_number + 1}: {e}")
+
     def consolidate_results(self, results, final_output_path):
         """Consolidates all extracted results into an Excel file with each page as a row."""
         wb = Workbook()
         ws = wb.active
+
+        # Determine the maximum number of revision entries
+        max_revision_columns = max(
+            (len(row[6]) for result_pages in results for row in result_pages if
+             isinstance(row, list) and len(row) == 7),
+            default=0
+        )
+
+        # Extend headers dynamically with Rev1, Rev2, ...
+        rev_headers = [f"Rev{i + 1}" for i in range(max_revision_columns)]
+        self.headers.extend(rev_headers)
+
+        self.header_column_map = {title: idx + 1 for idx, title in enumerate(self.headers)}
+
         ws.append(self.headers)  # Add headers to the first row
+
+        # Precompute revision column indices to avoid repeated lookups
+        rev_col_indices = {
+            i: self.header_column_map[header]
+            for i, header in enumerate(rev_headers)
+        }
 
         for result_pages in results:
             for row_data in result_pages:
                 try:
+                    if not isinstance(row_data, list) or len(row_data) != 7:
+                        print(f"⚠️ Skipping malformed row_data: {row_data}")
+                        continue
+
                     # Unpack metadata and extracted area data for the page
-                    file_size, last_modified, folder, filename, page_number, extracted_areas = row_data
+                    file_size, last_modified, folder, filename, page_number, extracted_areas, revision_data = row_data
 
                     # Prepare row for insertion
                     row_index = ws.max_row + 1
@@ -276,7 +420,7 @@ class TextExtractor:
 
                         # Get the unique title assigned to this rectangle
                         column_title = self.unique_headers_mapping.get(index, f"Area {index + 1}")
-                        col_index = self.headers.index(column_title) + 1  # Excel columns are 1-based
+                        col_index = self.header_column_map[column_title]
 
                         # Retrieve text and image path from extracted areas
                         text, img_path = extracted_areas[index] if isinstance(extracted_areas, list) else (
@@ -297,11 +441,16 @@ class TextExtractor:
                             img.anchor = f"{get_column_letter(col_index)}{row_index}"
                             ws.add_image(img)
 
+                    # Append revisions if available
+                    for i, revision_text in enumerate(revision_data):
+                        if i in rev_col_indices:
+                            col_index = rev_col_indices[i]
+                            ws.cell(row=row_index, column=col_index).value = revision_text
+
                 except Exception as e:
-                    print(f"Unexpected error consolidating data for {filename}: {e}")
-                    ws.append([folder, filename, "Error"] + [""] * len(self.areas))
-
-
+                    print(f"❌ Unexpected error consolidating data: {e}")
+                    print(f"   ↳ row_data was: {row_data}")
+                    ws.append(["Error", "Consolidation failed", str(e)] + [""] * len(self.areas))
 
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path
