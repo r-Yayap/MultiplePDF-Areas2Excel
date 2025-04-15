@@ -898,7 +898,6 @@ class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
         self.TkdndVersion = TkinterDnD._require(self)
 
 
-
 class MergerGUI:
     """Handles the GUI for the Excel merger with drag-and-drop file selection and theme toggle."""
 
@@ -967,12 +966,12 @@ class MergerGUI:
 
         # Create the comparison check frame
         self.comparison_frame = ctk.CTkFrame(self.mergerApp)
-        self.comparison_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        self.comparison_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=(10, 10), sticky="nsew")
         self._build_comparison_checks(self.comparison_frame)
 
         # Build Filename Checker frame to the right
         self.filename_frame = ctk.CTkFrame(self.mergerApp)
-        self.filename_frame.grid(row=1, column=3, padx=10, pady=5, sticky="nsew")
+        self.filename_frame.grid(row=1, column=2, padx=10, pady=(10, 10), sticky="nsew")
         self._build_filename_checker(self.filename_frame)
 
         # Create controls frame (move down)
@@ -1444,6 +1443,8 @@ class MergerGUI:
     def run(self):
         if isinstance(self.mergerApp, ctk.CTk):
             self.mergerApp.mainloop()
+
+
 
 if __name__ == "__main__":
     app = MergerGUI()
