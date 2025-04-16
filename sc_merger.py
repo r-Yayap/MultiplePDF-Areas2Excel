@@ -1079,6 +1079,9 @@ class MergerGUI:
         # Status Check (Moved to row=1)
         self.status_enabled = tk.BooleanVar(value=False)
         self.status_column = tk.StringVar()
+        self.status_column.trace_add("write",
+                                     lambda *a: self._update_preview_combo(self.status_column, self.status_combo))
+
         self.status_value = tk.StringVar()
 
         self.status_check = ctk.CTkCheckBox(
@@ -1090,12 +1093,21 @@ class MergerGUI:
         self.status_dropdown = ctk.CTkOptionMenu(parent_frame, variable=self.status_column, values=[], state="disabled")
         self.status_dropdown.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
 
-        self.status_entry = ctk.CTkEntry(parent_frame, textvariable=self.status_value, state="disabled")
-        self.status_entry.grid(row=1, column=2, padx=5, pady=2, sticky="ew")
+        self.status_combo = ctk.CTkComboBox(
+            parent_frame,
+            variable=self.status_value,
+            values=[],
+            state="disabled",
+            justify="left"
+        )
+        self.status_combo.grid(row=1, column=2, padx=5, pady=2, sticky="ew")
 
         # Project Name Check (Moved to row=2)
         self.project_enabled = tk.BooleanVar(value=False)
         self.project_column = tk.StringVar()
+        self.project_column.trace_add("write",
+                                      lambda *a: self._update_preview_combo(self.project_column, self.project_combo))
+
         self.project_value = tk.StringVar()
 
         self.project_check = ctk.CTkCheckBox(
@@ -1108,8 +1120,14 @@ class MergerGUI:
                                                   state="disabled")
         self.project_dropdown.grid(row=2, column=1, padx=5, pady=2, sticky="ew")
 
-        self.project_entry = ctk.CTkEntry(parent_frame, textvariable=self.project_value, state="disabled")
-        self.project_entry.grid(row=2, column=2, padx=5, pady=2, sticky="ew")
+        self.project_combo = ctk.CTkComboBox(
+            parent_frame,
+            variable=self.project_value,
+            values=[],
+            state="disabled",
+            justify="left"
+        )
+        self.project_combo.grid(row=2, column=2, padx=5, pady=2, sticky="ew")
 
         # Add Custom Checks Button (Moved to row=3)
         self.custom_checks = []
@@ -1157,6 +1175,11 @@ class MergerGUI:
             row=2, column=0, columnspan=3, pady=10)
         parent_frame.grid_columnconfigure(1, weight=1)
 
+    def _update_preview_combo(self, column_var, combo_widget):
+        col_name = column_var.get()
+        values = self.preview_values_by_column.get(col_name, [])
+        combo_widget.configure(values=values)
+
     def toggle_theme(self):
         if self.theme_mode.get():
             ctk.set_appearance_mode("dark")
@@ -1169,7 +1192,10 @@ class MergerGUI:
         """Enable or disable status comparison fields and update custom checks."""
         state = "normal" if self.status_enabled.get() else "disabled"
         self.status_dropdown.configure(state=state)
-        self.status_entry.configure(state=state)
+        self.status_combo.configure(state=state)
+        if state == "normal" and self.status_column.get():
+            col = self.status_column.get()
+            self.status_combo.configure(values=self.preview_values_by_column.get(col, []))
 
         # ✅ Update all custom checks
         self._toggle_custom_checks()
@@ -1178,7 +1204,10 @@ class MergerGUI:
         """Enable or disable project name comparison fields and update custom checks."""
         state = "normal" if self.project_enabled.get() else "disabled"
         self.project_dropdown.configure(state=state)
-        self.project_entry.configure(state=state)
+        self.project_combo.configure(state=state)
+        if state == "normal" and self.project_column.get():
+            col = self.project_column.get()
+            self.project_combo.configure(values=self.preview_values_by_column.get(col, []))
 
         # ✅ Update all custom checks
         self._toggle_custom_checks()
@@ -1215,6 +1244,13 @@ class MergerGUI:
         column_var = tk.StringVar()
         value_var = tk.StringVar()
 
+        def update_this_combo(*_):
+            col_name = column_var.get()
+            values = self.preview_values_by_column.get(col_name, [])
+            combo.configure(values=values)
+
+        column_var.trace_add("write", update_this_combo)
+
         check = ctk.CTkCheckBox(
             self.comparison_frame, text=f"Check {row_idx}",
             variable=enabled_var
@@ -1224,11 +1260,17 @@ class MergerGUI:
         dropdown = ctk.CTkOptionMenu(self.comparison_frame, variable=column_var, values=[], state="disabled")
         dropdown.grid(row=row_idx, column=1, padx=5, pady=2, sticky="ew")
 
-        entry = ctk.CTkEntry(self.comparison_frame, textvariable=value_var, state="disabled")
-        entry.grid(row=row_idx, column=2, padx=5, pady=2, sticky="ew")
+        combo = ctk.CTkComboBox(
+            self.comparison_frame,
+            variable=value_var,
+            values=[],
+            state="disabled",
+            justify="left"
+        )
+        combo.grid(row=row_idx, column=2, padx=5, pady=2, sticky="ew")
 
         # ✅ Store all required elements (including dropdown widget) to update later
-        self.custom_checks.append((enabled_var, column_var, value_var, dropdown, entry))
+        self.custom_checks.append((enabled_var, column_var, value_var, dropdown, combo))
 
         # ✅ If Excel is already loaded, populate dropdown values immediately
         if self.excel1_headers:
@@ -1304,11 +1346,18 @@ class MergerGUI:
 
     def _load_excel1_headers(self, file_path):
         try:
-            df = pd.read_excel(file_path, engine='openpyxl', nrows=0)
+            df_preview = pd.read_excel(file_path, engine='openpyxl', nrows=6)
+            df = df_preview.head(0)  # only headers
+
             headers = list(df.columns)
 
             # Populate existing dropdowns
             self.excel1_headers = headers
+            self.preview_values_by_column = {
+                header: list(dict.fromkeys(df_preview[header].dropna().astype(str).tolist()))
+                for header in headers
+            }
+
             self.ref_option_menu1.configure(values=headers)
             self.title_option_menu1.configure(values=headers)
             self.ref_column1.set(auto_select_header(headers, ["drawing", "sheet", "ref", "number"]))
