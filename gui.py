@@ -16,7 +16,7 @@ from extractor import TextExtractor
 from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
-
+from utils import REVISION_PATTERNS
 
 import sc_bulk_rename
 import sc_dir_list
@@ -198,12 +198,31 @@ class XtractorGUI:
         # Mode Toggle Buttons
         self.mode_area_btn = ctk.CTkButton(self.root, text="🟥 Area Mode", width=85, height=10,
                                            font=(BUTTON_FONT, 9), command=self.set_mode_area)
-        self.mode_area_btn.place(x=740, y=15)
+        self.mode_area_btn.place(x=740, y=15) #set to negative to hide
 
         self.mode_revision_btn = ctk.CTkButton(self.root, text="🟩 Revision Mode", width=85, height=10,
                                                font=(BUTTON_FONT, 9), command=self.set_mode_revision)
-        self.mode_revision_btn.place(x=740, y=40)
+        self.mode_revision_btn.place(x=740, y=40) #set to negative to hide
 
+        # Create preview dropdown options
+        pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
+        self.revision_dropdown_map = {f"{k} — {', '.join(v['examples'])}": k for k, v in REVISION_PATTERNS.items()}
+
+        self.revision_pattern_var = StringVar(value=pattern_options[-1])  # Default: Fuzzy Search
+        self.revision_pattern_menu = ctk.CTkOptionMenu(
+            self.root,
+            font=("Verdana", 8),
+            values=pattern_options,
+            variable=self.revision_pattern_var,
+            width=200,
+            height=18,
+            fg_color="#5A6C89",  # Main fill
+            button_color="#5A6C89",  # Button (caret) background
+            text_color="white"  # Text color (works in dark mode)
+        )
+
+        self.revision_pattern_menu.place(x=740, y=65)  # Adjust as needed
+        create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
 
         # Zoom Slider
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
@@ -488,12 +507,19 @@ class XtractorGUI:
         final_output_path = multiprocessing.Manager().Value("s", "")
 
         # Start extraction in a new Process
+        # Get selected revision pattern key from dropdown
+        selected_pattern_display = self.revision_pattern_var.get()
+        selected_pattern_key = self.revision_dropdown_map[selected_pattern_display]
+        selected_revision_regex = REVISION_PATTERNS[selected_pattern_key]["pattern"]
+
         extractor = TextExtractor(
             pdf_folder=self.pdf_folder,
             output_excel_path=self.output_excel_path,
             areas=self.pdf_viewer.areas,
             ocr_settings=self.ocr_settings,
-            include_subfolders=self.include_subfolders)
+            include_subfolders=self.include_subfolders,
+            revision_regex=selected_revision_regex
+        )
 
         # ✅ Pass the revision area from the viewer to the extractor
         extractor.revision_area = self.pdf_viewer.revision_area

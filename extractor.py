@@ -16,99 +16,17 @@ from utils import adjust_coordinates_for_rotation, find_tessdata
 
 
 # Define patterns
-REVISION_REGEX = re.compile(r"^(?:[paPA]?0?\d{1,2}|[A-Z])$", re.IGNORECASE)
-DATE_REGEX = re.compile(r"""
+REVISION_REGEX = re.compile(r"^[A-Z]{1,2}\d{1,2}[a-zA-Z]?$", re.IGNORECASE)
+DATE_REGEX = re.compile(r"""12
     (?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}) |               # 01/01/24 or 1-1-2025
     (?:\d{1,2}\s*[-]?\s*[A-Za-z]{3,9}\s*[-]?\s*\d{2,4})  # 3-Apr-2025 or 3 April 25
 """, re.VERBOSE)
 DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission"]
 
-def detect_column_indices(sample_rows, max_rows=3):
-    col_scores = {}
-
-    for row in sample_rows[:max_rows]:
-        for col_idx, cell in enumerate(row):
-            text = str(cell).strip().lower()
-            if not text:
-                continue
-            if col_idx not in col_scores:
-                col_scores[col_idx] = {"rev": 0, "date": 0, "desc": 0}
-
-            if REVISION_REGEX.fullmatch(text.upper()):
-                col_scores[col_idx]["rev"] += 1
-            elif DATE_REGEX.search(text):
-                col_scores[col_idx]["date"] += 1
-            elif any(kw in text for kw in DESC_KEYWORDS):
-                col_scores[col_idx]["desc"] += 1
-
-    rev_idx = max(col_scores.items(), key=lambda x: x[1]["rev"], default=(None, {}))[0]
-    desc_idx = max(col_scores.items(), key=lambda x: x[1]["desc"], default=(None, {}))[0]
-    date_idx = max(col_scores.items(), key=lambda x: x[1]["date"], default=(None, {}))[0]
-
-    print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
-    return rev_idx, desc_idx, date_idx
-
-def parse_revision_row(row, rev_idx, desc_idx, date_idx):
-    rev = row[rev_idx].strip() if rev_idx is not None and rev_idx < len(row) else None
-    desc = row[desc_idx].strip() if desc_idx is not None and desc_idx < len(row) else None
-    date = row[date_idx].strip() if date_idx is not None and date_idx < len(row) else None
-
-    # Validate formats
-    if rev and not REVISION_REGEX.fullmatch(rev.upper()):
-        rev = None
-    if date and not DATE_REGEX.search(date):
-        date = None
-
-    return rev, desc, date
-
-def extract_revision_history_from_page_obj(page, revision_coordinates):
-    try:
-
-        if not revision_coordinates or len(revision_coordinates) != 4:
-            return []
-
-        # Skip if area is too small or outside page
-        clip_rect = fitz.Rect(revision_coordinates)
-        if clip_rect.is_empty or clip_rect.get_area() < 100:  # Skip tiny boxes
-            print(f"⚠️ Revision area too small or empty, skipping.")
-            return []
-
-        tables = page.find_tables(clip=clip_rect)
-        print(f"📋 Running revision extraction")
-        if not tables or not tables.tables:
-            print("❌ No tables found.")
-            return []
-
-        table = tables.tables[0]
-        data = table.extract()
-        if not data or len(data) < 2:
-            print("❌ Not enough rows to detect header or parse data.")
-            return []
-
-        data = data[::-1]
-        print("📋 Table Detected:")
-        for i, row in enumerate(data):
-            print(f"🔹 Row {i}: {row}")
-
-        rev_idx, desc_idx, date_idx = detect_column_indices(data[1:])
-        extracted = []
-        non_empty_rows = (row for row in data if any(row))
-        for row in non_empty_rows:
-            rev, desc, date = parse_revision_row(row, rev_idx, desc_idx, date_idx)
-            if rev and desc and date:
-                print(f"✅ Parsed → {rev} | {desc} | {date}")
-                extracted.append(f"{rev} | {desc} | {date}")
-            else:
-                print(f"⛔ Incomplete fields → Skipped")
-
-        return extracted
-    except Exception as e:
-        print(f"❌ Error during revision extraction: {e}")
-        return []
 
 
 class TextExtractor:
-    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders):
+    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders, revision_regex=None):
         self.header_column_map = None
         self.final_output_path = None
         self.pdf_folder = pdf_folder
@@ -116,6 +34,7 @@ class TextExtractor:
         self.areas = areas
         self.ocr_settings = ocr_settings
         self.include_subfolders = include_subfolders
+        self.revision_regex = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX
         self.tessdata_folder = find_tessdata() if ocr_settings["enable_ocr"] != "Off" else None
 
         # Initialize headers with fixed metadata columns
@@ -159,6 +78,89 @@ class TextExtractor:
         # Revision Area
         self.revision_area = None  # Will be set externally if needed
         self.revision_data_mapping = {}  # (filename, page_number) → list of revision strings
+
+    def detect_column_indices(self, sample_rows, max_rows=3):
+        col_scores = {}
+
+        for row in sample_rows[:max_rows]:
+            for col_idx, cell in enumerate(row):
+                text = str(cell).strip().lower()
+                if not text:
+                    continue
+                if col_idx not in col_scores:
+                    col_scores[col_idx] = {"rev": 0, "date": 0, "desc": 0}
+
+                if self.revision_regex.fullmatch(text.upper()):
+                    col_scores[col_idx]["rev"] += 1
+                elif DATE_REGEX.search(text):
+                    col_scores[col_idx]["date"] += 1
+                elif any(kw in text for kw in DESC_KEYWORDS):
+                    col_scores[col_idx]["desc"] += 1
+
+        rev_idx = max(col_scores.items(), key=lambda x: x[1]["rev"], default=(None, {}))[0]
+        desc_idx = max(col_scores.items(), key=lambda x: x[1]["desc"], default=(None, {}))[0]
+        date_idx = max(col_scores.items(), key=lambda x: x[1]["date"], default=(None, {}))[0]
+
+        print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
+        return rev_idx, desc_idx, date_idx
+
+    def parse_revision_row(self, row, rev_idx, desc_idx, date_idx):
+        rev = row[rev_idx].strip() if rev_idx is not None and rev_idx < len(row) else None
+        desc = row[desc_idx].strip() if desc_idx is not None and desc_idx < len(row) else None
+        date = row[date_idx].strip() if date_idx is not None and date_idx < len(row) else None
+
+        # Validate formats
+        if rev and not self.revision_regex.fullmatch(rev.upper()):
+            rev = None
+        if date and not DATE_REGEX.search(date):
+            date = None
+
+        return rev, desc, date
+
+    def extract_revision_history_from_page_obj(self, page, revision_coordinates):
+        try:
+
+            if not revision_coordinates or len(revision_coordinates) != 4:
+                return []
+
+            # Skip if area is too small or outside page
+            clip_rect = fitz.Rect(revision_coordinates)
+            if clip_rect.is_empty or clip_rect.get_area() < 100:  # Skip tiny boxes
+                print(f"⚠️ Revision area too small or empty, skipping.")
+                return []
+
+            tables = page.find_tables(clip=clip_rect)
+            print(f"📋 Running revision extraction")
+            if not tables or not tables.tables:
+                print("❌ No tables found.")
+                return []
+
+            table = tables.tables[0]
+            data = table.extract()
+            if not data or len(data) < 2:
+                print("❌ Not enough rows to detect header or parse data.")
+                return []
+
+            data = data[::-1]
+            print("📋 Table Detected:")
+            for i, row in enumerate(data):
+                print(f"🔹 Row {i}: {row}")
+
+            rev_idx, desc_idx, date_idx = self.detect_column_indices(data[1:])
+            extracted = []
+            non_empty_rows = (row for row in data if any(row))
+            for row in non_empty_rows:
+                rev, desc, date = self.parse_revision_row(row, rev_idx, desc_idx, date_idx)
+                if rev and desc and date:
+                    print(f"✅ Parsed → {rev} | {desc} | {date}")
+                    extracted.append(f"{rev} | {desc} | {date}")
+                else:
+                    print(f"⛔ Incomplete fields → Skipped")
+
+            return extracted
+        except Exception as e:
+            print(f"❌ Error during revision extraction: {e}")
+            return []
 
     def clean_text(self, text):
         """Cleans text by replacing newlines, stripping, and removing illegal characters."""
@@ -233,7 +235,8 @@ class TextExtractor:
 
                     revision_data = []
                     if self.revision_area:
-                        revision_data = extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
+                        revision_data = self.extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
+
 
                     # Append all relevant data for this page as a row in results
                     result_rows.append(
@@ -359,7 +362,7 @@ class TextExtractor:
                     len(self.revision_area["coordinates"]) == 4
             ):
 
-                revision_data = extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
+                revision_data = self.extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
                 self.revision_data_mapping[(filename, page_number + 1)] = revision_data
             else:
                 print(f"⚠️ Invalid revision area format for {filename} Page {page_number + 1}: {self.revision_area}")
