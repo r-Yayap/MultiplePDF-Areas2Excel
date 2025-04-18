@@ -1,9 +1,10 @@
+#!/usr/bin/env python3
 import os
 import pandas as pd
-from tkinter import Tk, filedialog
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
+from tkinter import Tk, filedialog
 
 
 def list_files_in_directory(selected_folder):
@@ -15,82 +16,72 @@ def list_files_in_directory(selected_folder):
             folder_name = os.path.dirname(relative_path)
             filename, file_format = os.path.splitext(file)
 
-            # Get file size and last modified date
-            file_size = os.path.getsize(full_path)  # Size in bytes
-            last_modified_timestamp = os.path.getmtime(full_path)
-            last_modified_date = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+            # Stat + timestamp conversion all in one try/except
+            try:
+                st = os.stat(full_path)
+                size = st.st_size
+                mtime = st.st_mtime
+                last_modified = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+            except OSError as e:
+                print(f"Skipping {full_path!r}: {e}")
+                continue
 
             file_list.append({
                 'Folder': folder_name,
+                'Filename_xtn': filename + file_format,
                 'Filename': filename,
-                'Full Path': full_path,  # Include the full path for hyperlink
-                'Format': file_format[1:],
-                'Size (Bytes)': file_size,
-                'Last Modified': last_modified_date
+                'Full Path': full_path,
+                'Format': file_format.lstrip('.'),
+                'Size (Bytes)': size,
+                'Last Modified': last_modified
             })
-
     return file_list
 
 
 def create_excel_file(file_list, output_excel_path):
-    # Create a DataFrame from the file list
+    # Build DataFrame and drop full path column
     df = pd.DataFrame(file_list)
-
-    # Remove 'Full Path' before saving, since we will handle it separately for hyperlinks
     df_without_path = df.drop(columns=['Full Path'])
 
-    # Save the DataFrame to an Excel file
+    # Save to Excel and add hyperlinks
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
         df_without_path.to_excel(writer, index=False, sheet_name='Files')
         workbook = writer.book
         worksheet = writer.sheets['Files']
 
-        # Add hyperlinks to the 'Filename' column
-        for row_idx, file_info in enumerate(file_list, start=2):  # Start from row 2 to skip the header
-            # Get the filename and its full path
-            filename = file_info['Filename']
-            full_path = file_info['Full Path']
-
-            # Create the hyperlink in the 'Filename' column (assumed to be column B)
-            col_letter = get_column_letter(df_without_path.columns.get_loc('Filename') + 1)
-            cell = worksheet[f"{col_letter}{row_idx}"]
-            cell.hyperlink = full_path  # Set the hyperlink
-            cell.style = "Hyperlink"  # Apply hyperlink style
+        # Hyperlink only on the 'Filename' column
+        fname_col = df_without_path.columns.get_loc('Filename') + 1
+        for row_idx, info in enumerate(file_list, start=2):
+            cell = worksheet[f"{get_column_letter(fname_col)}{row_idx}"]
+            cell.hyperlink = info['Full Path']
+            cell.style = "Hyperlink"
 
     print(f"Excel file with hyperlinks created at {output_excel_path}")
 
 
 def select_input_folder():
-    root = Tk()
-    root.withdraw()  # Hide the main window
-
-    input_folder = filedialog.askdirectory(title="Select Input Folder")
-    return input_folder
+    root = Tk(); root.withdraw()
+    return filedialog.askdirectory(title="Select Input Folder")
 
 
 def generate_file_list_and_excel():
     input_folder = select_input_folder()
+    if not input_folder:
+        return
+    files = list_files_in_directory(input_folder)
 
-    if input_folder:  # Check if folder is selected
-        files = list_files_in_directory(input_folder)
+    output_file, _ = filedialog.asksaveasfilename(
+        title="Save As", defaultextension=".xlsx",
+        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+    ), None
+    if not output_file:
+        return
+    if not output_file.lower().endswith('.xlsx'):
+        output_file += '.xlsx'
 
-        # Prompt the user for the output file name
-        output_file_name = filedialog.asksaveasfilename(
-            title="Save As",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-            defaultextension=".xlsx"
-        )
-
-        if output_file_name:
-            # Ensure the file has the correct extension
-            if not output_file_name.lower().endswith('.xlsx'):
-                output_file_name += '.xlsx'
-
-            # Construct the output_excel_path using output_file_name directly
-            output_excel_path = os.path.join(os.path.dirname(output_file_name), output_file_name)
-            create_excel_file(files, output_excel_path)
-            print(f"Excel file created at {output_excel_path}")
+    create_excel_file(files, output_file)
+    print(f"Excel file created at {output_file}")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     generate_file_list_and_excel()

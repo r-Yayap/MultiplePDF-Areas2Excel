@@ -1,3 +1,4 @@
+#sc_bim_file_checker.py
 import os
 import pandas as pd
 from tkinter import Tk, filedialog, messagebox

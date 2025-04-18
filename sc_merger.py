@@ -1140,7 +1140,7 @@ class MergerGUI:
         self.filename_enabled = tk.BooleanVar(value=False)
         self.filename_column = tk.StringVar()
 
-        ctk.CTkLabel(parent_frame, text="Filename Checker", font=("Helvetica", 12, "bold")).grid(
+        ctk.CTkLabel(parent_frame, text="Filename vs Reference Number", font=("Helvetica", 12, "bold")).grid(
             row=0, column=0, columnspan=2, padx=5, pady=(5, 2), sticky="w")
 
         self.filename_check = ctk.CTkCheckBox(

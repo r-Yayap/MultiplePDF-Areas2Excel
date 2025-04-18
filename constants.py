@@ -1,6 +1,6 @@
 # constants.py
 
-VERSION_TEXT = "Version 0.240915-02" #02
+VERSION_TEXT = "Version 0.240915-03"
 
 # Application settings
 INITIAL_WIDTH = 965
@@ -28,13 +28,14 @@ DPI_OPTIONS = {
 
 from sc_pdf_dwg_list import pdf_dwg_counter
 from sc_dir_list import generate_file_list_and_excel
-from sc_merger import MergerGUI
 from sc_bulk_rename import bulk_rename_gui
+import sc_bim_file_checker
 
 OPTION_ACTIONS = {
     "PDF/DWG List": pdf_dwg_counter,
     "Directory List": generate_file_list_and_excel,
-    "Bulk Renamer": bulk_rename_gui
+    "Bulk Renamer": bulk_rename_gui,
+    "BIM File Checker": sc_bim_file_checker.main,
 }
 
 

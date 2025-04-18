@@ -18,10 +18,7 @@ from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
 from utils import REVISION_PATTERNS
 
-import sc_bulk_rename
-import sc_dir_list
-import sc_merger
-import sc_pdf_dwg_list
+
 
 
 class XtractorGUI:
@@ -198,11 +195,11 @@ class XtractorGUI:
         # Mode Toggle Buttons
         self.mode_area_btn = ctk.CTkButton(self.root, text="🟥 Area Mode", width=85, height=10,
                                            font=(BUTTON_FONT, 9), command=self.set_mode_area)
-        self.mode_area_btn.place(x=740, y=15) #set to negative to hide
+        self.mode_area_btn.place(x=-740, y=-15) #set to negative to hide
 
         self.mode_revision_btn = ctk.CTkButton(self.root, text="🟩 Revision Mode", width=85, height=10,
                                                font=(BUTTON_FONT, 9), command=self.set_mode_revision)
-        self.mode_revision_btn.place(x=740, y=40) #set to negative to hide
+        self.mode_revision_btn.place(x=-740, y=-40) #set to negative to hide
 
         # Create preview dropdown options
         pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
@@ -221,7 +218,7 @@ class XtractorGUI:
             text_color="white"  # Text color (works in dark mode)
         )
 
-        self.revision_pattern_menu.place(x=740, y=65)  # Adjust as needed
+        self.revision_pattern_menu.place(x=-740, y=-65)  # Adjust as needed
         create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
 
         # Zoom Slider
