@@ -696,27 +696,50 @@ class ExcelMerger:
         return aligned_tokens1[::-1], aligned_tokens2[::-1], flags[::-1]
 
     @staticmethod
-    def create_rich_text(original_text, aligned_tokens, flags):
+    def create_rich_text(original_text, aligned_tokens, aligned_tokens_other, flags):
         rich_text = CellRichText()
         last_index = 0
-        for (token, idx), flag in zip(aligned_tokens, flags):
+
+        for ((token, idx), (token_other, _), flag) in zip(aligned_tokens, aligned_tokens_other, flags):
             if token is None:
                 continue
+
             if idx > last_index:
                 rich_text.append(original_text[last_index:idx])
-            inline_font = InlineFont(rFont="Calibri", sz=11)
+
             if flag == "EXACT":
-                pass
+                inline_font = InlineFont(rFont="Calibri", sz=11)
+                rich_text.append(TextBlock(inline_font, token))
+
             elif flag == "CASE_ONLY":
-                inline_font.color = "808080"
+                inline_font = InlineFont(rFont="Calibri", sz=11, color="808080")
+                rich_text.append(TextBlock(inline_font, token))
+
             elif flag == "CHAR_LEVEL":
-                inline_font.color = "FFA500"
+                # Here, character-level highlighting
+                for c1, c2 in zip(token, token_other or ""):
+                    inline_font = InlineFont(rFont="Calibri", sz=11)
+                    if c1 == c2:
+                        inline_font.color = "000000"  # matching char (default black)
+                    else:
+                        inline_font.color = "FFA500"  # mismatched char (orange)
+                    rich_text.append(TextBlock(inline_font, c1))
+
+                # If token is longer than the compared token
+                if len(token) > len(token_other or ""):
+                    for c1 in token[len(token_other or ""):]:
+                        inline_font = InlineFont(rFont="Calibri", sz=11, color="FFA500")
+                        rich_text.append(TextBlock(inline_font, c1))
+
             elif flag in ["MISSING_1", "MISSING_2"]:
-                inline_font.color = "FF0000"
-            rich_text.append(TextBlock(inline_font, token))
+                inline_font = InlineFont(rFont="Calibri", sz=11, color="FF0000")
+                rich_text.append(TextBlock(inline_font, token))
+
             last_index = idx + len(token)
+
         if last_index < len(original_text):
             rich_text.append(original_text[last_index:])
+
         return rich_text
 
     @staticmethod
@@ -870,8 +893,8 @@ class ExcelMerger:
             tokens1 = ExcelMerger.tokenize_with_indices(baseline_text)
             tokens2 = ExcelMerger.tokenize_with_indices(other_text)
             aligned_tokens1, aligned_tokens2, flags = ExcelMerger.dp_align_tokens(tokens1, tokens2)
-            rich_text1 = ExcelMerger.create_rich_text(baseline_text, aligned_tokens1, flags)
-            rich_text2 = ExcelMerger.create_rich_text(other_text, aligned_tokens2, flags)
+            rich_text1 = ExcelMerger.create_rich_text(baseline_text, aligned_tokens1, aligned_tokens2, flags)
+            rich_text2 = ExcelMerger.create_rich_text(other_text, aligned_tokens2, aligned_tokens1, flags)
 
             # ✅ Ensure Comments_1 updates persist in the Excel file
             if comments_col_idx:
