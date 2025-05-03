@@ -626,7 +626,8 @@ class ExcelMerger:
     @staticmethod
     def tokenize_with_indices(text):
         tokens = []
-        for match in re.finditer(r'[^\s]+', text):
+        # Updated regex to separate underscores along with punctuation (hyphen, en dash, em dash)
+        for match in re.finditer(r'[A-Za-z0-9]+|[_–—-]|[^\w\s]', text, re.UNICODE):
             tokens.append((match.group(), match.start()))
         return tokens
 
