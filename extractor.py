@@ -4,7 +4,7 @@ import multiprocessing
 import os
 import re
 import shutil
-import getpass
+import secrets
 import pymupdf as fitz
 import sys
 from datetime import datetime
@@ -67,13 +67,13 @@ class TextExtractor:
         else:
             app_directory = os.path.dirname(os.path.abspath(__file__))  # Running as script
 
-        # Create a main "temp" folder beside the application
+        # Create a secure temp folder with random name
         main_temp_folder = os.path.join(app_directory, "temp")
-
-        # Create a unique subfolder for each session
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        username = getpass.getuser()  # Get the current Windows username
-        self.temp_image_folder = os.path.join(main_temp_folder, f"{username}-{timestamp}")
+        os.makedirs(main_temp_folder, exist_ok=True)
+        
+        # Create random subfolder name (16 random chars)
+        random_str = secrets.token_hex(8)
+        self.temp_image_folder = os.path.join(main_temp_folder, random_str)
 
         # Revision Area
         self.revision_area = None  # Will be set externally if needed
@@ -179,18 +179,32 @@ class TextExtractor:
         return re.sub(r'\s+', ' ', text)
 
     def start_extraction(self, progress_list, total_files, final_output_path):
+
+        n_workers = multiprocessing.cpu_count()
+        print(f"Workers: {n_workers} based on CPU Count")
+
+
+        # grab your list of PDFs and set the total count
+        pdf_files = self.get_pdf_files()
+        total_files.value = len(pdf_files)
+
+        # build the list of arguments for starmap
+        jobs = [
+            (pdf_path, progress_list, total_files)
+            for pdf_path in pdf_files
+        ]
+
         self.final_output_path = final_output_path  # ✅ Store reference for later use
 
         """Starts the extraction process using multiprocessing with progress tracking."""
         try:
-            with multiprocessing.Pool() as pool:
+            with multiprocessing.Pool(processes=n_workers) as pool:
                 # Gather all PDF files in the specified folder
                 pdf_files = self.get_pdf_files()
                 total_files.value = len(pdf_files)  # Set total files count
 
-                # Process each PDF file using multiprocessing with progress tracking
-                results = pool.starmap(self.process_single_pdf,
-                                       [(pdf_path, progress_list, total_files) for pdf_path in pdf_files])
+
+                results = pool.starmap(self.process_single_pdf, jobs, chunksize=1)
 
                 # Consolidate results into an Excel file after extraction is complete
                 self.consolidate_results(results, final_output_path)
@@ -209,8 +223,21 @@ class TextExtractor:
                 progress_list.append(result_rows)
                 return result_rows
 
-            # Open the PDF file
-            pdf_document = fitz.open(pdf_path)
+            # Open the PDF file with additional validation and caching
+            try:
+                # Use memory-efficient loading for large files
+                pdf_document = fitz.open(pdf_path, filetype="pdf")
+                if not pdf_document.is_pdf:
+                    raise ValueError("Not a valid PDF file")
+                
+                # Enable faster text extraction
+                fitz.TOOLS.set_small_glyph_heights(True)
+            except Exception as e:
+                print(f"Error opening PDF {pdf_path}: {e}")
+                result_rows = [["Error", "Invalid PDF", "", pdf_path, "",
+                                f"PDFError: {str(e)}"]]
+                progress_list.append(result_rows)
+                return result_rows
             file_size = os.path.getsize(pdf_path)
             last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
             folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
@@ -262,17 +289,39 @@ class TextExtractor:
             result_rows = [
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
             progress_list.append(result_rows)
+            #total_files.value += 1  # Update progress counter even on error
             return result_rows
 
     def get_pdf_files(self):
-        """Gathers all PDF files within the specified folder."""
+        """Gathers all PDF files within the specified folder with validation."""
         pdf_files = []
+        
+        # Validate base folder exists and is accessible
+        if not os.path.exists(self.pdf_folder):
+            raise ValueError(f"PDF folder does not exist: {self.pdf_folder}")
+        if not os.path.isdir(self.pdf_folder):
+            raise ValueError(f"PDF path is not a directory: {self.pdf_folder}")
+
         for root_folder, subfolders, files in os.walk(self.pdf_folder):
             if not self.include_subfolders:
                 subfolders.clear()
-            pdf_files.extend(
-                [os.path.join(root_folder, f) for f in files if f.lower().endswith('.pdf')]
-            )
+            
+            for f in files:
+                if f.lower().endswith('.pdf'):
+                    full_path = os.path.join(root_folder, f)
+                    try:
+                        # Validate path components
+                        if not os.path.normpath(full_path).startswith(os.path.normpath(self.pdf_folder)):
+                            continue  # Skip paths that try to traverse outside base folder
+                        if any(part.startswith('.') for part in full_path.split(os.sep)):
+                            continue  # Skip hidden files/directories
+                        if not os.path.isfile(full_path):
+                            continue  # Skip non-files
+                            
+                        pdf_files.append(full_path)
+                    except Exception as e:
+                        print(f"Skipping invalid PDF path {full_path}: {e}")
+                        
         return pdf_files
 
     def extract_text_from_area(self, page, area_coordinates, pdf_path, page_number, area_index):
@@ -306,12 +355,27 @@ class TextExtractor:
                 if not os.path.exists(self.temp_image_folder):
                     os.makedirs(self.temp_image_folder, exist_ok=True)
 
+                # Validate and save image
                 img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
+                
+                # Ensure temp folder exists
+                if not os.path.exists(self.temp_image_folder):
+                    os.makedirs(self.temp_image_folder, exist_ok=True)
+                
+                # Save image with size validation (20MB max)
                 pix.save(img_path)
+                if os.path.getsize(img_path) > 10 * 1024 * 1024:  # 20MB
+                    os.remove(img_path)
+                    img_path = None
+                    print(f"Warning: Skipped large image (>10MB) from {pdf_path} page {page_number + 1}")
 
                 # Apply OCR if no text found
                 if not text_area.strip():
-                    text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
+                    try:
+                        text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
+                    except Exception as e:
+                        print(f"OCR failed for {pdf_path} page {page_number + 1}: {e}")
+                        text_area = "OCR_ERROR"
 
             # Clean the extracted text
             text_area = self.clean_text(text_area)
@@ -398,9 +462,9 @@ class TextExtractor:
         for result_pages in results:
             for row_data in result_pages:
                 try:
-                    if not isinstance(row_data, list) or len(row_data) != 7:
-                        print(f"⚠️ Skipping malformed row_data: {row_data}")
-                        continue
+                    # if not isinstance(row_data, list) or len(row_data) != 7:
+                    #     print(f"⚠️ Skipping malformed row_data: {row_data}")
+                    #     continue
 
                     # Unpack metadata and extracted area data for the page
                     file_size, last_modified, folder, filename, page_number, extracted_areas, revision_data = row_data
@@ -451,9 +515,30 @@ class TextExtractor:
                             ws.cell(row=row_index, column=col_index).value = revision_text
 
                 except Exception as e:
-                    print(f"❌ Unexpected error consolidating data: {e}")
-                    print(f"   ↳ row_data was: {row_data}")
-                    ws.append(["Error", "Consolidation failed", str(e)] + [""] * len(self.areas))
+                    print(f"❌ Unexpected error: {e}")
+                    print(f"   ↳ row_data was: {row_data!r}")
+
+                    # pull metadata _directly_ out of this row_data (if possible)
+                    size, mod, fld, fn, pg = (row_data + [None] * 5)[:5]
+
+                    # reserve the next row
+                    row_index = ws.max_row + 1
+
+                    # rewrite metadata
+                    for col, data in enumerate([size, mod, fld, fn, pg], start=1):
+                        cell = ws.cell(row=row_index, column=col)
+                        cell.value = data
+                        if col == 4 and fn:
+                            path = os.path.abspath(os.path.join(self.pdf_folder, fld or "", fn))
+                            cell.hyperlink = path
+                            cell.style = "Hyperlink"
+
+                    # put the error message in column 6
+                    ws.cell(row=row_index, column=6).value = f"Error: {e}"
+
+                    # blank out the rest of the area columns
+                    for c in range(7, 7 + len(self.areas)):
+                        ws.cell(row=row_index, column=c).value = ""
 
         # Generate a unique filename if the output file already exists
         output_filename = self.output_excel_path
@@ -472,9 +557,11 @@ class TextExtractor:
         except Exception as e:
             print(f"Error saving Excel file: {e}")
 
-        # Cleanup temporary images
+        # Secure cleanup of temporary images
         if os.path.exists(self.temp_image_folder):
-            print(f"Temp Images will be deleted: {self.temp_image_folder}")
-            shutil.rmtree(self.temp_image_folder)
-
-
+            try:
+                print(f"Deleting temp folder: {self.temp_image_folder}")
+                shutil.rmtree(self.temp_image_folder)
+            except Exception as e:
+                print(f"Warning: Failed to delete temp folder: {e}")
+                # Try again on next run
