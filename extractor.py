@@ -7,6 +7,8 @@ import shutil
 import secrets
 import pymupdf as fitz
 import sys
+import csv
+import tempfile
 from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
@@ -178,7 +180,39 @@ class TextExtractor:
         # Step 4: Remove extra spaces between words
         return re.sub(r'\s+', ' ', text)
 
-    def start_extraction(self, progress_list, total_files, final_output_path):
+    def stream_to_excel(self, csv_path, final_output_path, max_revisions):
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet()
+
+        base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
+        area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
+        revision_headers = [f"Rev{i + 1}" for i in range(max_revisions)]
+        headers = base_headers + area_headers + revision_headers
+        ws.append(headers)
+
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader)  # skip header row
+
+            for row in reader:
+                base = row[:5]
+                areas = row[5:-1]
+                revisions = eval(row[-1]) if row[-1].startswith("[") else []
+                row_data = base + areas + revisions + [""] * (max_revisions - len(revisions))
+                ws.append(row_data)
+
+        if os.path.exists(self.output_excel_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name, file_ext = os.path.splitext(self.output_excel_path)
+            output_path = f"{file_name}_{timestamp}{file_ext}"
+        else:
+            output_path = self.output_excel_path
+
+        wb.save(output_path)
+        final_output_path.value = output_path
+        print(f"Consolidated results saved to {output_path}")
+
+    def start_extraction(self, progress_counter, total_files, final_output_path):
 
         n_workers = multiprocessing.cpu_count()
         print(f"Workers: {n_workers} based on CPU Count")
@@ -190,7 +224,7 @@ class TextExtractor:
 
         # build the list of arguments for starmap
         jobs = [
-            (pdf_path, progress_list, total_files)
+            (pdf_path, progress_counter, total_files)
             for pdf_path in pdf_files
         ]
 
@@ -198,21 +232,38 @@ class TextExtractor:
 
         """Starts the extraction process using multiprocessing with progress tracking."""
         try:
-            with multiprocessing.Pool(processes=n_workers) as pool:
-                # Gather all PDF files in the specified folder
-                pdf_files = self.get_pdf_files()
-                total_files.value = len(pdf_files)  # Set total files count
+            # Step 1: Create temporary CSV file
+            temp_csv_path = os.path.join(self.temp_image_folder, "streamed_output.csv")
+            os.makedirs(self.temp_image_folder, exist_ok=True)
+            csv_file = open(temp_csv_path, "w", newline="", encoding="utf-8")
+            csv_writer = csv.writer(csv_file)
+
+            # Step 2: Write header row (preliminary, will add revision columns later)
+            base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
+            area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
+            csv_writer.writerow(base_headers + area_headers + ["__revisions__"])
+
+            max_revisions = 0  # Track max revision count across all pages
+
+            # Step 3: Process files and stream to CSV
+            for args in jobs:
+                result = self.process_single_pdf(*args)
+                for row in result:
+                    file_size, mod_date, folder, filename, page_no, areas, revisions = row
+                    text_values = [text for text, _ in areas]
+                    max_revisions = max(max_revisions, len(revisions))
+                    csv_writer.writerow([file_size, mod_date, folder, filename, page_no] + text_values + [revisions])
+
+            csv_file.close()
 
 
-                results = pool.starmap(self.process_single_pdf, jobs, chunksize=1)
-
-                # Consolidate results into an Excel file after extraction is complete
-                self.consolidate_results(results, final_output_path)
         except Exception as e:
             print(f"Error during extraction: {e}")
             return None
 
-    def process_single_pdf(self, pdf_path, progress_list, total_files):
+        self.stream_to_excel(temp_csv_path, final_output_path, max_revisions)
+
+    def process_single_pdf(self, pdf_path, progress_counter, total_files):
         """Processes a single PDF file, extracting text and images as necessary."""
         try:
             # Ensure the file exists and is not empty
@@ -220,7 +271,9 @@ class TextExtractor:
                 print(f"Skipping missing or empty file: {pdf_path}")
                 result_rows = [["Error", "File not found or empty", "", pdf_path, "",
                                 "FileNotFoundError: File not found or empty"]]
-                progress_list.append(result_rows)
+                with progress_counter.get_lock():
+                    progress_counter.value += 1
+
                 return result_rows
 
             # Open the PDF file with additional validation and caching
@@ -236,7 +289,9 @@ class TextExtractor:
                 print(f"Error opening PDF {pdf_path}: {e}")
                 result_rows = [["Error", "Invalid PDF", "", pdf_path, "",
                                 f"PDFError: {str(e)}"]]
-                progress_list.append(result_rows)
+                with progress_counter.get_lock():
+                    progress_counter.value += 1
+
                 return result_rows
             file_size = os.path.getsize(pdf_path)
             last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
@@ -280,7 +335,9 @@ class TextExtractor:
             pdf_document.close()
 
             # Add each page to results
-            progress_list.append(result_rows)
+            with progress_counter.get_lock():
+                progress_counter.value += 1
+
             return result_rows
 
         except Exception as e:
@@ -288,7 +345,9 @@ class TextExtractor:
             # Add an error placeholder for this file in results
             result_rows = [
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
-            progress_list.append(result_rows)
+            with progress_counter.get_lock():
+                progress_counter.value += 1
+
             #total_files.value += 1  # Update progress counter even on error
             return result_rows
 
@@ -533,7 +592,7 @@ class TextExtractor:
                             cell.hyperlink = path
                             cell.style = "Hyperlink"
 
-                    # put the error message in column 6
+                    # put the error message in column6
                     ws.cell(row=row_index, column=6).value = f"Error: {e}"
 
                     # blank out the rest of the area columns
