@@ -26,13 +26,13 @@ DPI_OPTIONS = {
     "1200": 1200
 }
 
-from sc_pdf_dwg_list import pdf_dwg_counter
-from sc_dir_list import generate_file_list_and_excel
-from sc_bulk_rename import bulk_rename_gui
-import sc_bim_file_checker
+from standalone.sc_pdf_dwg_list import launch_pdf_dwg_gui
+from standalone.sc_dir_list import generate_file_list_and_excel
+from standalone.sc_bulk_rename import bulk_rename_gui
+from standalone import sc_bim_file_checker
 
 OPTION_ACTIONS = {
-    "PDF/DWG List": pdf_dwg_counter,
+    "PDF/DWG List": launch_pdf_dwg_gui,
     "Directory List": generate_file_list_and_excel,
     "Bulk Renamer": bulk_rename_gui,
     "BIM File Checker": sc_bim_file_checker.main,

@@ -123,7 +123,6 @@ class XtractorGUI:
             item_id = self.areas_tree.insert("", "end", values=(title, *coordinates))
             self.treeview_item_ids[item_id] = index
 
-
     def open_sample_pdf(self):
         # Opens a file dialog to select a PDF file, then displays it in the PDFViewer
         pdf_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
@@ -195,11 +194,11 @@ class XtractorGUI:
         # Mode Toggle Buttons
         self.mode_area_btn = ctk.CTkButton(self.root, text="🟥 Area Mode", width=85, height=10,
                                            font=(BUTTON_FONT, 9), command=self.set_mode_area)
-        self.mode_area_btn.place(x=-740, y=-15) #set to negative to hide
+        self.mode_area_btn.place(x=740, y=15) #set to negative to hide
 
         self.mode_revision_btn = ctk.CTkButton(self.root, text="🟩 Revision Mode", width=85, height=10,
                                                font=(BUTTON_FONT, 9), command=self.set_mode_revision)
-        self.mode_revision_btn.place(x=-740, y=-40) #set to negative to hide
+        self.mode_revision_btn.place(x=740, y=40) #set to negative to hide
 
         # Create preview dropdown options
         pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
@@ -300,7 +299,7 @@ class XtractorGUI:
 
         # DPI Option Menu
         self.dpi_var = ctk.IntVar(value=150)
-        self.dpi_menu = ctk.CTkOptionMenu(self.root, values=["75", "150", "300", "450", "600"],
+        self.dpi_menu = ctk.CTkOptionMenu(self.root, values=["50","75", "150", "300", "450", "600"],
                                           command=self.dpi_callback, font=("Verdana Bold", 7),
                                           variable=self.dpi_var, width=43, height=14)
         self.dpi_menu.place(x=372, y=30)
@@ -495,13 +494,13 @@ class XtractorGUI:
                                                orientation="horizontal", width=250)
         self.progress_bar.pack(pady=10)
 
-        # Set up Manager for shared data structures
-        manager = multiprocessing.Manager()
-        progress_list = manager.list()  # List to simulate a queue
-        total_files = manager.Value('i', 0)  # Track total files
+        # Set up shared counters (use multiprocessing.Value for direct shared memory access)
+        progress_counter = multiprocessing.Value('i', 0)  # ✅ REAL shared memory
+        total_files = multiprocessing.Value('i', 0)  # ✅ REAL shared memory
 
-        # ✅ Use multiprocessing.Value to store the final output file name
-        final_output_path = multiprocessing.Manager().Value("s", "")
+        # Use manager only for shared strings
+        manager = multiprocessing.Manager()
+        final_output_path = manager.Value("s", "")  # ✅ OK as proxy, we don’t call get_lock on this
 
         # Start extraction in a new Process
         # Get selected revision pattern key from dropdown
@@ -522,28 +521,27 @@ class XtractorGUI:
         extractor.revision_area = self.pdf_viewer.revision_area
 
         extraction_process = multiprocessing.Process(target=extractor.start_extraction,
-                                                     args=(progress_list, total_files, final_output_path))
+                                                     args=(progress_counter, total_files, final_output_path))
         extraction_process.start()
 
         # ✅ Store the reference to fetch the filename later
         self.final_output_path = final_output_path
 
         # Monitor progress
-        self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
+        self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
 
-    def update_progress(self, progress_list, total_files, extraction_process):
+    def update_progress(self, progress_counter, total_files, extraction_process):
         """Updates the progress bar and total files count during extraction."""
 
         if total_files.value > 0:
-            processed_files = len(progress_list)
-            self.total_files_label.configure(text=f"Processed: {processed_files}/{total_files.value}")  # Update label
-
+            processed_files = progress_counter.value
+            self.total_files_label.configure(text=f"Processed: {processed_files}/{total_files.value}")
             current_progress = processed_files / total_files.value
             self.progress_var.set(current_progress)
 
         # Check if the extraction process is alive
         if extraction_process.is_alive():
-            self.root.after(100, self.update_progress, progress_list, total_files, extraction_process)
+            self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
         else:
             # ✅ Ensure the progress bar is complete and close the progress window
             self.progress_var.set(1)

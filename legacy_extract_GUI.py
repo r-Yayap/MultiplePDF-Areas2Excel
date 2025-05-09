@@ -78,10 +78,7 @@ import json
 from tkinter import messagebox, ttk, filedialog
 import customtkinter as ctk
 import pymupdf  as fitz# PyMuPDF
-from pymupdf import EmptyFileError
-from pymupdf import FileNotFoundError as FitzFileNotFoundError
 from openpyxl import Workbook
-from openpyxl.utils.exceptions import IllegalCharacterError
 from openpyxl.styles import Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 from openpyxl.drawing.image import Image as ExcelImage
@@ -90,10 +87,7 @@ from datetime import datetime
 from CTkToolTip import *
 
 # Importing python files
-import sc_pdf_dwg_list as pdl
-import sc_dir_list as dlist
-import sc_bulk_rename as brn
-from appdirs import user_data_dir
+from standalone import sc_bulk_rename as brn, sc_dir_list as dlist, sc_pdf_dwg_list as pdl
 
 # Label to display version
 version_txt = "Version 0.231219-14"
@@ -149,7 +143,7 @@ dpi_options = {
 
 # Define the option menu choices and their corresponding actions
 option_actions = {
-    "PDF/DWG List": pdl.pdf_dwg_counter,
+    #"PDF/DWG List": pdl.pdf_dwg_counter,
     "Directory List": dlist.generate_file_list_and_excel,
     "Bulk Renamer": brn.bulk_rename_gui
 }
