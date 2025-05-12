@@ -9,6 +9,9 @@ import pymupdf as fitz
 import sys
 import csv
 import time
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
@@ -99,7 +102,8 @@ class TextExtractor:
 
         # Revision Area
         self.revision_area = None  # Will be set externally if needed
-        self.revision_data_mapping = {}  # (filename, page_number) → list of revision strings
+        self.unid_counter = 10001
+        self.revision_json_data = {}  # {unid: [ {rev, desc, date}, ... ]}
 
     def detect_column_indices(self, sample_rows, max_rows=3):
         col_scores = {}
@@ -141,18 +145,15 @@ class TextExtractor:
 
     def extract_revision_history_from_page_obj(self, page, revision_coordinates):
         try:
-
             if not revision_coordinates or len(revision_coordinates) != 4:
                 return []
 
-            # Skip if area is too small or outside page
             clip_rect = fitz.Rect(revision_coordinates)
-            if clip_rect.is_empty or clip_rect.get_area() < 100:  # Skip tiny boxes
+            if clip_rect.is_empty or clip_rect.get_area() < 100:
                 print(f"⚠️ Revision area too small or empty, skipping.")
                 return []
 
             tables = page.find_tables(clip=clip_rect)
-            print(f"📋 Running revision extraction")
             if not tables or not tables.tables:
                 print("❌ No tables found.")
                 return []
@@ -164,22 +165,19 @@ class TextExtractor:
                 return []
 
             data = data[::-1]
-            print("📋 Table Detected:")
-            for i, row in enumerate(data):
-                print(f"🔹 Row {i}: {row}")
-
             rev_idx, desc_idx, date_idx = self.detect_column_indices(data[1:])
-            extracted = []
-            non_empty_rows = (row for row in data if any(row))
-            for row in non_empty_rows:
+            extracted_list = []
+
+            for row in data:
+                if not any(row): continue
                 rev, desc, date = self.parse_revision_row(row, rev_idx, desc_idx, date_idx)
                 if rev and desc and date:
-                    print(f"✅ Parsed → {rev} | {desc} | {date}")
-                    extracted.append(f"{rev} | {desc} | {date}")
+                    extracted_list.append({"rev": rev, "desc": desc, "date": date})
                 else:
-                    print(f"⛔ Incomplete fields → Skipped")
+                    print(f"⛔ Skipped incomplete row: {row}")
 
-            return extracted
+            return extracted_list
+
         except Exception as e:
             print(f"❌ Error during revision extraction: {e}")
             return []
@@ -201,17 +199,13 @@ class TextExtractor:
         return re.sub(r'\s+', ' ', text)
 
     def stream_to_excel(self, csv_path, final_output_path, max_revisions):
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-        from openpyxl.utils import get_column_letter
-
         wb = Workbook()
         ws = wb.active
 
         base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
         area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
         revision_headers = [f"Rev{i + 1}" for i in range(max_revisions)]
-        headers = base_headers + area_headers + revision_headers
+        headers = ["UNID"] + base_headers + area_headers + revision_headers
         ws.append(headers)
 
         with open(csv_path, "r", encoding="utf-8") as f:
@@ -219,11 +213,13 @@ class TextExtractor:
             next(reader)  # skip header row
 
             for row in reader:
-                base = row[:5]
-                areas = row[5:-1]
+                unid = row[0]
+                base = row[1:6]
+                areas = row[6:-1]
+
                 revisions = eval(row[-1]) if row[-1].startswith("[") else []
 
-                row_data = base + areas + revisions + [""] * (max_revisions - len(revisions))
+                row_data = [unid] + base + areas + revisions + [""] * (max_revisions - len(revisions))
                 ws.append(row_data)
 
         # Add hyperlink styling to filename column (col 4)
@@ -248,42 +244,55 @@ class TextExtractor:
         final_output_path.value = output_path
         print(f"✅ Excel saved with hyperlinks → {output_path}")
 
+        # Save revision JSON
+        json_path = output_path.replace(".xlsx", "_revisions.json")
+        try:
+            import json
+            with open(json_path, "w", encoding="utf-8") as jf:
+                json.dump(self.revision_json_data, jf, indent=2, ensure_ascii=False)
+            print(f"✅ JSON revision file saved → {json_path}")
+        except Exception as e:
+            print(f"❌ Failed to write JSON revision file: {e}")
+
     def start_extraction(self, progress_counter, total_files, final_output_path):
         n_workers = multiprocessing.cpu_count()
-        print(f"⚙️ Workers: {n_workers} (CPU cores)")
-
-        # 1. Gather all PDF files
         pdf_files = self.get_pdf_files()
         total_files.value = len(pdf_files)
-        jobs = [(pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder)
-                for pdf_path in pdf_files]
+        jobs = [
+            (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder)
+            for pdf_path in pdf_files
+        ]
 
-        # 2. Prepare output CSV
         temp_csv_path = os.path.join(self.temp_image_folder, "streamed_output.csv")
         os.makedirs(self.temp_image_folder, exist_ok=True)
 
         with open(temp_csv_path, "w", newline="", encoding="utf-8") as csv_file:
             csv_writer = csv.writer(csv_file)
-
             base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
             area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
-            csv_writer.writerow(base_headers + area_headers + ["__revisions__"])
+            csv_writer.writerow(["UNID"] + base_headers + area_headers + ["__revisions__"])
 
             max_revisions = 0
-
-
-            # 3. Multiprocessing with Pool
             try:
                 with multiprocessing.Pool(processes=n_workers) as pool:
                     for result_group in pool.imap_unordered(_unwrap_process_single_pdf, jobs):
                         for row in result_group:
-                            file_size, mod_date, folder, filename, page_no, areas, revisions = row
-                            text_values = [text for text, _ in areas]
-                            max_revisions = max(max_revisions, len(revisions))
-                            row_data = [file_size, mod_date, folder, filename, page_no] + text_values + [revisions]
-                            csv_writer.writerow(row_data)
+                            if len(row) == 7:
+                                file_size, mod_date, folder, filename, page_no, areas, revisions = row
+                                unid = str(self.unid_counter)
+                                self.unid_counter += 1  # Increment in main process
 
-                        # ✅ Update progress counter immediately
+                                if unid not in self.revision_json_data:
+                                    self.revision_json_data[unid] = revisions
+
+                                text_values = [text for text, _ in areas]
+                                max_revisions = max(max_revisions, len(revisions))
+                                revisions_flat = [f"{r['rev']} | {r['desc']} | {r['date']}" for r in revisions]
+
+                                row_data = [unid, file_size, mod_date, folder, filename, page_no] + text_values + [
+                                    revisions_flat]
+                                csv_writer.writerow(row_data)
+
                         if progress_counter:
                             with progress_counter.get_lock():
                                 progress_counter.value += 1
@@ -293,8 +302,6 @@ class TextExtractor:
                 return
 
         self.stream_to_excel(temp_csv_path, final_output_path, max_revisions)
-
-
 
     def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
@@ -348,14 +355,14 @@ class TextExtractor:
 
                     revision_data = []
                     if self.revision_area:
-                        revision_data = self.extract_revision_history_from_page_obj(page,
-                                                                                    self.revision_area["coordinates"])
+                        revision_data = self.extract_revision_history_from_page_obj(
+                            page, self.revision_area["coordinates"]
+                        )
 
-                    # Append all relevant data for this page as a row in results
-                    result_rows.append(
-                        [file_size, last_modified_date, folder, filename, page_number + 1, extracted_areas,
-                         revision_data]
-                    )
+                    result_rows.append([
+                        file_size, last_modified_date, folder, filename, page_number + 1,
+                        extracted_areas, revision_data  # No UNID here
+                    ])
 
                 except Exception as e:
                     print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
@@ -364,8 +371,6 @@ class TextExtractor:
                          str(e)])
 
             pdf_document.close()
-
-
 
             return result_rows
 
@@ -570,7 +575,7 @@ class TextExtractor:
                             cell.style = "Hyperlink"
 
                     # Write extracted areas to columns starting from 6
-                    for index, area in enumerate(self.areas):  # Use the updated `self.areas` list
+                    for index, area in enumerate(self.areas):  # Use the updated self.areas list
 
                         # Get the unique title assigned to this rectangle
                         column_title = self.unique_headers_mapping.get(index, f"Area {index + 1}")
