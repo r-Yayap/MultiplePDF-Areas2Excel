@@ -1,15 +1,10 @@
 # gui.py
-
-import importlib
-from openpyxl import Workbook, load_workbook
-from tkinter import filedialog, messagebox
 import multiprocessing
 import os
 import time
-from tkinter import filedialog, messagebox, StringVar
-
 import customtkinter as ctk
-
+from tkinter import filedialog, messagebox, StringVar
+from openpyxl import Workbook, load_workbook
 from constants import *
 from extractor import TextExtractor
 
@@ -17,7 +12,6 @@ from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
 from utils import REVISION_PATTERNS
-
 
 
 

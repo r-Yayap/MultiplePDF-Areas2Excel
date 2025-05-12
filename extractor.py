@@ -8,7 +8,7 @@ import secrets
 import pymupdf as fitz
 import sys
 import csv
-import tempfile
+import time
 from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
@@ -27,8 +27,27 @@ DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "
 
 
 
+def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder):
+    extractor = TextExtractor(
+        pdf_folder=pdf_folder,
+        output_excel_path="",
+        areas=areas,
+        ocr_settings=ocr_settings,
+        include_subfolders=False,
+        batch_threshold=0
+    )
+    extractor.revision_area = revision_area
+    extractor.temp_image_folder = temp_image_folder
+
+    # ✅ FIX: explicitly pass extractor as 'self'
+    return TextExtractor.process_single_pdf(extractor, pdf_path)
+
+def _unwrap_process_single_pdf(args):
+    return process_single_pdf_standalone(*args)
+
+
 class TextExtractor:
-    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders, revision_regex=None):
+    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders, revision_regex=None, batch_threshold=100):
         self.header_column_map = None
         self.final_output_path = None
         self.pdf_folder = pdf_folder
@@ -38,6 +57,7 @@ class TextExtractor:
         self.include_subfolders = include_subfolders
         self.revision_regex = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX
         self.tessdata_folder = find_tessdata() if ocr_settings["enable_ocr"] != "Off" else None
+        self.batch_threshold = batch_threshold
 
         # Initialize headers with fixed metadata columns
         self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
@@ -72,7 +92,7 @@ class TextExtractor:
         # Create a secure temp folder with random name
         main_temp_folder = os.path.join(app_directory, "temp")
         os.makedirs(main_temp_folder, exist_ok=True)
-        
+
         # Create random subfolder name (16 random chars)
         random_str = secrets.token_hex(8)
         self.temp_image_folder = os.path.join(main_temp_folder, random_str)
@@ -181,8 +201,12 @@ class TextExtractor:
         return re.sub(r'\s+', ' ', text)
 
     def stream_to_excel(self, csv_path, final_output_path, max_revisions):
-        wb = Workbook(write_only=True)
-        ws = wb.create_sheet()
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
 
         base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
         area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
@@ -198,9 +222,21 @@ class TextExtractor:
                 base = row[:5]
                 areas = row[5:-1]
                 revisions = eval(row[-1]) if row[-1].startswith("[") else []
+
                 row_data = base + areas + revisions + [""] * (max_revisions - len(revisions))
                 ws.append(row_data)
 
+        # Add hyperlink styling to filename column (col 4)
+        for row in ws.iter_rows(min_row=2, max_col=5):  # only metadata columns
+            filename_cell = row[3]  # 0-based index; column 4
+            filename = filename_cell.value
+            folder = row[2].value
+            if filename and folder:
+                abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder, filename))
+                filename_cell.hyperlink = abs_path
+                filename_cell.font = Font(color="0000FF", underline="single")
+
+        # Save file
         if os.path.exists(self.output_excel_path):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name, file_ext = os.path.splitext(self.output_excel_path)
@@ -210,60 +246,57 @@ class TextExtractor:
 
         wb.save(output_path)
         final_output_path.value = output_path
-        print(f"Consolidated results saved to {output_path}")
+        print(f"✅ Excel saved with hyperlinks → {output_path}")
 
     def start_extraction(self, progress_counter, total_files, final_output_path):
-
         n_workers = multiprocessing.cpu_count()
-        print(f"Workers: {n_workers} based on CPU Count")
+        print(f"⚙️ Workers: {n_workers} (CPU cores)")
 
-
-        # grab your list of PDFs and set the total count
+        # 1. Gather all PDF files
         pdf_files = self.get_pdf_files()
         total_files.value = len(pdf_files)
+        jobs = [(pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder)
+                for pdf_path in pdf_files]
 
-        # build the list of arguments for starmap
-        jobs = [
-            (pdf_path, progress_counter, total_files)
-            for pdf_path in pdf_files
-        ]
+        # 2. Prepare output CSV
+        temp_csv_path = os.path.join(self.temp_image_folder, "streamed_output.csv")
+        os.makedirs(self.temp_image_folder, exist_ok=True)
 
-        self.final_output_path = final_output_path  # ✅ Store reference for later use
-
-        """Starts the extraction process using multiprocessing with progress tracking."""
-        try:
-            # Step 1: Create temporary CSV file
-            temp_csv_path = os.path.join(self.temp_image_folder, "streamed_output.csv")
-            os.makedirs(self.temp_image_folder, exist_ok=True)
-            csv_file = open(temp_csv_path, "w", newline="", encoding="utf-8")
+        with open(temp_csv_path, "w", newline="", encoding="utf-8") as csv_file:
             csv_writer = csv.writer(csv_file)
 
-            # Step 2: Write header row (preliminary, will add revision columns later)
             base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
             area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
             csv_writer.writerow(base_headers + area_headers + ["__revisions__"])
 
-            max_revisions = 0  # Track max revision count across all pages
-
-            # Step 3: Process files and stream to CSV
-            for args in jobs:
-                result = self.process_single_pdf(*args)
-                for row in result:
-                    file_size, mod_date, folder, filename, page_no, areas, revisions = row
-                    text_values = [text for text, _ in areas]
-                    max_revisions = max(max_revisions, len(revisions))
-                    csv_writer.writerow([file_size, mod_date, folder, filename, page_no] + text_values + [revisions])
-
-            csv_file.close()
+            max_revisions = 0
 
 
-        except Exception as e:
-            print(f"Error during extraction: {e}")
-            return None
+            # 3. Multiprocessing with Pool
+            try:
+                with multiprocessing.Pool(processes=n_workers) as pool:
+                    for result_group in pool.imap_unordered(_unwrap_process_single_pdf, jobs):
+                        for row in result_group:
+                            file_size, mod_date, folder, filename, page_no, areas, revisions = row
+                            text_values = [text for text, _ in areas]
+                            max_revisions = max(max_revisions, len(revisions))
+                            row_data = [file_size, mod_date, folder, filename, page_no] + text_values + [revisions]
+                            csv_writer.writerow(row_data)
+
+                        # ✅ Update progress counter immediately
+                        if progress_counter:
+                            with progress_counter.get_lock():
+                                progress_counter.value += 1
+
+            except Exception as e:
+                print(f"❌ Error during multiprocessing extraction: {e}")
+                return
 
         self.stream_to_excel(temp_csv_path, final_output_path, max_revisions)
 
-    def process_single_pdf(self, pdf_path, progress_counter, total_files):
+
+
+    def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
         try:
             # Ensure the file exists and is not empty
@@ -271,8 +304,7 @@ class TextExtractor:
                 print(f"Skipping missing or empty file: {pdf_path}")
                 result_rows = [["Error", "File not found or empty", "", pdf_path, "",
                                 "FileNotFoundError: File not found or empty"]]
-                with progress_counter.get_lock():
-                    progress_counter.value += 1
+
 
                 return result_rows
 
@@ -282,15 +314,14 @@ class TextExtractor:
                 pdf_document = fitz.open(pdf_path, filetype="pdf")
                 if not pdf_document.is_pdf:
                     raise ValueError("Not a valid PDF file")
-                
+
                 # Enable faster text extraction
                 fitz.TOOLS.set_small_glyph_heights(True)
             except Exception as e:
                 print(f"Error opening PDF {pdf_path}: {e}")
                 result_rows = [["Error", "Invalid PDF", "", pdf_path, "",
                                 f"PDFError: {str(e)}"]]
-                with progress_counter.get_lock():
-                    progress_counter.value += 1
+
 
                 return result_rows
             file_size = os.path.getsize(pdf_path)
@@ -317,8 +348,8 @@ class TextExtractor:
 
                     revision_data = []
                     if self.revision_area:
-                        revision_data = self.extract_revision_history_from_page_obj(page, self.revision_area["coordinates"])
-
+                        revision_data = self.extract_revision_history_from_page_obj(page,
+                                                                                    self.revision_area["coordinates"])
 
                     # Append all relevant data for this page as a row in results
                     result_rows.append(
@@ -334,9 +365,7 @@ class TextExtractor:
 
             pdf_document.close()
 
-            # Add each page to results
-            with progress_counter.get_lock():
-                progress_counter.value += 1
+
 
             return result_rows
 
@@ -345,16 +374,15 @@ class TextExtractor:
             # Add an error placeholder for this file in results
             result_rows = [
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
-            with progress_counter.get_lock():
-                progress_counter.value += 1
 
-            #total_files.value += 1  # Update progress counter even on error
+
+            # total_files.value += 1  # Update progress counter even on error
             return result_rows
 
     def get_pdf_files(self):
         """Gathers all PDF files within the specified folder with validation."""
         pdf_files = []
-        
+
         # Validate base folder exists and is accessible
         if not os.path.exists(self.pdf_folder):
             raise ValueError(f"PDF folder does not exist: {self.pdf_folder}")
@@ -364,7 +392,7 @@ class TextExtractor:
         for root_folder, subfolders, files in os.walk(self.pdf_folder):
             if not self.include_subfolders:
                 subfolders.clear()
-            
+
             for f in files:
                 if f.lower().endswith('.pdf'):
                     full_path = os.path.join(root_folder, f)
@@ -376,11 +404,11 @@ class TextExtractor:
                             continue  # Skip hidden files/directories
                         if not os.path.isfile(full_path):
                             continue  # Skip non-files
-                            
+
                         pdf_files.append(full_path)
                     except Exception as e:
                         print(f"Skipping invalid PDF path {full_path}: {e}")
-                        
+
         return pdf_files
 
     def extract_text_from_area(self, page, area_coordinates, pdf_path, page_number, area_index):
@@ -416,11 +444,11 @@ class TextExtractor:
 
                 # Validate and save image
                 img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
-                
+
                 # Ensure temp folder exists
                 if not os.path.exists(self.temp_image_folder):
                     os.makedirs(self.temp_image_folder, exist_ok=True)
-                
+
                 # Save image with size validation (20MB max)
                 pix.save(img_path)
                 if os.path.getsize(img_path) > 10 * 1024 * 1024:  # 20MB
