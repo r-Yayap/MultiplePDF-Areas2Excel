@@ -94,7 +94,7 @@ class TextExtractor:
         self.ocr_settings = ocr_settings
         self.include_subfolders = include_subfolders
         self.revision_regex = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX
-        self.tessdata_folder = find_tessdata() if ocr_settings["enable_ocr"] != "Off" else None
+        self.tessdata_folder = None  # Will be set lazily if OCR is needed
         self.batch_threshold = batch_threshold
 
         # Initialize headers with fixed metadata columns
@@ -258,8 +258,19 @@ class TextExtractor:
 
                 row_data = [unid] + base + areas + revisions + [""] * (max_revisions - len(revisions))
                 ws.append(row_data)
-
                 current_row = ws.max_row
+
+                # Apply hyperlink styling to filename cell
+                folder_col_idx = headers.index("Folder") + 1
+                filename_col_idx = headers.index("Filename") + 1
+
+                folder_cell = ws.cell(row=current_row, column=folder_col_idx)
+                filename_cell = ws.cell(row=current_row, column=filename_col_idx)
+
+                if folder_cell.value and filename_cell.value:
+                    abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder_cell.value, filename_cell.value))
+                    filename_cell.hyperlink = abs_path
+                    filename_cell.font = Font(color="0000FF", underline="single")
 
                 # ✅ OCR styling + image embedding per cell
                 for i in range(len(area_headers)):
@@ -576,9 +587,11 @@ class TextExtractor:
 
     def apply_ocr(self, page, coordinates, pdf_path, page_number, area_index):
         """Applies OCR on a specified area and returns the extracted text and image path."""
-        if not self.tessdata_folder:
-            print("Tessdata folder not found. OCR cannot proceed.")
-            return "", ""
+        if self.tessdata_folder is None:
+            self.tessdata_folder = find_tessdata()
+            if not self.tessdata_folder:
+                print("❌ Tessdata folder not found. OCR cannot proceed.")
+                return "", ""
 
         if not os.path.exists(self.temp_image_folder):
              os.makedirs(self.temp_image_folder, exist_ok=True)
