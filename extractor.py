@@ -9,6 +9,8 @@ import pymupdf as fitz
 import sys
 import csv
 import time
+import gc
+import json
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
@@ -17,7 +19,11 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
+from openpyxl.utils import column_index_from_string
 from utils import adjust_coordinates_for_rotation, find_tessdata
+import psutil #for debug
+import os
+
 
 
 # Define patterns
@@ -28,9 +34,12 @@ DATE_REGEX = re.compile(r"""12
 """, re.VERBOSE)
 DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission"]
 
+def print_ram(): #for debug
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    print(f"📊 Current RAM usage: {mem_mb:.2f} MB")
 
-
-def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder):
+def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder, unid):
     extractor = TextExtractor(
         pdf_folder=pdf_folder,
         output_excel_path="",
@@ -42,8 +51,34 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
     extractor.revision_area = revision_area
     extractor.temp_image_folder = temp_image_folder
 
-    # ✅ FIX: explicitly pass extractor as 'self'
-    return TextExtractor.process_single_pdf(extractor, pdf_path)
+    result_rows = extractor.process_single_pdf(pdf_path)
+
+    csv_path = os.path.join(temp_image_folder, f"temp_{unid}.csv")
+    jsonl_path = os.path.join(temp_image_folder, f"temp_{unid}.ndjson")
+
+    # Stream directly to temp CSV/NDJSON (per worker)
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file, \
+            open(jsonl_path, "w", encoding="utf-8") as jsonl_file:
+        csv_writer = csv.writer(csv_file)
+
+        for row in result_rows:
+            file_size, mod_date, folder, filename, page_no, areas, revisions = row
+            revisions_flat = [f"{r['rev']} | {r['desc']} | {r['date']}" for r in revisions]
+            text_values = [text for text, _ in areas]
+
+            # CSV Row
+            csv_row = [unid, file_size, mod_date, folder, filename, page_no] + text_values + [revisions_flat]
+            csv_writer.writerow(csv_row)
+
+            # NDJSON Row
+            json.dump({"unid": unid, "revisions": revisions}, jsonl_file, ensure_ascii=False)
+            jsonl_file.write("\n")
+
+    # Explicit cleanup
+    extractor = None
+    gc.collect()
+
+    return True  # only a small flag indicating success
 
 def _unwrap_process_single_pdf(args):
     return process_single_pdf_standalone(*args)
@@ -103,7 +138,7 @@ class TextExtractor:
         # Revision Area
         self.revision_area = None  # Will be set externally if needed
         self.unid_counter = 10001
-        self.revision_json_data = {}  # {unid: [ {rev, desc, date}, ... ]}
+
 
     def detect_column_indices(self, sample_rows, max_rows=3):
         col_scores = {}
@@ -127,7 +162,7 @@ class TextExtractor:
         desc_idx = max(col_scores.items(), key=lambda x: x[1]["desc"], default=(None, {}))[0]
         date_idx = max(col_scores.items(), key=lambda x: x[1]["date"], default=(None, {}))[0]
 
-        print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
+        #print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
         return rev_idx, desc_idx, date_idx
 
     def parse_revision_row(self, row, rev_idx, desc_idx, date_idx):
@@ -212,25 +247,44 @@ class TextExtractor:
             reader = csv.reader(f)
             next(reader)  # skip header row
 
+            ocr_font = Font(color="FF3300")
+            area_start_col = 1 + len(["UNID"] + base_headers)
+
             for row in reader:
                 unid = row[0]
                 base = row[1:6]
                 areas = row[6:-1]
-
                 revisions = eval(row[-1]) if row[-1].startswith("[") else []
 
                 row_data = [unid] + base + areas + revisions + [""] * (max_revisions - len(revisions))
                 ws.append(row_data)
 
-        # Add hyperlink styling to filename column (col 4)
-        for row in ws.iter_rows(min_row=2, max_col=5):  # only metadata columns
-            filename_cell = row[3]  # 0-based index; column 4
-            filename = filename_cell.value
-            folder = row[2].value
-            if filename and folder:
-                abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder, filename))
-                filename_cell.hyperlink = abs_path
-                filename_cell.font = Font(color="0000FF", underline="single")
+                current_row = ws.max_row
+
+                # ✅ OCR styling + image embedding per cell
+                for i in range(len(area_headers)):
+                    cell = ws.cell(row=current_row, column=area_start_col + i)
+
+                    if isinstance(cell.value, str) and "_OCR_" in cell.value:
+                        cell.font = ocr_font
+                        cell.value = cell.value.replace("_OCR_", "").strip()
+
+                    if self.ocr_settings["enable_ocr"] == "Text1st+Image-beta":
+                        folder = base[2]  # Folder
+                        filename = base[3]  # Filename
+                        page_no = base[4]  # Page No
+
+                        image_filename = f"{filename}_page{page_no}_area{i}.png"
+                        image_path = os.path.join(self.temp_image_folder, image_filename)
+
+                        if os.path.exists(image_path):
+                            try:
+                                img = ExcelImage(image_path)
+                                img.anchor = f"{get_column_letter(area_start_col + i)}{current_row}"
+                                ws.add_image(img)
+                            except Exception as e:
+                                print(f"⚠️ Failed to embed image {image_filename}: {e}")
+
 
         # Save file
         if os.path.exists(self.output_excel_path):
@@ -242,66 +296,88 @@ class TextExtractor:
 
         wb.save(output_path)
         final_output_path.value = output_path
+
+        # ✅ Copy NDJSON from temp folder to match Excel path
+        ndjson_temp_path = os.path.join(self.temp_image_folder, "streamed_revisions.ndjson")
+        ndjson_output_path = output_path.replace(".xlsx", "_revisions.ndjson")
+
+        try:
+            if os.path.exists(ndjson_temp_path):
+                shutil.copy(ndjson_temp_path, ndjson_output_path)
+                #print(f"✅ NDJSON revision file saved → {ndjson_output_path}")
+            else:
+                print(f"⚠️ NDJSON temp file not found at {ndjson_temp_path}")
+        except Exception as e:
+            print(f"❌ Failed to copy NDJSON file: {e}")
+
         print(f"✅ Excel saved with hyperlinks → {output_path}")
 
-        # Save revision JSON
-        json_path = output_path.replace(".xlsx", "_revisions.json")
-        try:
-            import json
-            with open(json_path, "w", encoding="utf-8") as jf:
-                json.dump(self.revision_json_data, jf, indent=2, ensure_ascii=False)
-            print(f"✅ JSON revision file saved → {json_path}")
-        except Exception as e:
-            print(f"❌ Failed to write JSON revision file: {e}")
+    def combine_temp_files(self, final_output_path):
+        import glob
+
+        temp_csv_files = sorted(glob.glob(os.path.join(self.temp_image_folder, "temp_*.csv")))
+        temp_jsonl_files = sorted(glob.glob(os.path.join(self.temp_image_folder, "temp_*.ndjson")))
+
+        combined_csv = os.path.join(self.temp_image_folder, "streamed_output.csv")
+        combined_jsonl = os.path.join(self.temp_image_folder, "streamed_revisions.ndjson")
+
+        # Combine CSV
+        with open(combined_csv, "w", newline="", encoding="utf-8") as outfile:
+            writer = csv.writer(outfile)
+            writer.writerow(["UNID", "Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"] +
+                            [self.unique_headers_mapping[i] for i in range(len(self.areas))] + ["__revisions__"])
+
+            for f in temp_csv_files:
+                with open(f, "r", encoding="utf-8") as infile:
+                    reader = csv.reader(infile)
+                    writer.writerows(reader)
+                os.remove(f)  # Cleanup immediately
+
+        # Combine NDJSON
+        with open(combined_jsonl, "w", encoding="utf-8") as outfile:
+            for f in temp_jsonl_files:
+                with open(f, "r", encoding="utf-8") as infile:
+                    shutil.copyfileobj(infile, outfile)
+                os.remove(f)  # Cleanup immediately
+
+        # Stream to Excel (existing efficient method)
+        max_revisions = self.get_max_revisions(combined_csv)
+        self.stream_to_excel(combined_csv, final_output_path, max_revisions)
+
+    def get_max_revisions(self, csv_path):
+        max_revs = 0
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader)
+            for row in reader:
+                revisions = eval(row[-1]) if row[-1].startswith("[") else []
+                max_revs = max(max_revs, len(revisions))
+        return max_revs
 
     def start_extraction(self, progress_counter, total_files, final_output_path):
         n_workers = multiprocessing.cpu_count()
         pdf_files = self.get_pdf_files()
         total_files.value = len(pdf_files)
-        jobs = [
-            (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder)
-            for pdf_path in pdf_files
-        ]
 
-        temp_csv_path = os.path.join(self.temp_image_folder, "streamed_output.csv")
         os.makedirs(self.temp_image_folder, exist_ok=True)
 
-        with open(temp_csv_path, "w", newline="", encoding="utf-8") as csv_file:
-            csv_writer = csv.writer(csv_file)
-            base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
-            area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
-            csv_writer.writerow(["UNID"] + base_headers + area_headers + ["__revisions__"])
+        jobs = [
+            (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder,
+             str(10000 + idx))
+            for idx, pdf_path in enumerate(pdf_files)
+        ]
 
-            max_revisions = 0
-            try:
-                with multiprocessing.Pool(processes=n_workers) as pool:
-                    for result_group in pool.imap_unordered(_unwrap_process_single_pdf, jobs):
-                        for row in result_group:
-                            if len(row) == 7:
-                                file_size, mod_date, folder, filename, page_no, areas, revisions = row
-                                unid = str(self.unid_counter)
-                                self.unid_counter += 1  # Increment in main process
+        with multiprocessing.Pool(processes=n_workers) as pool:
+            for _ in pool.imap_unordered(_unwrap_process_single_pdf, jobs):
+                with progress_counter.get_lock():
+                    progress_counter.value += 1
+                    if progress_counter.value % 50 == 0:
+                        print_ram()
 
-                                if unid not in self.revision_json_data:
-                                    self.revision_json_data[unid] = revisions
+        # After multiprocessing ends, combine CSV/NDJSON files quickly
+        self.combine_temp_files(final_output_path)
 
-                                text_values = [text for text, _ in areas]
-                                max_revisions = max(max_revisions, len(revisions))
-                                revisions_flat = [f"{r['rev']} | {r['desc']} | {r['date']}" for r in revisions]
 
-                                row_data = [unid, file_size, mod_date, folder, filename, page_no] + text_values + [
-                                    revisions_flat]
-                                csv_writer.writerow(row_data)
-
-                        if progress_counter:
-                            with progress_counter.get_lock():
-                                progress_counter.value += 1
-
-            except Exception as e:
-                print(f"❌ Error during multiprocessing extraction: {e}")
-                return
-
-        self.stream_to_excel(temp_csv_path, final_output_path, max_revisions)
 
     def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
@@ -364,6 +440,11 @@ class TextExtractor:
                         extracted_areas, revision_data  # No UNID here
                     ])
 
+                    del extracted_areas
+                    del revision_data
+                    del page
+                    gc.collect()  # ✅ Force garbage collection
+
                 except Exception as e:
                     print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
                     result_rows.append(
@@ -371,6 +452,8 @@ class TextExtractor:
                          str(e)])
 
             pdf_document.close()
+            del pdf_document
+            gc.collect()
 
             return result_rows
 
@@ -380,7 +463,7 @@ class TextExtractor:
             result_rows = [
                 [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
 
-
+            gc.collect()
             # total_files.value += 1  # Update progress counter even on error
             return result_rows
 
@@ -504,8 +587,12 @@ class TextExtractor:
         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=self.tessdata_folder)
         clipdoc = fitz.open("pdf", pdfdata)
         text_area = "_OCR_" + clipdoc[0].get_text()
+        clipdoc.close()
+        del clipdoc
+        gc.collect()
         img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
         pix.save(img_path)
+        del pix
         return text_area, img_path
 
     def extract_revision_history_from_page(self, pdf_path, page, filename, page_number):

@@ -211,7 +211,7 @@ class XtractorGUI:
             text_color="white"  # Text color (works in dark mode)
         )
 
-        self.revision_pattern_menu.place(x=-740, y=-65)  # Adjust as needed
+        self.revision_pattern_menu.place(x=740, y=65)  #set to negative to hide
         create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
 
         # Zoom Slider
