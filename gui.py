@@ -174,7 +174,6 @@ class XtractorGUI:
         self.tab_view.pack(side="left", fill="y", padx=SIDEBAR_PADDING, pady=10)
 
         self.root.update_idletasks()  # Ensure sidebar dimensions are accurate
-        sidebar_right_edge = self.tab_view.winfo_width() + 20
 
         # Zoom Slider
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
@@ -187,6 +186,15 @@ class XtractorGUI:
         self.zoom_out_label.pack(side="left", padx=(5, 2))
         self.zoom_slider.pack(side="left")
         self.zoom_in_label.pack(side="left", padx=(2, 5))
+
+        # Floating recent PDF and close PDF buttons (top-right)
+        self.recent_pdf_button = ctk.CTkButton(self.root, text="↩", command=self.open_recent_pdf,
+                                               font=(BUTTON_FONT, 10), width=24, height=24)
+        self.recent_pdf_button.pack(pady=2)
+
+        self.close_pdf_button = ctk.CTkButton(self.root, text="⨉", command=self.close_pdf,
+                                              font=(BUTTON_FONT, 10), fg_color="red4",width=24, height=24)
+        self.close_pdf_button.pack(pady=2)
 
 
         # Create each tab
@@ -212,8 +220,6 @@ class XtractorGUI:
                                              corner_radius=3)
         self.pdf_folder_entry.pack(pady=(10, 2))
 
-
-
         # Sample PDF Drop Zone
         self.open_sample_button = ctk.CTkButton(tab_files,
                                                 text="\n➕\nDrop PDF or Click to Select",
@@ -224,13 +230,6 @@ class XtractorGUI:
         self.open_sample_button.drop_target_register(DND_ALL)
         self.open_sample_button.dnd_bind('<<Drop>>', self.drop_sample_pdf)
 
-        self.recent_pdf_button = ctk.CTkButton(tab_files, text="↩ Reopen Recent PDF", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 9), width=240, height=24)
-        self.recent_pdf_button.pack(pady=2)
-
-        self.close_pdf_button = ctk.CTkButton(tab_files, text="❌ Close PDF", command=self.close_pdf,
-                                              font=(BUTTON_FONT, 9), fg_color="red4", width=240, height=24)
-        self.close_pdf_button.pack(pady=2)
 
 
         # ======================= 🔲 RECTANGLES TAB =======================
@@ -338,7 +337,9 @@ class XtractorGUI:
         window_height = self.root.winfo_height()
 
         self.zoom_frame.place(x=sidebar_width + 10, y=window_height - 65)
-
+        # Place recent + close buttons at top-right
+        self.recent_pdf_button.place(x=sidebar_width + 0, y=23)
+        self.close_pdf_button.place(x=sidebar_width + 30, y=23)
 
     def setup_bindings(self):
         self.pdf_folder_entry.bind("<KeyRelease>", self.update_pdf_folder)
