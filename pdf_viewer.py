@@ -163,14 +163,6 @@ class PDFViewer:
             print("Error updating display: No valid page loaded.")
             return
 
-        if self.canvas.find_all():  # Only scale if there are elements on the canvas
-            scale_x = self.canvas.winfo_width() / CANVAS_WIDTH
-            scale_y = self.canvas.winfo_height() / CANVAS_HEIGHT
-            self.canvas.scale("all", 0, 0, scale_x, scale_y)  # Scale only if items exist
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))  # Adjust scrolling
-        else:
-            print("Skipping scaling: No elements on the canvas yet.")
-
         # Check if there is a valid PDF page to display
         if self.page is None:
             print("No valid page to display.")

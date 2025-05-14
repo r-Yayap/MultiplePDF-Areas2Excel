@@ -212,13 +212,7 @@ class XtractorGUI:
                                              corner_radius=3)
         self.pdf_folder_entry.pack(pady=(10, 2))
 
-        self.output_path_entry = ctk.CTkEntry(tab_files, width=240, height=24, font=(BUTTON_FONT, 9),
-                                              placeholder_text="Select Excel Output Path", border_width=1,
-                                              corner_radius=3)
-        self.output_path_entry.pack(pady=(10, 2))
-        self.output_path_button = ctk.CTkButton(tab_files, text="📂 Browse Output Path", command=self.browse_output_path,
-                                                font=(BUTTON_FONT, 9), width=240, height=24)
-        self.output_path_button.pack(pady=2)
+
 
         # Sample PDF Drop Zone
         self.open_sample_button = ctk.CTkButton(tab_files,
@@ -312,6 +306,14 @@ class XtractorGUI:
         self.dpi_menu.pack(pady=(5, 5))
         create_tooltip(self.dpi_menu, "DPI resolution")
 
+        self.output_path_entry = ctk.CTkEntry(tab_extract, width=240, height=24, font=(BUTTON_FONT, 9),
+                                              placeholder_text="Select Excel Output Path", border_width=1,
+                                              corner_radius=3)
+        self.output_path_entry.pack(pady=(10, 2))
+        self.output_path_button = ctk.CTkButton(tab_extract, text="📂 Browse Output Path", command=self.browse_output_path,
+                                                font=(BUTTON_FONT, 9), width=240, height=24)
+        self.output_path_button.pack(pady=2)
+
         self.extract_button = ctk.CTkButton(tab_extract, text="🚀 Extract Now", font=("Arial Black", 13),
                                             corner_radius=10, width=240, height=30, command=self.start_extraction)
         self.extract_button.pack(pady=30)
@@ -329,7 +331,7 @@ class XtractorGUI:
         self.version_label.pack(pady=10, anchor="w")
         self.version_label.bind("<Button-1>", self.display_version_info)
 
-        self.root.after(100, self.place_zoom_and_version_controls)
+        self.root.after(300, self.place_zoom_and_version_controls)
 
     def place_zoom_and_version_controls(self):
         sidebar_width = self.tab_view.winfo_width() + 20
@@ -626,6 +628,8 @@ class XtractorGUI:
             sidebar_width = self.tab_view.winfo_width() + 20
 
             self.pdf_viewer.resize_canvas(self.root.winfo_width(), self.root.winfo_height(),x_offset=CANVAS_LEFT_MARGIN)
+
+            self.pdf_viewer.update_rectangles()
 
             # Zoom and version controls
             self.zoom_frame.place_configure(x=sidebar_width + 10, y=new_height - 65)
