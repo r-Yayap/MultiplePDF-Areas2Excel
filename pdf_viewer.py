@@ -6,20 +6,22 @@ import tkinter as tk
 from tkinter import Menu
 from constants import *
 from tkinter.simpledialog import askstring  # For custom title input
+from tkinterdnd2 import DND_ALL
+import os
 
 class PDFViewer:
     def __init__(self, parent, master):
         self.parent = parent  # `parent` is the XtractorGUI instance
         self.canvas = ctk.CTkCanvas(master, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
-        self.canvas.place(x=10, y=100)
+
 
         self.v_scrollbar = ctk.CTkScrollbar(master, orientation="vertical", command=self.canvas.yview,
                                             height=CANVAS_HEIGHT)
-        self.v_scrollbar.place(x=CANVAS_WIDTH + 14, y=100)
+
 
         self.h_scrollbar = ctk.CTkScrollbar(master, orientation="horizontal", command=self.canvas.xview,
                                             width=CANVAS_WIDTH)
-        self.h_scrollbar.place(x=10, y=CANVAS_HEIGHT + 107)
+
 
         self.pdf_document = None
         self.page = None
@@ -82,6 +84,17 @@ class PDFViewer:
         self.revision_rectangle_id = None
         self.selection_mode = "area"  # Can be "area" or "revision"
 
+        self.canvas.drop_target_register(DND_ALL)
+        self.canvas.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+
+    def handle_pdf_drop(self, event):
+        path = event.data.strip().replace("{", "").replace("}", "")
+        if path.lower().endswith(".pdf") and os.path.isfile(path):
+            self.parent.recent_pdf_path = path  # update recent path
+            self.display_pdf(path)
+            print(f"🪂 Dropped PDF loaded in canvas: {path}")
+        else:
+            print(f"⚠️ Dropped item is not a valid PDF: {path}")
 
     def set_custom_title(self):
         """Prompts user for a custom title and assigns it to the selected rectangle."""
@@ -318,23 +331,29 @@ class PDFViewer:
         self.current_zoom = zoom_level
         self.update_display()  # Refresh the display with the new zoom level
 
-    def resize_canvas(self, new_width, new_height):
-        """Dynamically resizes canvas and scrollbars to fit window size without breaking UI."""
+    def resize_canvas(self, total_width, total_height, x_offset=0):
+        """Resizes canvas and scrollbars based on available space, respecting left offset."""
 
-        # Keep margins for UI elements
-        canvas_width = new_width - 30  # Leave small margin
-        canvas_height = max(200, new_height )  # Reserve space for buttons
+        # Reserve space for margins and scrollbars
+        canvas_margin = 20
+        scrollbar_thickness = 14
 
-        # Update canvas dimensions
+        # Dynamically calculate canvas size
+        canvas_width = max(200, total_width - x_offset - CANVAS_EXTRA_MARGIN - SCROLLBAR_THICKNESS)
+        canvas_height = max(200, total_height - CANVAS_TOP_MARGIN - CANVAS_BOTTOM_MARGIN)
+
+        # Reposition and resize canvas
+        self.canvas.place_configure(x=x_offset, y=CANVAS_TOP_MARGIN)
         self.canvas.config(width=canvas_width, height=canvas_height)
 
-        # Update scrollbar positions
+        # Reposition and resize scrollbars
+        self.v_scrollbar.place_configure(x=x_offset + canvas_width  +4, y=CANVAS_TOP_MARGIN)
         self.v_scrollbar.configure(height=canvas_height)
-        self.h_scrollbar.configure(width=canvas_width)
-        self.v_scrollbar.place_configure(x=canvas_width + 14, y=100)
-        self.h_scrollbar.place_configure(x=10, y=canvas_height + 107)
 
-        # Scale canvas elements only if needed
+        self.h_scrollbar.place_configure(x=x_offset, y=CANVAS_TOP_MARGIN + canvas_height + 7)
+        self.h_scrollbar.configure(width=canvas_width)
+
+        # Scale canvas contents
         if self.canvas.find_all():
             scale_x = canvas_width / CANVAS_WIDTH
             scale_y = canvas_height / CANVAS_HEIGHT

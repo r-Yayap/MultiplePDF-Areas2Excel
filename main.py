@@ -53,12 +53,12 @@ This modular setup enables easy maintainability, allowing new features or change
 import multiprocessing
 
 import customtkinter as ctk
-from gui import XtractorGUI
+from gui import XtractorGUI,CTkDnD
 from constants import INITIAL_WIDTH, INITIAL_HEIGHT, INITIAL_X_POSITION, INITIAL_Y_POSITION, VERSION_TEXT
 
 class XtractorApp:
     def __init__(self):
-        self.root = ctk.CTk()
+        self.root = CTkDnD()
         self.root.title("Xtractor " + VERSION_TEXT)
         self.root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}+{INITIAL_X_POSITION}+{INITIAL_Y_POSITION}")
         self.gui = XtractorGUI(self.root)

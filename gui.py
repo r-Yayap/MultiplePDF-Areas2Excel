@@ -12,13 +12,21 @@ from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
 from utils import REVISION_PATTERNS
+from tkinterdnd2 import TkinterDnD, DND_ALL
 
 
+
+class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.TkdndVersion = TkinterDnD._require(self)
 
 class XtractorGUI:
     def __init__(self, root):
         self.root = root
         self.pdf_viewer = PDFViewer(self, self.root)  # Pass GUI instance and root window
+
+        self.root.update_idletasks()
 
         self.include_subfolders = False
         self.pdf_folder = ''
@@ -161,176 +169,211 @@ class XtractorGUI:
                 print("Removed rectangle at index", index)
 
     def setup_widgets(self):
-        # PDF Folder Entry
-        self.pdf_folder_entry = ctk.CTkEntry(self.root, width=270, height=20, font=(BUTTON_FONT, 9),
-                                             placeholder_text="Select Folder with PDFs", border_width=1,
-                                             corner_radius=3)
-        self.pdf_folder_entry.place(x=50, y=10)
-        self.pdf_folder_button = ctk.CTkButton(self.root, text="📂", command=self.browse_pdf_folder,
-                                               font=(BUTTON_FONT, 9),
-                                               width=25, height=10)
-        self.pdf_folder_button.place(x=20, y=10)
+        # Create a tabbed panel on the left
+        self.tab_view = ctk.CTkTabview(self.root, width=SIDEBAR_WIDTH)
+        self.tab_view.pack(side="left", fill="y", padx=SIDEBAR_PADDING, pady=10)
 
-        # OCR Option Menu
-        self.ocr_menu_var = StringVar(value="OCR-Off")
-        self.ocr_menu = ctk.CTkOptionMenu(
-            self.root,
-            values=["Off", "Text-first", "OCR-All", "Text1st+Image-beta"],
-            command=self.ocr_menu_callback,  # Use self.ocr_menu_callback here
-            font=("Verdana Bold", 9),
-            variable=self.ocr_menu_var,
-            width=85,
-            height=18
-        )
-
-        self.ocr_menu.place(x=330, y=10)
-
-        # Mode Toggle Buttons
-        self.mode_area_btn = ctk.CTkButton(self.root, text="🟥 Area Mode", width=85, height=10,
-                                           font=(BUTTON_FONT, 9), command=self.set_mode_area)
-        self.mode_area_btn.place(x=740, y=15) #set to negative to hide
-
-        self.mode_revision_btn = ctk.CTkButton(self.root, text="🟩 Revision Mode", width=85, height=10,
-                                               font=(BUTTON_FONT, 9), command=self.set_mode_revision)
-        self.mode_revision_btn.place(x=740, y=40) #set to negative to hide
-
-        # Create preview dropdown options
-        pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
-        self.revision_dropdown_map = {f"{k} — {', '.join(v['examples'])}": k for k, v in REVISION_PATTERNS.items()}
-
-        self.revision_pattern_var = StringVar(value=pattern_options[-1])  # Default: Fuzzy Search
-        self.revision_pattern_menu = ctk.CTkOptionMenu(
-            self.root,
-            font=("Verdana", 8),
-            values=pattern_options,
-            variable=self.revision_pattern_var,
-            width=200,
-            height=18,
-            fg_color="#5A6C89",  # Main fill
-            button_color="#5A6C89",  # Button (caret) background
-            text_color="white"  # Text color (works in dark mode)
-        )
-
-        self.revision_pattern_menu.place(x=740, y=65)  #set to negative to hide
-        create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
+        self.root.update_idletasks()  # Ensure sidebar dimensions are accurate
+        sidebar_right_edge = self.tab_view.winfo_width() + 20
 
         # Zoom Slider
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
-        self.zoom_slider = ctk.CTkSlider(self.root, from_=0.1, to=3.5, variable=self.zoom_var,
-                                         command=self.update_zoom, width=170)
-
-        # Create a frame to hold the zoom slider and labels
         self.zoom_frame = ctk.CTkFrame(self.root, fg_color="transparent")
-
         self.zoom_out_label = ctk.CTkLabel(self.zoom_frame, text="➖", font=(BUTTON_FONT, 14))
-
         self.zoom_slider = ctk.CTkSlider(self.zoom_frame, from_=0.1, to=4, variable=self.zoom_var,
                                          command=self.update_zoom, width=170)
-
         self.zoom_in_label = ctk.CTkLabel(self.zoom_frame, text="➕", font=(BUTTON_FONT, 14))
 
+        self.zoom_out_label.pack(side="left", padx=(5, 2))
+        self.zoom_slider.pack(side="left")
+        self.zoom_in_label.pack(side="left", padx=(2, 5))
 
-        # Open Sample PDF Button
-        self.open_sample_button = ctk.CTkButton(self.root, text="📑 Select", command=self.open_sample_pdf,
-                                                font=(BUTTON_FONT, 9),
-                                                width=25, height=10)
-        self.open_sample_button.place(x=20, y=35)
 
-        # Recent PDF Button
-        self.recent_pdf_button = ctk.CTkButton(self.root, text="↩ Recent", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 9), width=28, height=10)
-        self.recent_pdf_button.place(x=85, y=35)
+        # Create each tab
+        tab_files = self.tab_view.add("📁 Files")
+        tab_rectangles = self.tab_view.add("🔲 Rectangles")
+        tab_extract = self.tab_view.add("🚀 Extract")
+        tab_tools = self.tab_view.add("🧰 Tools")
 
-        # Close PDF Button
-        self.close_pdf_button = ctk.CTkButton(self.root, text="❌", command=self.close_pdf,anchor="center",
-                                              font=(BUTTON_FONT, 9), width=10, height=10, fg_color="red4")
-        self.close_pdf_button.place(x=149, y=35)
+        # ======================= 📁 FILES TAB =======================
 
-        # Output Excel Path
-        self.output_path_entry = ctk.CTkEntry(self.root, width=270, height=20, font=(BUTTON_FONT, 9),
-                                              placeholder_text="Select Folder for Excel output",
-                                              border_width=1, corner_radius=3)
-        self.output_path_entry.place(x=50, y=60)
-        self.output_path_button = ctk.CTkButton(self.root, text="📂", command=self.browse_output_path,
-                                                font=(BUTTON_FONT, 9), fg_color="#217346",
-                                                width=25, height=10)
-        self.output_path_button.place(x=20, y=60)
+        # PDF Folder Drop Zone
+        self.pdf_folder_button = ctk.CTkButton(tab_files,
+                                               text="\n➕\n\nDrop Folder or Click to Browse",
+                                               command=self.browse_pdf_folder,
+                                               fg_color="transparent", border_width=2, width=240, height=80,
+                                               hover_color="#444", text_color="white")
+        self.pdf_folder_button.pack(pady=(10, 5))
+        self.pdf_folder_button.drop_target_register(DND_ALL)
+        self.pdf_folder_button.dnd_bind('<<Drop>>', self.drop_pdf_folder)
 
-        # Include Subfolders Checkbox
-        self.include_subfolders_var = ctk.IntVar()
-        self.include_subfolders_checkbox = ctk.CTkCheckBox(self.root, text="Include Subfolders?",
-                                                           variable=self.include_subfolders_var,border_width=1,
-                                                           command=self.toggle_include_subfolders,
-                                                           font=(BUTTON_FONT, 9),checkbox_width=17, checkbox_height=17)
-        self.include_subfolders_checkbox.place(x=192, y=34)
+        self.pdf_folder_entry = ctk.CTkEntry(tab_files, width=240, height=24, font=(BUTTON_FONT, 9),
+                                             placeholder_text="Select Folder with PDFs", border_width=1,
+                                             corner_radius=3)
+        self.pdf_folder_entry.pack(pady=(10, 2))
 
-        # Extract Button
-        self.extract_button = ctk.CTkButton(self.root, text="Extract", font=("Arial Black", 14),
-                                            corner_radius=10, width=75, height=30, command=self.start_extraction, anchor="center")
-        self.extract_button.place(x=330, y=55)
+        self.output_path_entry = ctk.CTkEntry(tab_files, width=240, height=24, font=(BUTTON_FONT, 9),
+                                              placeholder_text="Select Excel Output Path", border_width=1,
+                                              corner_radius=3)
+        self.output_path_entry.pack(pady=(10, 2))
+        self.output_path_button = ctk.CTkButton(tab_files, text="📂 Browse Output Path", command=self.browse_output_path,
+                                                font=(BUTTON_FONT, 9), width=240, height=24)
+        self.output_path_button.pack(pady=2)
 
-        # Areas Treeview setup
-        self.areas_frame = ctk.CTkFrame(self.root, height=1, width=200, border_width=0)
-        self.areas_frame.place(x=425, y=10)
+        # Sample PDF Drop Zone
+        self.open_sample_button = ctk.CTkButton(tab_files,
+                                                text="\n➕\nDrop PDF or Click to Select",
+                                                command=self.open_sample_pdf,
+                                                fg_color="transparent", border_width=2, width=240, height=80,
+                                                hover_color="#444", text_color="white")
+        self.open_sample_button.pack(pady=5)
+        self.open_sample_button.drop_target_register(DND_ALL)
+        self.open_sample_button.dnd_bind('<<Drop>>', self.drop_sample_pdf)
 
-        self.areas_tree = EditableTreeview(
-            self,
-            self.areas_frame,
-            columns=("Title", "x0", "y0", "x1", "y1"),  # Ensure "Title" is included
-            show="headings",
-            height=3
-        )
+        self.recent_pdf_button = ctk.CTkButton(tab_files, text="↩ Reopen Recent PDF", command=self.open_recent_pdf,
+                                               font=(BUTTON_FONT, 9), width=240, height=24)
+        self.recent_pdf_button.pack(pady=2)
 
-        # Set up static headers and fixed column widths
+        self.close_pdf_button = ctk.CTkButton(tab_files, text="❌ Close PDF", command=self.close_pdf,
+                                              font=(BUTTON_FONT, 9), fg_color="red4", width=240, height=24)
+        self.close_pdf_button.pack(pady=2)
+
+
+        # ======================= 🔲 RECTANGLES TAB =======================
+        pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
+        self.revision_dropdown_map = {f"{k} — {', '.join(v['examples'])}": k for k, v in REVISION_PATTERNS.items()}
+        self.revision_pattern_var = StringVar(value=pattern_options[-1])
+        self.revision_pattern_menu = ctk.CTkOptionMenu(tab_rectangles,
+                                                       font=("Verdana", 9),
+                                                       values=pattern_options,
+                                                       variable=self.revision_pattern_var,
+                                                       width=240, height=24,
+                                                       fg_color="#5A6C89", button_color="#5A6C89", text_color="white")
+        self.revision_pattern_menu.pack(pady=(10, 5))
+        create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
+
+        self.mode_area_btn = ctk.CTkButton(tab_rectangles, text="🟥 Area Mode", command=self.set_mode_area,
+                                           font=(BUTTON_FONT, 9), width=240, height=24)
+        self.mode_area_btn.pack(pady=(5, 2))
+        self.mode_revision_btn = ctk.CTkButton(tab_rectangles, text="🟩 Revision Table Mode",
+                                               command=self.set_mode_revision,
+                                               font=(BUTTON_FONT, 9), width=240, height=24)
+        self.mode_revision_btn.pack(pady=(0, 10))
+
+        self.import_button = ctk.CTkButton(tab_rectangles, text="⬇️ Import Areas", command=self.import_rectangles,
+                                           font=(BUTTON_FONT, 9), width=240, height=24)
+        self.import_button.pack(pady=2)
+        self.export_button = ctk.CTkButton(tab_rectangles, text="⬆️ Export Areas", command=self.export_rectangles,
+                                           font=(BUTTON_FONT, 9), width=240, height=24)
+        self.export_button.pack(pady=2)
+        self.clear_areas_button = ctk.CTkButton(tab_rectangles, text="🗑 Clear Areas", command=self.clear_all_areas,
+                                                font=(BUTTON_FONT, 9), width=240, height=24, fg_color="red4")
+        self.clear_areas_button.pack(pady=(2, 10))
+
+        # Treeview inside a sub-frame
+        self.areas_frame = ctk.CTkFrame(tab_rectangles, height=120, width=240)
+        self.areas_frame.pack(pady=5, fill="both")
+        self.areas_tree = EditableTreeview(self, self.areas_frame,
+                                           columns=("Title", "x0", "y0", "x1", "y1"),
+                                           show="headings", height=4)
         self.areas_tree.heading("Title", text="Title")
-        self.areas_tree.column("Title", width=50, anchor="center")
+        self.areas_tree.column("Title", width=60, anchor="center")
         for col in ("x0", "y0", "x1", "y1"):
             self.areas_tree.heading(col, text=col)
-            self.areas_tree.column(col, width=45, anchor="center")
+            self.areas_tree.column(col, width=40, anchor="center")
+        self.areas_tree.pack(side="left", fill="both", expand=True)
 
-        # Pack the Treeview into the frame
-        self.areas_tree.pack(side="left")
+        # ======================= 🚀 EXTRACT TAB =======================
 
-        # DPI Option Menu
+        self.include_subfolders_var = ctk.IntVar()
+        self.include_subfolders_checkbox = ctk.CTkCheckBox(tab_extract, text="Include Subfolders",
+                                                           variable=self.include_subfolders_var,
+                                                           command=self.toggle_include_subfolders,
+                                                           font=(BUTTON_FONT, 9))
+        self.include_subfolders_checkbox.pack(pady=(10, 5))
+
+        self.ocr_menu_var = StringVar(value="Off")
+        self.ocr_menu = ctk.CTkOptionMenu(tab_extract,
+                                          values=["Off", "Text-first", "OCR-All", "Text1st+Image-beta"],
+                                          command=self.ocr_menu_callback,
+                                          font=("Verdana Bold", 9),
+                                          variable=self.ocr_menu_var,
+                                          width=240, height=24)
+        self.ocr_menu.pack(pady=(10, 5))
+        create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
+
         self.dpi_var = ctk.IntVar(value=150)
-        self.dpi_menu = ctk.CTkOptionMenu(self.root, values=["50","75", "150", "300", "450", "600"],
-                                          command=self.dpi_callback, font=("Verdana Bold", 7),
-                                          variable=self.dpi_var, width=43, height=14)
-        self.dpi_menu.place(x=372, y=30)
-        self.dpi_label = ctk.CTkLabel(self.root, text="DPI:", text_color="gray59", font=("Verdana Bold", 8),bg_color="transparent",height=5)
-        self.dpi_label.place(x=348, y=32)
+        self.dpi_menu = ctk.CTkOptionMenu(tab_extract,
+                                          values=["50", "75", "150", "300", "450", "600"],
+                                          command=self.dpi_callback,
+                                          font=("Verdana Bold", 9),
+                                          variable=self.dpi_var,
+                                          width=240, height=24)
+        self.dpi_menu.pack(pady=(5, 5))
+        create_tooltip(self.dpi_menu, "DPI resolution")
 
-        # Import, Export, and Clear Areas Buttons
-        self.import_button = ctk.CTkButton(self.root, text="⬇️ Import", command=self.import_rectangles,
-                                           font=(BUTTON_FONT, 9), width=60, height=10)
-        self.import_button.place(x=670, y=15)
+        self.extract_button = ctk.CTkButton(tab_extract, text="🚀 Extract Now", font=("Arial Black", 13),
+                                            corner_radius=10, width=240, height=30, command=self.start_extraction)
+        self.extract_button.pack(pady=30)
 
-        self.export_button = ctk.CTkButton(self.root, text="⬆️ Export", command=self.export_rectangles,
-                                           font=(BUTTON_FONT, 9), width=60, height=10)
-        self.export_button.place(x=670, y=40)
-
-        self.clear_areas_button = ctk.CTkButton(self.root, text="🗑 Clear", command=self.clear_all_areas,
-                                                font=(BUTTON_FONT, 9), width=60, height=10, fg_color = "red4")
-        self.clear_areas_button.place(x=670, y=65)
-
-        # Option Menu for Other Features
+        # ======================= 🧰 TOOLS TAB =======================
         self.optionmenu_var = StringVar(value="Other Features")
-        self.optionmenu = ctk.CTkOptionMenu(self.root, values=list(OPTION_ACTIONS.keys()),
+        self.optionmenu = ctk.CTkOptionMenu(tab_tools, values=list(OPTION_ACTIONS.keys()),
                                             command=self.optionmenu_callback, font=(BUTTON_FONT, 9),
-                                            variable=self.optionmenu_var, width=105, height=15)
-        self.optionmenu.place(x=850, y=10)
+                                            variable=self.optionmenu_var, width=240, height=24)
+        self.optionmenu.pack(pady=(20, 10))
+        create_tooltip(self.optionmenu, "Select additional features")
 
-        # Version Label with Tooltip
-        self.version_label = ctk.CTkLabel(self.root, text=VERSION_TEXT, fg_color="transparent",
-                                          text_color="gray59",
-                                          font=(BUTTON_FONT, 9.5))
-        self.version_label.place(x=835, y=30)
+        self.version_label = ctk.CTkLabel(tab_tools, text=VERSION_TEXT, fg_color="transparent",
+                                          text_color="gray59", font=(BUTTON_FONT, 9))
+        self.version_label.pack(pady=10, anchor="w")
         self.version_label.bind("<Button-1>", self.display_version_info)
+
+        self.root.after(100, self.place_zoom_and_version_controls)
+
+    def place_zoom_and_version_controls(self):
+        sidebar_width = self.tab_view.winfo_width() + 20
+        window_height = self.root.winfo_height()
+
+        self.zoom_frame.place(x=sidebar_width + 10, y=window_height - 65)
+
 
     def setup_bindings(self):
         self.pdf_folder_entry.bind("<KeyRelease>", self.update_pdf_folder)
         self.output_path_entry.bind("<KeyRelease>", self.update_output_path)
         self.root.bind("<Configure>", self.on_window_resize)
+
+    def setup_tooltips(self):
+        create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
+        create_tooltip(self.dpi_menu, "DPI resolution")
+        create_tooltip(self.pdf_folder_entry, "Select the main folder containing PDF files")
+        create_tooltip(self.open_sample_button, "Open a sample PDF to set areas")
+        create_tooltip(self.output_path_entry, "Select folder for the Excel output")
+        create_tooltip(self.include_subfolders_checkbox, "Include files from subfolders for extraction")
+        create_tooltip(self.extract_button, "Start the extraction process")
+        create_tooltip(self.import_button, "Import a saved template of selected areas")
+        create_tooltip(self.export_button, "Export the selected areas as a template")
+        create_tooltip(self.clear_areas_button, "Clear all selected areas")
+        create_tooltip(self.optionmenu, "Select additional features")
+
+    def drop_pdf_folder(self, event):
+        path = event.data.strip().replace("{", "").replace("}", "")
+        if os.path.isdir(path):
+            self.pdf_folder = path
+            self.pdf_folder_entry.delete(0, ctk.END)
+            self.pdf_folder_entry.insert(0, path)
+            print(f"Dropped PDF folder: {path}")
+        else:
+            messagebox.showerror("Invalid Drop", "Please drop a valid folder.")
+
+    def drop_sample_pdf(self, event):
+        path = event.data.strip().replace("{", "").replace("}", "")
+        if os.path.isfile(path) and path.lower().endswith(".pdf"):
+            self.pdf_viewer.display_pdf(path)
+            self.recent_pdf_path = path
+            print(f"Dropped Sample PDF: {path}")
+        else:
+            messagebox.showerror("Invalid Drop", "Please drop a valid PDF file.")
 
     def set_mode_area(self):
         self.pdf_viewer.selection_mode = "area"
@@ -351,19 +394,6 @@ class XtractorGUI:
     def reset_mode_button(self, button):
         """Reset the visual style of inactive buttons."""
         button.configure(fg_color="gray25", text_color="white", border_width=0)
-
-    def setup_tooltips(self):
-        create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
-        create_tooltip(self.dpi_menu, "DPI resolution")
-        create_tooltip(self.pdf_folder_entry, "Select the main folder containing PDF files")
-        create_tooltip(self.open_sample_button, "Open a sample PDF to set areas")
-        create_tooltip(self.output_path_entry, "Select folder for the Excel output")
-        create_tooltip(self.include_subfolders_checkbox, "Include files from subfolders for extraction")
-        create_tooltip(self.extract_button, "Start the extraction process")
-        create_tooltip(self.import_button, "Import a saved template of selected areas")
-        create_tooltip(self.export_button, "Export the selected areas as a template")
-        create_tooltip(self.clear_areas_button, "Clear all selected areas")
-        create_tooltip(self.optionmenu, "Select additional features")
 
     def ocr_menu_callback(self, choice):
         print("OCR menu dropdown clicked:", choice)
@@ -580,42 +610,30 @@ class XtractorGUI:
             messagebox.showerror("Error", f"No action found for {choice}")
 
     def on_window_resize(self, event=None):
-        """Handles window resizing, ensuring only the canvas and scrollbars resize while keeping all buttons fixed."""
         new_width = self.root.winfo_width()
         new_height = self.root.winfo_height()
 
         if hasattr(self, "prev_width") and hasattr(self, "prev_height"):
             if new_width == self.prev_width and new_height == self.prev_height:
-                return  # Skip unnecessary updates
+                return
 
         self.prev_width = new_width
         self.prev_height = new_height
 
         try:
-            # ✅ Resize only the canvas
-            canvas_width = new_width   # Adjust to fit within window width
-            canvas_height = max(200, new_height - 160)  # Ensure it keeps a reasonable height
+            # Estimate the width of the left tabview panel
 
-            self.pdf_viewer.resize_canvas(canvas_width, canvas_height)
+            sidebar_width = self.tab_view.winfo_width() + 20
 
-            # ✅ Adjust scrollbars to match the resized canvas
-            self.pdf_viewer.v_scrollbar.configure(height=canvas_height)
-            self.pdf_viewer.h_scrollbar.configure(width=canvas_width-25)
-            self.pdf_viewer.v_scrollbar.place_configure(x=canvas_width - self.pdf_viewer.v_scrollbar.winfo_width(), y=100)
-            self.pdf_viewer.h_scrollbar.place_configure(x=10, y=canvas_height + 107)
+            self.pdf_viewer.resize_canvas(self.root.winfo_width(), self.root.winfo_height(),x_offset=CANVAS_LEFT_MARGIN)
 
-            # ✅ Move version label **only horizontally**, not vertically
-            self.version_label.place_configure(x=new_width - 140, y=canvas_height + 127)
-
-            self.zoom_frame.place_configure(x=30, y=canvas_height + 127)
-            self.zoom_out_label.pack(side="left", padx=(5, 2))
-            self.zoom_slider.pack(side="left")
-            self.zoom_in_label.pack(side="left", padx=(2, 5))
-
+            # Zoom and version controls
+            self.zoom_frame.place_configure(x=sidebar_width + 10, y=new_height - 65)
 
 
         except Exception as e:
             print(f"Error resizing widgets: {e}")
+
 
     def display_version_info(self, event):
         version_text = """

@@ -6,11 +6,24 @@ VERSION_TEXT = "Version 0.240915-03"
 INITIAL_WIDTH = 965
 GOLDEN_RATIO = (1 + 5 ** 0.5) / 2
 INITIAL_HEIGHT = INITIAL_WIDTH / GOLDEN_RATIO
-CANVAS_WIDTH = int(INITIAL_WIDTH * 0.95)  # 95% of window width
-CANVAS_HEIGHT = int(INITIAL_HEIGHT * 0.75)  # 75% of window height
+CANVAS_WIDTH = int(INITIAL_WIDTH * 0.98)  # was 0.95
+CANVAS_HEIGHT = int(INITIAL_HEIGHT * 0.80)  # was 0.75
+CANVAS_PADDING = 20
 INITIAL_X_POSITION = 100
 INITIAL_Y_POSITION = 100
 CURRENT_ZOOM = 2.0
+
+# Sidebar (tab view)
+SIDEBAR_WIDTH = 280
+SIDEBAR_PADDING = 10  # left/right margin around the sidebar
+
+# Canvas margins and scrollbars
+CANVAS_LEFT_MARGIN = SIDEBAR_WIDTH + SIDEBAR_PADDING * 2  # sidebar + padding
+CANVAS_TOP_MARGIN = 100
+CANVAS_BOTTOM_MARGIN = 40
+SCROLLBAR_THICKNESS = 16
+CANVAS_EXTRA_MARGIN = 5  # extra spacing between canvas and scrollbar
+
 
 BUTTON_FONT = "Verdana"
 
@@ -48,92 +61,3 @@ RESIZE_DELAY = 700  # milliseconds delay
 TESSDATA_FOLDER = None
 
 
-
-'''
-Version 02
-- fixed duplicate Title issue
-- revised creation of temp folder for images.
-- added tessdata check beside the Xtractor app
-
-Version 01
-- re-added error handling for folders/textboxes
-
-
-Version 00
-- subprocessing (now x5 speed!!)
-- Progress bar added again
-- List of Drawings merger added on other features
-
-Start of v0.240915
-
-End of v0.231219
-Changelog 14
--- Overhaul - Separated into files and lessened the use of Global Variables.
--- Added header Selection
-
-Changelog 13
-- Tooltips added
-- Fixed updating rectangles
-- Autoscroll
-- Right Click to Delete Rectangle
-
-Changelog 12
-- added Image extraction (would not work for PDFs with multiple pages)
-- added Last Modified Date and Size for Extractor and other features
-- updated to pymupdf v 1.24.10
-- import/export areas
-- recent pdf/close pdf
-
-Changelog 11
-- Fixed "Illegal Text" error
-- Text sorting hotfix
-
-Changelog 10
-- Fixed OCR
-
-Changelog 09
-- Fixed Zoom
-- OCR options and DPI options
-
-Changelog 08
-- Optimized-ish? XD
-- Progress Bar (at last!)
-
-Changelog 07
-- Resize Display along with th windows
-- Added Option button for other features
-- Added Bulk Rename and Directory List
-- Scroll & Shift+Scroll on Canvas
-
-Changelog 06
-- UI Overhaul
-- Zoom implemented
-- Rectangles stays when zoomed
-- Removed progress bar
-- Can now edit coordinates
-
-Changelog 05
--  time lapsed counter
--  Progress bar during extraction
--  List files on a table (DWG and PDf counter) [INTEGRATED!!!]
--  excel output: add time created on filename
--  open generated excel file (or directory)
--  Includes all pages
-
-Changelog 04
-- added DWG and PDF counter (numbers only)
-- include subfolder
-
-Changelog 03
-- coordinates based on pdf's rotation
-- can now read text regardless of pdf inherent rotation
-
-Changelog 02
-- scrollbar (not placed well, but working)
-- area selection now working (coordinates are now correct)
-- text extraction is now working
-
-Changelog 01
-- scrollbar (not placed well, but working)
-- area selection in display (areas not fixed yet)
-'''

@@ -8,12 +8,9 @@ import secrets
 import pymupdf as fitz
 import sys
 import csv
-import time
+
 import gc
 import json
-from openpyxl import Workbook
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
 from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
@@ -22,8 +19,9 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils import column_index_from_string
 from utils import adjust_coordinates_for_rotation, find_tessdata
 import psutil #for debug
-import os
 
+# TODO: Fix UI, move items, hovers, styles
+# TODO: Dont generate NDJSON if there's no revision table defined
 
 
 # Define patterns
