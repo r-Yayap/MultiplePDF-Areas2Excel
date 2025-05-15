@@ -20,16 +20,13 @@ from openpyxl.utils import column_index_from_string
 from utils import adjust_coordinates_for_rotation, find_tessdata
 import psutil #for debug
 
-# TODO: Fix UI, move items, hovers, styles
-# TODO: Dont generate NDJSON if there's no revision table defined
-
 
 # Define patterns
 REVISION_REGEX = re.compile(r"^[A-Z]{1,2}\d{1,2}[a-zA-Z]?$", re.IGNORECASE)
-DATE_REGEX = re.compile(r"""12
-    (?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}) |               # 01/01/24 or 1-1-2025
-    (?:\d{1,2}\s*[-]?\s*[A-Za-z]{3,9}\s*[-]?\s*\d{2,4})  # 3-Apr-2025 or 3 April 25
-""", re.VERBOSE)
+DATE_REGEX = re.compile(r"""
+    (?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}) |                    # e.g. 07/05/25 or 19-03-2025
+    (?:\d{1,2}\s*[-]?\s*[A-Za-z]{3,9}\s*[-]?\s*\d{2,4})    # e.g. 7 Apr 25 or 7-Apr-2025
+""", re.VERBOSE | re.IGNORECASE)
 DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission"]
 
 def print_ram(): #for debug
@@ -37,12 +34,13 @@ def print_ram(): #for debug
     mem_mb = process.memory_info().rss / 1024 / 1024
     print(f"📊 Current RAM usage: {mem_mb:.2f} MB")
 
-def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder, unid):
+def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder, unid, revision_regex):
     extractor = TextExtractor(
         pdf_folder=pdf_folder,
         output_excel_path="",
         areas=areas,
         ocr_settings=ocr_settings,
+        revision_regex=revision_regex,
         batch_threshold=0
     )
     extractor.revision_area = revision_area
@@ -174,12 +172,17 @@ class TextExtractor:
         desc = row[desc_idx].strip() if desc_idx is not None and desc_idx < len(row) else None
         date = row[date_idx].strip() if date_idx is not None and date_idx < len(row) else None
 
+        print(f"🧪 Raw values → rev: {repr(rev)}, desc: {repr(desc)}, date: {repr(date)}")
+
         # Validate formats
-        if rev and not self.revision_regex.fullmatch(rev.upper()):
+        if rev and not self.revision_regex.fullmatch(rev.strip().upper()):
+            print(f"⚠️ Rejected rev: {repr(rev)} by pattern: {self.revision_regex.pattern}")
             rev = None
         if date and not DATE_REGEX.search(date):
+            print(f"⚠️ Rejected date: {repr(date)}")
             date = None
 
+        print(f"🎯 Validated → rev: {rev}, desc: {desc}, date: {date}")
         return rev, desc, date
 
     def extract_revision_history_from_page_obj(self, page, revision_coordinates):
@@ -386,7 +389,7 @@ class TextExtractor:
 
         jobs = [
             (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder,
-             str(10000 + idx))
+             str(10000 + idx), self.revision_regex.pattern)
             for idx, pdf_path in enumerate(pdf_files)
         ]
 
