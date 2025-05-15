@@ -360,12 +360,19 @@ class XtractorGUI:
         self.extract_button.pack(pady=30)
 
         # ======================= 🧰 TOOLS TAB =======================
-        self.optionmenu_var = StringVar(value="Other Features")
-        self.optionmenu = ctk.CTkOptionMenu(tab_tools, values=list(OPTION_ACTIONS.keys()),
-                                            command=self.optionmenu_callback, font=(BUTTON_FONT, 9),
-                                            variable=self.optionmenu_var, width=240, height=24)
-        self.optionmenu.pack(pady=(20, 10))
+        # Create a frame for all tools
+        tool_frame = ctk.CTkFrame(tab_tools)
+        tool_frame.pack(pady=10, fill="both", expand=True)
 
+        for label, tool in tool_definitions.items():
+            btn = ctk.CTkButton(tool_frame, text=label, width=240, height=28, font=(BUTTON_FONT, 10),
+                                command=tool["action"])
+            btn.pack(pady=(10, 2))
+
+            help_btn = ctk.CTkButton(tool_frame, text="How to use?", width=240, height=20, font=(BUTTON_FONT, 9),
+                                     fg_color="gray20", hover_color="gray30",
+                                     command=lambda t=tool: self.show_tool_instructions(t["instructions"]))
+            help_btn.pack(pady=(0, 5))
 
         self.version_label = ctk.CTkLabel(tab_tools, text=VERSION_TEXT, fg_color="transparent",
                                           text_color="gray59", font=(BUTTON_FONT, 9))
@@ -373,6 +380,16 @@ class XtractorGUI:
         self.version_label.bind("<Button-1>", self.display_version_info)
 
         self.root.after(300, self.place_zoom_and_version_controls)
+
+    def show_tool_instructions(self, text):
+        window = ctk.CTkToplevel(self.root)
+        window.title("Tool Instructions")
+        window.geometry("500x400")
+        text_box = ctk.CTkTextbox(window, wrap="word")
+        text_box.insert("end", text)
+        text_box.configure(state="disabled")
+        text_box.pack(padx=10, pady=10, fill="both", expand=True)
+        window.grab_set()
 
     def place_zoom_and_version_controls(self):
         sidebar_width = self.tab_view.winfo_width() + 20
@@ -397,7 +414,6 @@ class XtractorGUI:
         create_tooltip(self.import_button, "Import a saved template of selected areas")
         create_tooltip(self.export_button, "Export the selected areas as a template")
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
-        create_tooltip(self.optionmenu, "Select additional features")
         create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
 
 
