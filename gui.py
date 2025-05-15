@@ -189,11 +189,11 @@ class XtractorGUI:
 
         # Floating recent PDF and close PDF buttons (top-right)
         self.recent_pdf_button = ctk.CTkButton(self.root, text="↩", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 10), width=24, height=24)
+                                               font=(BUTTON_FONT, 10), width=20, height=20)
         self.recent_pdf_button.pack(pady=2)
 
         self.close_pdf_button = ctk.CTkButton(self.root, text="⨉", command=self.close_pdf,
-                                              font=(BUTTON_FONT, 10), fg_color="red4",width=24, height=24)
+                                              font=(BUTTON_FONT, 10), fg_color="red4",width=20, height=20)
         self.close_pdf_button.pack(pady=2)
 
 
@@ -376,6 +376,24 @@ class XtractorGUI:
                                             corner_radius=10, width=240, height=30, command=self.start_extraction)
         self.extract_button.pack(pady=30)
 
+        self.extract_description_box = ctk.CTkTextbox(tab_extract, width=240, height=200, wrap="word",
+                                                      font=(BUTTON_FONT, 9))
+        self.extract_description_box.insert("end",
+                                            "📤 EXTRACTION SUMMARY\n\n"
+                                            "✅ EXCEL FILE (.xlsx):\n"
+                                            "  - One row per PDF page\n"
+                                            "  - Columns from selected areas\n"
+                                            "  - Hyperlinks to original PDF files\n\n"
+                                            "📌 IF REVISION TABLE IS USED:\n"
+                                            "  - Adds revision rows (Rev, Desc, Date)\n"
+                                            "  - Saves NDJSON with structured revision info\n\n"
+                                            "🧠 IF OCR IS ENABLED:\n"
+                                            "  - Extracts text from scanned PDFs\n"
+                                            "  - Can embed area images\n\n"
+                                            )
+        self.extract_description_box.configure(state="disabled")  # Make it read-only
+        self.extract_description_box.pack(pady=(0, 10))
+
         # ======================= 🧰 TOOLS TAB =======================
         # Create a frame for all tools
         tool_frame = ctk.CTkFrame(tab_tools)
@@ -468,6 +486,8 @@ class XtractorGUI:
         create_tooltip(self.export_button, "Export the selected areas as a template")
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
         create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
+        create_tooltip(self.recent_pdf_button, "Open recent PDF")
+        create_tooltip(self.close_pdf_button, "Close the opened PDF")
 
 
     def build_folder_tree(self):
