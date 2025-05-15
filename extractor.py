@@ -8,7 +8,7 @@ import secrets
 import pymupdf as fitz
 import sys
 import csv
-
+import glob
 import gc
 import json
 from datetime import datetime
@@ -43,7 +43,6 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
         output_excel_path="",
         areas=areas,
         ocr_settings=ocr_settings,
-        include_subfolders=False,
         batch_threshold=0
     )
     extractor.revision_area = revision_area
@@ -55,8 +54,11 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
     jsonl_path = os.path.join(temp_image_folder, f"temp_{unid}.ndjson")
 
     # Stream directly to temp CSV/NDJSON (per worker)
-    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file, \
-            open(jsonl_path, "w", encoding="utf-8") as jsonl_file:
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+        jsonl_file = None
+        if revision_area:  # ✅ Only open NDJSON if revision_area is defined
+            jsonl_file = open(jsonl_path, "w", encoding="utf-8")
+
         csv_writer = csv.writer(csv_file)
 
         for row in result_rows:
@@ -68,9 +70,13 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
             csv_row = [unid, file_size, mod_date, folder, filename, page_no] + text_values + [revisions_flat]
             csv_writer.writerow(csv_row)
 
-            # NDJSON Row
-            json.dump({"unid": unid, "revisions": revisions}, jsonl_file, ensure_ascii=False)
-            jsonl_file.write("\n")
+            # NDJSON Row (optional)
+            if jsonl_file:
+                json.dump({"unid": unid, "revisions": revisions}, jsonl_file, ensure_ascii=False)
+                jsonl_file.write("\n")
+
+        if jsonl_file:
+            jsonl_file.close()
 
     # Explicit cleanup
     extractor = None
@@ -83,14 +89,14 @@ def _unwrap_process_single_pdf(args):
 
 
 class TextExtractor:
-    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, include_subfolders, revision_regex=None, batch_threshold=100):
+    def __init__(self, pdf_folder, output_excel_path, areas, ocr_settings, revision_regex=None, batch_threshold=100):
         self.header_column_map = None
         self.final_output_path = None
         self.pdf_folder = pdf_folder
         self.output_excel_path = output_excel_path
         self.areas = areas
         self.ocr_settings = ocr_settings
-        self.include_subfolders = include_subfolders
+
         self.revision_regex = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX
         self.tessdata_folder = None  # Will be set lazily if OCR is needed
         self.batch_threshold = batch_threshold
@@ -342,12 +348,20 @@ class TextExtractor:
                     writer.writerows(reader)
                 os.remove(f)  # Cleanup immediately
 
-        # Combine NDJSON
-        with open(combined_jsonl, "w", encoding="utf-8") as outfile:
-            for f in temp_jsonl_files:
-                with open(f, "r", encoding="utf-8") as infile:
-                    shutil.copyfileobj(infile, outfile)
-                os.remove(f)  # Cleanup immediately
+        # ✅ Only combine NDJSON if revision area was defined
+        if self.revision_area:
+            with open(combined_jsonl, "w", encoding="utf-8") as outfile:
+                for f in temp_jsonl_files:
+                    with open(f, "r", encoding="utf-8") as infile:
+                        shutil.copyfileobj(infile, outfile)
+                    os.remove(f)  # Cleanup
+
+            # ✅ Save final copy next to Excel
+            ndjson_output_path = final_output_path.value.replace(".xlsx", "_revisions.ndjson")
+            try:
+                shutil.copy(combined_jsonl, ndjson_output_path)
+            except Exception as e:
+                print(f"❌ Failed to copy NDJSON file: {e}")
 
         # Stream to Excel (existing efficient method)
         max_revisions = self.get_max_revisions(combined_csv)
@@ -363,9 +377,9 @@ class TextExtractor:
                 max_revs = max(max_revs, len(revisions))
         return max_revs
 
-    def start_extraction(self, progress_counter, total_files, final_output_path):
+    def start_extraction(self, progress_counter, total_files, final_output_path,selected_paths):
         n_workers = multiprocessing.cpu_count()
-        pdf_files = self.get_pdf_files()
+        pdf_files = selected_paths
         total_files.value = len(pdf_files)
 
         os.makedirs(self.temp_image_folder, exist_ok=True)
@@ -476,37 +490,12 @@ class TextExtractor:
             # total_files.value += 1  # Update progress counter even on error
             return result_rows
 
-    def get_pdf_files(self):
-        """Gathers all PDF files within the specified folder with validation."""
-        pdf_files = []
-
-        # Validate base folder exists and is accessible
-        if not os.path.exists(self.pdf_folder):
-            raise ValueError(f"PDF folder does not exist: {self.pdf_folder}")
-        if not os.path.isdir(self.pdf_folder):
-            raise ValueError(f"PDF path is not a directory: {self.pdf_folder}")
-
-        for root_folder, subfolders, files in os.walk(self.pdf_folder):
-            if not self.include_subfolders:
-                subfolders.clear()
-
-            for f in files:
-                if f.lower().endswith('.pdf'):
-                    full_path = os.path.join(root_folder, f)
-                    try:
-                        # Validate path components
-                        if not os.path.normpath(full_path).startswith(os.path.normpath(self.pdf_folder)):
-                            continue  # Skip paths that try to traverse outside base folder
-                        if any(part.startswith('.') for part in full_path.split(os.sep)):
-                            continue  # Skip hidden files/directories
-                        if not os.path.isfile(full_path):
-                            continue  # Skip non-files
-
-                        pdf_files.append(full_path)
-                    except Exception as e:
-                        print(f"Skipping invalid PDF path {full_path}: {e}")
-
-        return pdf_files
+    def get_pdf_files(self, selected_paths=None):
+        """Return only explicitly selected PDF files if provided, else fallback to scanning."""
+        if selected_paths:
+            return selected_paths
+        # (optional fallback if needed)
+        return []
 
     def extract_text_from_area(self, page, area_coordinates, pdf_path, page_number, area_index):
         """Extracts text or image content from a specified area in a PDF page."""

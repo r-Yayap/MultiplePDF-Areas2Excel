@@ -1,6 +1,7 @@
 # gui.py
 import multiprocessing
 import os
+import re
 import time
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, StringVar
@@ -12,6 +13,8 @@ from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
 from utils import REVISION_PATTERNS
+from ttkwidgets import CheckboxTreeview
+from tkinter import ttk
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
 
@@ -28,7 +31,7 @@ class XtractorGUI:
 
         self.root.update_idletasks()
 
-        self.include_subfolders = False
+
         self.pdf_folder = ''
         self.output_excel_path = ''
         self.ocr_settings = {'enable_ocr': 'Off', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
@@ -215,24 +218,55 @@ class XtractorGUI:
         self.pdf_folder_button.drop_target_register(DND_ALL)
         self.pdf_folder_button.dnd_bind('<<Drop>>', self.drop_pdf_folder)
 
-        self.pdf_folder_entry = ctk.CTkEntry(tab_files, width=240, height=24, font=(BUTTON_FONT, 9),
+        self.pdf_folder_entry = ctk.CTkEntry(self.root, width=240, height=24, font=(BUTTON_FONT, 9),
                                              placeholder_text="Select Folder with PDFs", border_width=1,
                                              corner_radius=3)
-        self.pdf_folder_entry.pack(pady=(10, 2))
+        self.pdf_folder_entry.place(x=-200, y=-223) #hide haha
+        # Files Tree Label
+        self.files_tree_label = ctk.CTkLabel(tab_files, text="📄 Files in Folder", font=(BUTTON_FONT, 10))
+        self.files_tree_label.pack(pady=(10, 0))
 
-        # Sample PDF Drop Zone
-        self.open_sample_button = ctk.CTkButton(tab_files,
-                                                text="\n➕\nDrop PDF or Click to Select",
-                                                command=self.open_sample_pdf,
-                                                fg_color="transparent", border_width=2, width=240, height=80,
-                                                hover_color="#444", text_color="white")
-        self.open_sample_button.pack(pady=5)
-        self.open_sample_button.drop_target_register(DND_ALL)
-        self.open_sample_button.dnd_bind('<<Drop>>', self.drop_sample_pdf)
+        # Create Frame to hold the tree
+        self.files_tree_frame = ctk.CTkFrame(tab_files, height=140, width=240)
+        self.files_tree_frame.pack(pady=(2, 5), fill="both", expand=True)
 
+        # 🧱 Create scrollable frame ONCE
+        self.files_tree_scrollframe = ctk.CTkScrollableFrame(
+            self.files_tree_frame,
+            orientation="horizontal",
+            width=240,
+            height=150,
+            fg_color="transparent"
+        )
+        self.files_tree_scrollframe.pack(fill="both", expand=True)
 
+        # Inner container for Treeview
+        self.files_tree_container = ctk.CTkFrame(self.files_tree_scrollframe, fg_color="transparent")
+        self.files_tree_container.pack(side="left", fill="both", expand=True)
+
+        # Placeholder for Treeview widget
+        self.files_tree_widget = None
+        # Counter Label (created only once)
+        self.pdf_counter_label = ctk.CTkLabel(self.files_tree_frame, text="Selected PDFs: 0", font=(BUTTON_FONT, 9))
+        self.pdf_counter_label.pack(pady=(5, 0), anchor="center")
 
         # ======================= 🔲 RECTANGLES TAB =======================
+
+
+        # 🔲 Frame for Mode Buttons (Area / Revision)
+        mode_frame = ctk.CTkFrame(tab_rectangles, width=240, height=24, fg_color="transparent")
+        mode_frame.pack_propagate(False)
+        mode_frame.pack(pady=(5, 5))
+
+        self.mode_area_btn = ctk.CTkButton(mode_frame, text="🟥 Area", command=self.set_mode_area,
+                                           font=(BUTTON_FONT, 9), width=115, height=24)
+        self.mode_area_btn.pack(side="left", padx=5)
+
+        self.mode_revision_btn = ctk.CTkButton(mode_frame, text="🟩 Revision Table", command=self.set_mode_revision,
+                                               font=(BUTTON_FONT, 9), width=115, height=24)
+        self.mode_revision_btn.pack(side="left", padx=5)
+
+        #revision pattern
         pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
         self.revision_dropdown_map = {f"{k} — {', '.join(v['examples'])}": k for k, v in REVISION_PATTERNS.items()}
         self.revision_pattern_var = StringVar(value=pattern_options[-1])
@@ -242,26 +276,26 @@ class XtractorGUI:
                                                        variable=self.revision_pattern_var,
                                                        width=240, height=24,
                                                        fg_color="#5A6C89", button_color="#5A6C89", text_color="white")
-        self.revision_pattern_menu.pack(pady=(10, 5))
+        self.revision_pattern_menu.pack(pady=(5, 5))
         create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
 
-        self.mode_area_btn = ctk.CTkButton(tab_rectangles, text="🟥 Area Mode", command=self.set_mode_area,
-                                           font=(BUTTON_FONT, 9), width=240, height=24)
-        self.mode_area_btn.pack(pady=(5, 2))
-        self.mode_revision_btn = ctk.CTkButton(tab_rectangles, text="🟩 Revision Table Mode",
-                                               command=self.set_mode_revision,
-                                               font=(BUTTON_FONT, 9), width=240, height=24)
-        self.mode_revision_btn.pack(pady=(0, 10))
+        # ⬇️ Frame for Import/Export Buttons
+        action_frame = ctk.CTkFrame(tab_rectangles, width=240, height=24, fg_color="transparent")
+        action_frame.pack_propagate(False)
+        action_frame.pack(pady=(25, 5))
 
-        self.import_button = ctk.CTkButton(tab_rectangles, text="⬇️ Import Areas", command=self.import_rectangles,
-                                           font=(BUTTON_FONT, 9), width=240, height=24)
-        self.import_button.pack(pady=2)
-        self.export_button = ctk.CTkButton(tab_rectangles, text="⬆️ Export Areas", command=self.export_rectangles,
-                                           font=(BUTTON_FONT, 9), width=240, height=24)
-        self.export_button.pack(pady=2)
-        self.clear_areas_button = ctk.CTkButton(tab_rectangles, text="🗑 Clear Areas", command=self.clear_all_areas,
+        self.import_button = ctk.CTkButton(action_frame, text="⬇️ Import Areas", command=self.import_rectangles,
+                                           font=(BUTTON_FONT, 9), width=115, height=24)
+        self.import_button.pack(side="left", padx=5)
+
+        self.export_button = ctk.CTkButton(action_frame, text="⬆️ Export Areas", command=self.export_rectangles,
+                                           font=(BUTTON_FONT, 9), width=115, height=24)
+        self.export_button.pack(side="left", padx=5)
+
+        # 🗑 Clear Button (Full width)
+        self.clear_areas_button = ctk.CTkButton(tab_rectangles, text="🗑 Clear All Areas", command=self.clear_all_areas,
                                                 font=(BUTTON_FONT, 9), width=240, height=24, fg_color="red4")
-        self.clear_areas_button.pack(pady=(2, 10))
+        self.clear_areas_button.pack(pady=(5, 15))
 
         # Treeview inside a sub-frame
         self.areas_frame = ctk.CTkFrame(tab_rectangles, height=120, width=240)
@@ -278,12 +312,7 @@ class XtractorGUI:
 
         # ======================= 🚀 EXTRACT TAB =======================
 
-        self.include_subfolders_var = ctk.IntVar()
-        self.include_subfolders_checkbox = ctk.CTkCheckBox(tab_extract, text="Include Subfolders",
-                                                           variable=self.include_subfolders_var,
-                                                           command=self.toggle_include_subfolders,
-                                                           font=(BUTTON_FONT, 9))
-        self.include_subfolders_checkbox.pack(pady=(10, 5))
+
 
         self.ocr_menu_var = StringVar(value="Off")
         self.ocr_menu = ctk.CTkOptionMenu(tab_extract,
@@ -350,24 +379,109 @@ class XtractorGUI:
         create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
         create_tooltip(self.dpi_menu, "DPI resolution")
         create_tooltip(self.pdf_folder_entry, "Select the main folder containing PDF files")
-        create_tooltip(self.open_sample_button, "Open a sample PDF to set areas")
+        # create_tooltip(self.open_sample_button, "Open a sample PDF to set areas")
         create_tooltip(self.output_path_entry, "Select folder for the Excel output")
-        create_tooltip(self.include_subfolders_checkbox, "Include files from subfolders for extraction")
         create_tooltip(self.extract_button, "Start the extraction process")
         create_tooltip(self.import_button, "Import a saved template of selected areas")
         create_tooltip(self.export_button, "Export the selected areas as a template")
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
         create_tooltip(self.optionmenu, "Select additional features")
 
-    def drop_pdf_folder(self, event):
-        path = event.data.strip().replace("{", "").replace("}", "")
-        if os.path.isdir(path):
-            self.pdf_folder = path
-            self.pdf_folder_entry.delete(0, ctk.END)
-            self.pdf_folder_entry.insert(0, path)
-            print(f"Dropped PDF folder: {path}")
+    def build_folder_tree(self):
+        # ✅ Only destroy the previous Treeview, not the scrollable frame or container
+        if self.files_tree_widget:
+            self.files_tree_widget.destroy()
+            self.files_tree_widget = None
+
+        style = ttk.Style()
+        style.configure("Treeview", font=("Segoe UI", 7))
+        style.configure("Treeview.Heading", font=("Arial", 8, "bold"))
+
+        # ✅ New Treeview inside pre-created container
+        self.files_tree_widget = CheckboxTreeview(self.files_tree_container, show="tree", height=10)
+        self.files_tree_widget.pack(side="left", fill="both", expand=True)
+        self.files_tree_widget.column("#0", width=800, stretch=False)
+
+        # ✅ Add vertical scrollbar (only once per build)
+        v_scroll = ttk.Scrollbar(self.files_tree_container, orient="vertical", command=self.files_tree_widget.yview)
+        self.files_tree_widget.configure(yscrollcommand=v_scroll.set)
+        v_scroll.pack(side="right", fill="y")
+
+        # ✅ Tree structure
+        root_node = self.files_tree_widget.insert("", "end", text=os.path.basename(self.pdf_folder), tags=("checked",))
+
+        def insert_children(parent, folder_path):
+            try:
+                for entry in sorted(os.listdir(folder_path)):
+                    full_path = os.path.join(folder_path, entry)
+                    if os.path.isdir(full_path):
+                        if self.has_pdf(full_path):
+                            node = self.files_tree_widget.insert(parent, "end", text=entry, tags=("checked",))
+                            insert_children(node, full_path)
+                    elif entry.lower().endswith(".pdf"):
+                        self.files_tree_widget.insert(parent, "end", text=entry, values=[full_path], tags=("checked",))
+            except Exception as e:
+                print(f"Error accessing {folder_path}: {e}")
+
+        insert_children(root_node, self.pdf_folder)
+
+
+        self.files_tree_widget.bind("<<TreeviewSelect>>", lambda e: self.update_pdf_counter())
+        self.files_tree_widget.bind("<ButtonRelease-1>", lambda e: self.root.after(100, self.update_pdf_counter))
+
+        self.update_pdf_counter()
+
+    def recursive_set_check_state(self, item_id):
+        item = self.files_tree_widget.item(item_id)
+        values = item.get("values", [])
+        if values:
+            full_path = os.path.abspath(values[0])
+            tag = "checked" if full_path in self.dropped_pdf_set else "unchecked"
+            self.files_tree_widget.item(item_id, tags=(tag,))
         else:
-            messagebox.showerror("Invalid Drop", "Please drop a valid folder.")
+            # Folder node – recurse
+            for child_id in self.files_tree_widget.get_children(item_id):
+                self.recursive_set_check_state(child_id)
+
+    def drop_pdf_folder(self, event):
+        import re
+
+        raw_data = event.data.strip()
+        raw_items = re.findall(r'{(.*?)}', raw_data) or [raw_data.strip()]
+        cleaned_paths = [os.path.abspath(p.strip('"')) for p in raw_items]
+
+        dropped_pdfs = [p for p in cleaned_paths if os.path.isfile(p) and p.lower().endswith(".pdf")]
+        dropped_folders = [p for p in cleaned_paths if os.path.isdir(p)]
+
+        # Case 1: PDFs dropped directly
+        if dropped_pdfs:
+            self.dropped_pdf_set = set(dropped_pdfs)
+            common_root = os.path.commonpath(dropped_pdfs)
+            self.pdf_folder = common_root if os.path.isdir(common_root) else os.path.dirname(dropped_pdfs[0])
+            self.pdf_folder_entry.delete(0, ctk.END)
+            self.pdf_folder_entry.insert(0, self.pdf_folder)
+            self.build_folder_tree()
+            for iid in self.files_tree_widget.get_children(""):
+                self.recursive_set_check_state(iid)
+            self.update_pdf_counter()
+
+            if not self.pdf_viewer.pdf_document:
+                self.pdf_viewer.display_pdf(dropped_pdfs[0])
+                self.recent_pdf_path = dropped_pdfs[0]
+                print(f"Loaded dropped PDF: {dropped_pdfs[0]}")
+            return
+
+        # Case 2: A single folder was dropped
+        if len(dropped_folders) == 1:
+            self.pdf_folder = dropped_folders[0]
+            self.pdf_folder_entry.delete(0, ctk.END)
+            self.pdf_folder_entry.insert(0, self.pdf_folder)
+            self.dropped_pdf_set = set()  # reset
+            self.build_folder_tree()
+            self.update_pdf_counter()
+            return
+
+        messagebox.showerror("Invalid Drop", "Please drop a PDF file or a folder.")
 
     def drop_sample_pdf(self, event):
         path = event.data.strip().replace("{", "").replace("}", "")
@@ -397,6 +511,33 @@ class XtractorGUI:
     def reset_mode_button(self, button):
         """Reset the visual style of inactive buttons."""
         button.configure(fg_color="gray25", text_color="white", border_width=0)
+
+    def update_pdf_counter(self):
+        if not self.files_tree_widget:
+            return
+
+        def is_pdf(iid):
+            item = self.files_tree_widget.item(iid)
+            text = item.get("text", "")
+            return text.lower().endswith(".pdf")
+
+        checked = [iid for iid in self.files_tree_widget.get_checked() if is_pdf(iid)]
+        count = len(checked)
+        self.pdf_counter_label.configure(text=f"Selected PDFs: {count}")
+
+    def has_pdf(self, folder_path):
+        """Recursively checks if the folder or its subfolders contain any .pdf files."""
+        try:
+            for entry in os.listdir(folder_path):
+                full_path = os.path.join(folder_path, entry)
+                if os.path.isdir(full_path):
+                    if self.has_pdf(full_path):
+                        return True
+                elif entry.lower().endswith(".pdf"):
+                    return True
+        except Exception as e:
+            print(f"Error scanning {folder_path}: {e}")
+        return False
 
     def ocr_menu_callback(self, choice):
         print("OCR menu dropdown clicked:", choice)
@@ -440,6 +581,7 @@ class XtractorGUI:
         self.pdf_folder = filedialog.askdirectory()
         self.pdf_folder_entry.delete(0, ctk.END)
         self.pdf_folder_entry.insert(0, self.pdf_folder)
+        self.build_folder_tree()
 
     def browse_output_path(self):
         """Opens a dialog to specify the output Excel file path."""
@@ -465,9 +607,6 @@ class XtractorGUI:
         """Adjusts the zoom level of the PDFViewer based on slider input."""
         zoom_level = float(value)
         self.pdf_viewer.set_zoom(zoom_level)  # Update zoom in PDFViewer
-
-    def toggle_include_subfolders(self):
-        self.include_subfolders = self.include_subfolders_var.get()
 
     def start_extraction(self):
         """Initiates the extraction process with a progress bar and total files count."""
@@ -521,6 +660,21 @@ class XtractorGUI:
                                                orientation="horizontal", width=250)
         self.progress_bar.pack(pady=10)
 
+        # 🧠 Extract only checked PDFs
+        checked = self.files_tree_widget.get_checked()
+        selected_paths = []
+
+        for iid in checked:
+            item = self.files_tree_widget.item(iid)
+            if item and "values" in item and item["values"]:
+                path = item["values"][0]
+                if path.lower().endswith(".pdf"):
+                    selected_paths.append(path)
+
+        if not selected_paths:
+            messagebox.showerror("No Files Selected", "Please check at least one PDF to extract.")
+            return
+
         # Set up shared counters (use multiprocessing.Value for direct shared memory access)
         progress_counter = multiprocessing.Value('i', 0)  # ✅ REAL shared memory
         total_files = multiprocessing.Value('i', 0)  # ✅ REAL shared memory
@@ -540,15 +694,19 @@ class XtractorGUI:
             output_excel_path=self.output_excel_path,
             areas=self.pdf_viewer.areas,
             ocr_settings=self.ocr_settings,
-            include_subfolders=self.include_subfolders,
             revision_regex=selected_revision_regex
         )
+        extractor.revision_area = self.pdf_viewer.revision_area
 
         # ✅ Pass the revision area from the viewer to the extractor
         extractor.revision_area = self.pdf_viewer.revision_area
 
-        extraction_process = multiprocessing.Process(target=extractor.start_extraction,
-                                                     args=(progress_counter, total_files, final_output_path))
+        # Pass selected files to start_extraction
+        extraction_process = multiprocessing.Process(
+            target=extractor.start_extraction,
+            args=(progress_counter, total_files, final_output_path, selected_paths)  # pass files directly
+        )
+
         extraction_process.start()
 
         # ✅ Store the reference to fetch the filename later
@@ -638,7 +796,6 @@ class XtractorGUI:
 
         except Exception as e:
             print(f"Error resizing widgets: {e}")
-
 
     def display_version_info(self, event):
         version_text = """
