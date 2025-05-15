@@ -17,8 +17,6 @@ from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
-
-
 class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -277,6 +275,18 @@ class XtractorGUI:
                                                        fg_color="#5A6C89", button_color="#5A6C89", text_color="white")
         self.revision_pattern_menu.pack(pady=(5, 5))
 
+        # 🛈 How to Use Button (Revision Table)
+        self.revision_help_button = ctk.CTkButton(
+            tab_rectangles,
+            text="🛈 How to Use?",
+            command=self.show_revision_help,
+            font=(BUTTON_FONT, 9),
+            width=240,
+            height=24,
+            fg_color="#3B4A67"
+        )
+        self.revision_help_button.pack(pady=(0, 5))
+
 
         # ⬇️ Frame for Import/Export Buttons
         action_frame = ctk.CTkFrame(tab_rectangles, width=240, height=24, fg_color="transparent")
@@ -297,8 +307,10 @@ class XtractorGUI:
         self.clear_areas_button.pack(pady=(5, 15))
 
         # Treeview inside a sub-frame
-        self.areas_frame = ctk.CTkFrame(tab_rectangles, height=120, width=240)
-        self.areas_frame.pack(pady=5, fill="both")
+        self.areas_frame = ctk.CTkFrame(tab_rectangles, width=240)
+        self.areas_frame.pack_propagate(False)  # Optional to maintain control over child sizes
+
+        self.areas_frame.pack(pady=5, fill="both", expand=True)
         self.areas_tree = EditableTreeview(self, self.areas_frame,
                                            columns=("Title", "x0", "y0", "x1", "y1"),
                                            show="headings", height=4)
@@ -308,6 +320,11 @@ class XtractorGUI:
             self.areas_tree.heading(col, text=col)
             self.areas_tree.column(col, width=40, anchor="center")
         self.areas_tree.pack(side="left", fill="both", expand=True)
+
+        scrollbar = ctk.CTkScrollbar(self.areas_frame, orientation="vertical", command=self.areas_tree.yview)
+        self.areas_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.areas_tree.bind("<<TreeviewSelect>>", self.on_treeview_select)
 
         # ======================= 🚀 EXTRACT TAB =======================
 
@@ -390,6 +407,42 @@ class XtractorGUI:
         text_box.configure(state="disabled")
         text_box.pack(padx=10, pady=10, fill="both", expand=True)
         window.grab_set()
+
+    def on_treeview_select(self, event):
+        # Clear previous selection (restore original red)
+        if self.pdf_viewer.selected_rectangle_id is not None:
+            self.pdf_viewer.canvas.itemconfig(self.pdf_viewer.selected_rectangle_id, outline="red")
+            self.pdf_viewer.selected_rectangle_id = None
+
+        # Get the selected Treeview item
+        selected = self.areas_tree.selection()
+        if not selected:
+            return
+
+        item_id = selected[0]
+        rect_index = self.treeview_item_ids.get(item_id)
+
+        for rect_id in self.pdf_viewer.rectangle_list:
+            self.pdf_viewer.canvas.itemconfig(rect_id, outline="red", width=2)
+
+        if rect_index is not None and rect_index < len(self.pdf_viewer.rectangle_list):
+            rect_id = self.pdf_viewer.rectangle_list[rect_index]
+            # Highlight rectangle in yellow
+            self.pdf_viewer.canvas.itemconfig(rect_id, outline="yellow", width=3)
+            self.pdf_viewer.selected_rectangle_id = rect_id
+
+    def show_revision_help(self):
+        message = (
+            "🟩 Revision Table Help\n\n"
+            "• Use 'Revision Table' mode to select a SINGLE AREA containing revision history.\n"
+            "• Do not include in the selection area the -header-/-footer- (the one with Rev Date Description).\n"
+            
+            "• After selecting the area, use the dropdown to choose the expected revision format (e.g. A, B, C or A1, B2).\n"
+            "• Make sure the selected table area includes 3 columns: Revision, Description, and Date.\n"
+
+        )
+        messagebox.showinfo("Revision Table Instructions", message)
+
 
     def place_zoom_and_version_controls(self):
         sidebar_width = self.tab_view.winfo_width() + 20
