@@ -42,7 +42,6 @@ class XtractorGUI:
         self.setup_bindings()
         self.setup_tooltips()
 
-
     def export_rectangles(self):
         export_file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -277,7 +276,7 @@ class XtractorGUI:
                                                        width=240, height=24,
                                                        fg_color="#5A6C89", button_color="#5A6C89", text_color="white")
         self.revision_pattern_menu.pack(pady=(5, 5))
-        create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
+
 
         # ⬇️ Frame for Import/Export Buttons
         action_frame = ctk.CTkFrame(tab_rectangles, width=240, height=24, fg_color="transparent")
@@ -312,27 +311,41 @@ class XtractorGUI:
 
         # ======================= 🚀 EXTRACT TAB =======================
 
+        # 📦 Frame for OCR & DPI Settings
+        extract_frame = ctk.CTkFrame(tab_extract, width=240, fg_color="transparent")
+        extract_frame.pack(pady=(25, 5))
 
+        # ─────────────── OCR Setting ───────────────
+        ocr_row = ctk.CTkFrame(extract_frame, fg_color="transparent")
+        ocr_row.pack(pady=(0, 5), fill="x")
+
+        ocr_label = ctk.CTkLabel(ocr_row, text="OCR Mode:", font=(BUTTON_FONT, 9), width=80, anchor="w")
+        ocr_label.pack(side="left", padx=(0, 5))
 
         self.ocr_menu_var = StringVar(value="Off")
-        self.ocr_menu = ctk.CTkOptionMenu(tab_extract,
+        self.ocr_menu = ctk.CTkOptionMenu(ocr_row,
                                           values=["Off", "Text-first", "OCR-All", "Text1st+Image-beta"],
                                           command=self.ocr_menu_callback,
                                           font=("Verdana Bold", 9),
                                           variable=self.ocr_menu_var,
-                                          width=240, height=24)
-        self.ocr_menu.pack(pady=(10, 5))
-        create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
+                                          width=140, height=24)
+        self.ocr_menu.pack(side="left")
+
+        # ─────────────── DPI Setting ───────────────
+        dpi_row = ctk.CTkFrame(extract_frame, fg_color="transparent")
+        dpi_row.pack(pady=(0, 5), fill="x")
+
+        dpi_label = ctk.CTkLabel(dpi_row, text="DPI:", font=(BUTTON_FONT, 9), width=80, anchor="w")
+        dpi_label.pack(side="left", padx=(0, 5))
 
         self.dpi_var = ctk.IntVar(value=150)
-        self.dpi_menu = ctk.CTkOptionMenu(tab_extract,
+        self.dpi_menu = ctk.CTkOptionMenu(dpi_row,
                                           values=["50", "75", "150", "300", "450", "600"],
                                           command=self.dpi_callback,
                                           font=("Verdana Bold", 9),
                                           variable=self.dpi_var,
-                                          width=240, height=24)
-        self.dpi_menu.pack(pady=(5, 5))
-        create_tooltip(self.dpi_menu, "DPI resolution")
+                                          width=140, height=24)
+        self.dpi_menu.pack(side="left")
 
         self.output_path_entry = ctk.CTkEntry(tab_extract, width=240, height=24, font=(BUTTON_FONT, 9),
                                               placeholder_text="Select Excel Output Path", border_width=1,
@@ -352,7 +365,7 @@ class XtractorGUI:
                                             command=self.optionmenu_callback, font=(BUTTON_FONT, 9),
                                             variable=self.optionmenu_var, width=240, height=24)
         self.optionmenu.pack(pady=(20, 10))
-        create_tooltip(self.optionmenu, "Select additional features")
+
 
         self.version_label = ctk.CTkLabel(tab_tools, text=VERSION_TEXT, fg_color="transparent",
                                           text_color="gray59", font=(BUTTON_FONT, 9))
@@ -379,13 +392,14 @@ class XtractorGUI:
         create_tooltip(self.ocr_menu, "OCR options - select an OCR mode for text extraction")
         create_tooltip(self.dpi_menu, "DPI resolution")
         create_tooltip(self.pdf_folder_entry, "Select the main folder containing PDF files")
-        # create_tooltip(self.open_sample_button, "Open a sample PDF to set areas")
         create_tooltip(self.output_path_entry, "Select folder for the Excel output")
         create_tooltip(self.extract_button, "Start the extraction process")
         create_tooltip(self.import_button, "Import a saved template of selected areas")
         create_tooltip(self.export_button, "Export the selected areas as a template")
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
         create_tooltip(self.optionmenu, "Select additional features")
+        create_tooltip(self.revision_pattern_menu, "Choose the revision format pattern")
+
 
     def build_folder_tree(self):
         # ✅ Only destroy the previous Treeview, not the scrollable frame or container
@@ -444,8 +458,6 @@ class XtractorGUI:
                 self.recursive_set_check_state(child_id)
 
     def drop_pdf_folder(self, event):
-        import re
-
         raw_data = event.data.strip()
         raw_items = re.findall(r'{(.*?)}', raw_data) or [raw_data.strip()]
         cleaned_paths = [os.path.abspath(p.strip('"')) for p in raw_items]
