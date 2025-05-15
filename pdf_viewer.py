@@ -14,6 +14,9 @@ class PDFViewer:
         self.parent = parent  # `parent` is the XtractorGUI instance
         self.canvas = ctk.CTkCanvas(master, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
 
+        # Add placeholder text
+        self.placeholder_text_id = None
+        self.show_placeholder()
 
         self.v_scrollbar = ctk.CTkScrollbar(master, orientation="vertical", command=self.canvas.yview,
                                             height=CANVAS_HEIGHT)
@@ -87,6 +90,28 @@ class PDFViewer:
         self.canvas.drop_target_register(DND_ALL)
         self.canvas.dnd_bind('<<Drop>>', self.handle_pdf_drop)
 
+    def show_placeholder(self):
+        """Displays the drag & drop hint centered in the canvas."""
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        # Fallback if size is not yet available (initial state)
+        if canvas_width <= 1 or canvas_height <= 1:
+            canvas_width = CANVAS_WIDTH - 200
+            canvas_height = CANVAS_HEIGHT
+
+        if self.placeholder_text_id:
+            self.canvas.delete(self.placeholder_text_id)
+
+        self.placeholder_text_id = self.canvas.create_text(
+            canvas_width // 2,
+            canvas_height // 2,
+            text="DRAG & DROP\nSample PDF here",
+            fill="gray70",
+            font=("Arial", 20, "italic"),
+            anchor="center"
+        )
+
     def handle_pdf_drop(self, event):
         path = event.data.strip().replace("{", "").replace("}", "")
         if path.lower().endswith(".pdf") and os.path.isfile(path):
@@ -138,12 +163,19 @@ class PDFViewer:
 
         # Reset the pdf_document attribute to None to indicate no PDF is open
         self.pdf_document = None
+        # Restore placeholder
+        self.show_placeholder()
 
     def display_pdf(self, pdf_path):
         """Loads and displays the first page of a PDF document."""
         self.pdf_document = fitz.open(pdf_path)
         if self.pdf_document.page_count > 0:
             self.page = self.pdf_document[0]  # Display the first page by default
+            # Remove placeholder if present
+            if self.placeholder_text_id:
+                self.canvas.delete(self.placeholder_text_id)
+                self.placeholder_text_id = None
+
             self.pdf_width = int(self.page.rect.width)
             self.pdf_height = int(self.page.rect.height)
             # Update the display
@@ -351,6 +383,9 @@ class PDFViewer:
             scale_y = canvas_height / CANVAS_HEIGHT
             self.canvas.scale("all", 0, 0, scale_x, scale_y)
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+        if self.pdf_document is None:
+            self.show_placeholder()
 
     def _perform_resize(self):
         """Scales the canvas dynamically when the window resizes, only if elements exist."""
