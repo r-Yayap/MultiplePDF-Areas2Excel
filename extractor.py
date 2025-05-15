@@ -16,7 +16,6 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-from openpyxl.utils import column_index_from_string
 from utils import adjust_coordinates_for_rotation, find_tessdata
 import psutil #for debug
 
@@ -95,8 +94,12 @@ class TextExtractor:
         self.areas = areas
         self.ocr_settings = ocr_settings
 
+        self.tessdata_folder = ocr_settings.get("tessdata_folder") or find_tessdata()
+        if not self.tessdata_folder:
+            print("❌ Tessdata folder not found. OCR will not work.")
+
         self.revision_regex = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX
-        self.tessdata_folder = None  # Will be set lazily if OCR is needed
+
         self.batch_threshold = batch_threshold
 
         # Initialize headers with fixed metadata columns
@@ -331,8 +334,6 @@ class TextExtractor:
         print(f"✅ Excel saved with hyperlinks → {output_path}")
 
     def combine_temp_files(self, final_output_path):
-        import glob
-
         temp_csv_files = sorted(glob.glob(os.path.join(self.temp_image_folder, "temp_*.csv")))
         temp_jsonl_files = sorted(glob.glob(os.path.join(self.temp_image_folder, "temp_*.ndjson")))
 
@@ -509,12 +510,7 @@ class TextExtractor:
         img_path = None
 
         try:
-            # Text extraction without OCR
-            if self.ocr_settings["enable_ocr"] == "Off":
-                text_area = page.get_text("text", clip=adjusted_coordinates)
-
-            # OCR only if there's no text
-            elif self.ocr_settings["enable_ocr"] == "Text-first":
+            if self.ocr_settings["enable_ocr"] == "Default":
                 text_area = page.get_text("text", clip=adjusted_coordinates)
                 if not text_area.strip():  # Perform OCR only if text_area is empty
                     text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)

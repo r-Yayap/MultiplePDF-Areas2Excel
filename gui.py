@@ -32,11 +32,12 @@ class XtractorGUI:
 
         self.pdf_folder = ''
         self.output_excel_path = ''
-        self.ocr_settings = {'enable_ocr': 'Off', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
+        self.ocr_settings = {'enable_ocr': 'Default', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
 
 
         self.setup_widgets()
+        self.ocr_menu_callback("Default")
         self.setup_bindings()
         self.setup_tooltips()
 
@@ -188,14 +189,30 @@ class XtractorGUI:
         self.zoom_in_label.pack(side="left", padx=(2, 5))
 
         # Floating recent PDF and close PDF buttons (top-right)
-        self.recent_pdf_button = ctk.CTkButton(self.root, text="↩", command=self.open_recent_pdf,
-                                               font=(BUTTON_FONT, 10), width=20, height=20)
+        # Create a label that behaves like a button
+        self.recent_pdf_button = ctk.CTkLabel(
+            self.root,
+            text="↩",
+            font=(BUTTON_FONT, 12, "bold"),  # 🔹 Make it bold
+            text_color="lightblue",
+            cursor="hand2",
+            width=24,
+            height=24  # ⬛ More square-like
+        )
         self.recent_pdf_button.pack(pady=2)
+        self.recent_pdf_button.bind("<Button-1>", lambda e: self.open_recent_pdf())
 
-        self.close_pdf_button = ctk.CTkButton(self.root, text="⨉", command=self.close_pdf,
-                                              font=(BUTTON_FONT, 10), fg_color="red4",width=20, height=20)
+        self.close_pdf_button = ctk.CTkLabel(
+            self.root,
+            text="X",
+            font=(BUTTON_FONT, 10, "bold"),  # 🔹 Make it bold
+            text_color="red",
+            cursor="hand2",
+            width=24,
+            height=24
+        )
         self.close_pdf_button.pack(pady=2)
-
+        self.close_pdf_button.bind("<Button-1>", lambda e: self.close_pdf())
 
         # Create each tab
         tab_files = self.tab_view.add("📁 Files")
@@ -278,12 +295,12 @@ class XtractorGUI:
         # 🛈 How to Use Button (Revision Table)
         self.revision_help_button = ctk.CTkButton(
             tab_rectangles,
-            text="🛈 How to Use?",
+            text="How to Use?",
             command=self.show_revision_help,
             font=(BUTTON_FONT, 9),
+            fg_color="gray20", hover_color="gray30",
             width=240,
-            height=24,
-            fg_color="#3B4A67"
+            height=24
         )
         self.revision_help_button.pack(pady=(0, 5))
 
@@ -339,14 +356,26 @@ class XtractorGUI:
         ocr_label = ctk.CTkLabel(ocr_row, text="OCR Mode:", font=(BUTTON_FONT, 9), width=80, anchor="w")
         ocr_label.pack(side="left", padx=(0, 5))
 
-        self.ocr_menu_var = StringVar(value="Off")
+        self.ocr_menu_var = StringVar(value="Default")
         self.ocr_menu = ctk.CTkOptionMenu(ocr_row,
-                                          values=["Off", "Text-first", "OCR-All", "Text1st+Image-beta"],
+                                          values=[ "Default", "OCR-All", "Text1st+Image-beta"],
                                           command=self.ocr_menu_callback,
                                           font=("Verdana Bold", 9),
                                           variable=self.ocr_menu_var,
                                           width=140, height=24)
-        self.ocr_menu.pack(side="left")
+        self.ocr_menu.pack(side="left", padx=(0, 5))
+
+        # Add help "?" button next to OCR dropdown
+        self.ocr_help_button = ctk.CTkButton(
+            ocr_row,
+            text="?",
+            width=24,
+            height=24,
+            fg_color="gray20", hover_color="gray30",
+            font=(BUTTON_FONT, 10),
+            command=self.show_ocr_help
+        )
+        self.ocr_help_button.pack(side="left", padx=(5, 0))
 
         # ─────────────── DPI Setting ───────────────
         dpi_row = ctk.CTkFrame(extract_frame, fg_color="transparent")
@@ -367,14 +396,14 @@ class XtractorGUI:
         self.output_path_entry = ctk.CTkEntry(tab_extract, width=240, height=24, font=(BUTTON_FONT, 9),
                                               placeholder_text="Select Excel Output Path", border_width=1,
                                               corner_radius=3)
-        self.output_path_entry.pack(pady=(10, 2))
+        self.output_path_entry.pack(pady=(15, 2))
         self.output_path_button = ctk.CTkButton(tab_extract, text="📂 Browse Output Path", command=self.browse_output_path,
                                                 font=(BUTTON_FONT, 9), width=240, height=24)
         self.output_path_button.pack(pady=2)
 
         self.extract_button = ctk.CTkButton(tab_extract, text="🚀 Extract Now", font=("Arial Black", 13),
                                             corner_radius=10, width=240, height=30, command=self.start_extraction)
-        self.extract_button.pack(pady=30)
+        self.extract_button.pack(pady=35)
 
         self.extract_description_box = ctk.CTkTextbox(tab_extract, width=240, height=200, wrap="word",
                                                       font=(BUTTON_FONT, 9))
@@ -426,6 +455,25 @@ class XtractorGUI:
         text_box.pack(padx=10, pady=10, fill="both", expand=True)
         window.grab_set()
 
+    def show_ocr_help(self):
+        window = ctk.CTkToplevel(self.root)
+        window.title("OCR Mode Explanation")
+        window.geometry("480x300")
+        text_box = ctk.CTkTextbox(window, wrap="word", font=(BUTTON_FONT, 11))
+        text_box.insert("end",
+                        "🧠 OCR Modes:\n\n"
+                        "• Default:\n"
+                        "   Extracts text normally. If no text is extracted, OCR is used.\n\n"
+                        "• OCR-All:\n"
+                        "   Ignores normal text. OCR is always applied.\n\n"
+                        "• Text1st+Image-beta:\n"
+                        "   Default mode and\n"
+                        "   also saves and embeds area image into Excel.\n"
+                        )
+        text_box.configure(state="disabled")
+        text_box.pack(padx=10, pady=10, fill="both", expand=True)
+        window.grab_set()
+
     def on_treeview_select(self, event):
         # Clear previous selection (restore original red)
         if self.pdf_viewer.selected_rectangle_id is not None:
@@ -450,16 +498,19 @@ class XtractorGUI:
             self.pdf_viewer.selected_rectangle_id = rect_id
 
     def show_revision_help(self):
-        message = (
+        window = ctk.CTkToplevel(self.root)
+        window.title("Revision Table Area and Pattern Explanation")
+        window.geometry("480x300")
+        text_box = ctk.CTkTextbox(window, wrap="word", font=(BUTTON_FONT, 11))
+        text_box.insert("end",
             "🟩 Revision Table Help\n\n"
-            "• Use 'Revision Table' mode to select a SINGLE AREA containing revision history.\n"
-            "• Do not include in the selection area the -header-/-footer- (the one with Rev Date Description).\n"
-            
-            "• After selecting the area, use the dropdown to choose the expected revision format (e.g. A, B, C or A1, B2).\n"
-            "• Make sure the selected table area includes 3 columns: Revision, Description, and Date.\n"
-
-        )
-        messagebox.showinfo("Revision Table Instructions", message)
+            "• Use 'Revision Table' mode to select a SINGLE AREA containing revision history -revision, date, description.\n\n"
+            "• Do not include in the selection area the -header-/-footer- (the one with Rev Date Description).\n\n"
+            "• After selecting the area, use the dropdown to choose the expected revision format (e.g. A, B, C or A1, B2).\n\n"
+            "• Make sure the selected table area includes 3 columns: Revision, Description, and Date.\n\n")
+        text_box.configure(state="disabled")
+        text_box.pack(padx=10, pady=10, fill="both", expand=True)
+        window.grab_set()
 
 
     def place_zoom_and_version_controls(self):
@@ -648,20 +699,14 @@ class XtractorGUI:
             self.ocr_menu.configure(fg_color=color, button_color=color)
             self.dpi_menu.configure(state="normal" if enabled else "disabled", fg_color=color, button_color=color)
 
-        # If OCR is "Off", don't check for tessdata and disable OCR options
-        if choice == "Off":
-            enable_ocr_menu(False)
-            print("OCR disabled.")
-            self.ocr_settings['enable_ocr'] = "Off"
-            return
 
         # Check tessdata only for OCR modes that need it
-        if choice in ("Text-first", "OCR-All", "Text1st+Image-beta"):
+        if choice in ("Default", "OCR-All", "Text1st+Image-beta"):
             found_tesseract_path = find_tessdata()
             if found_tesseract_path:
                 self.ocr_settings['tessdata_folder'] = found_tesseract_path
                 enable_ocr_menu(True)
-                if choice == "Text-first":
+                if choice == "Default":
                     print("OCR will start if no text is extracted.")
                 elif choice == "OCR-All":
                     print("OCR will be enabled for every area.")
