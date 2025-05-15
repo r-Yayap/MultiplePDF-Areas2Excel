@@ -131,13 +131,20 @@ def save_to_excel(df, excel_file, file_dict):
             else:
                 cell.fill = empty_fill
 
-    # color the “Other” column (no duplicate‐red for OTHER)
+
+    # color the “Other” column WITH duplicate red check
     other_idx = df.columns.get_loc("Other") + 1
     for row in range(2, ws.max_row + 1):
         name = ws.cell(row=row, column=1).value
-        has_other = any(info['name'] == name for info in file_dict["OTHER"].values())
+        matches = [info for info in file_dict["OTHER"].values() if info['name'] == name]
         cell = ws.cell(row=row, column=other_idx)
-        cell.fill = present_fill if has_other else empty_fill
+
+        if len(matches) > 1:
+            cell.fill = dup_fill  # 🔴 duplicate
+        elif len(matches) == 1:
+            cell.fill = present_fill  # ✅ present
+        else:
+            cell.fill = empty_fill  # ⚫ empty
 
     wb.save(excel_file)
     wb.close()
