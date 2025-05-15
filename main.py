@@ -59,7 +59,7 @@ from constants import INITIAL_WIDTH, INITIAL_HEIGHT, INITIAL_X_POSITION, INITIAL
 class XtractorApp:
     def __init__(self):
         self.root = CTkDnD()
-        self.root.title("Xtractor " + VERSION_TEXT)
+        self.root.title("Xtractor " + VERSION_TEXT + " --FINAL")
         self.root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}+{INITIAL_X_POSITION}+{INITIAL_Y_POSITION}")
         self.gui = XtractorGUI(self.root)
 
