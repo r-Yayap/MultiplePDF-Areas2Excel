@@ -61,10 +61,16 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
         for row in result_rows:
             file_size, mod_date, folder, filename, page_no, areas, revisions = row
             revisions_flat = [f"{r['rev']} | {r['desc']} | {r['date']}" for r in revisions]
+            latest_rev = revisions[-1]['rev'] if revisions else ""
+            latest_desc = revisions[-1]['desc'] if revisions else ""
+            latest_date = revisions[-1]['date'] if revisions else ""
+
             text_values = [text for text, _ in areas]
 
             # CSV Row
-            csv_row = [unid, file_size, mod_date, folder, filename, page_no] + text_values + [revisions_flat]
+            csv_row = [unid, file_size, mod_date, folder, filename, page_no] + text_values + \
+                      [latest_rev, latest_desc, latest_date, revisions_flat]
+
             csv_writer.writerow(csv_row)
 
             # NDJSON Row (optional)
@@ -249,8 +255,9 @@ class TextExtractor:
 
         base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
         area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
+        extra_headers = ["Latest Revision", "Latest Description", "Latest Date"]
         revision_headers = [f"Rev{i + 1}" for i in range(max_revisions)]
-        headers = ["UNID"] + base_headers + area_headers + revision_headers
+        headers = ["UNID"] + base_headers + area_headers + extra_headers + revision_headers
         ws.append(headers)
 
         with open(csv_path, "r", encoding="utf-8") as f:
@@ -263,10 +270,15 @@ class TextExtractor:
             for row in reader:
                 unid = row[0]
                 base = row[1:6]
-                areas = row[6:-1]
+                areas = row[6:6 + len(self.areas)]
+                latest_rev = row[6 + len(self.areas)]
+                latest_desc = row[6 + len(self.areas) + 1]
+                latest_date = row[6 + len(self.areas) + 2]
                 revisions = eval(row[-1]) if row[-1].startswith("[") else []
 
-                row_data = [unid] + base + areas + revisions + [""] * (max_revisions - len(revisions))
+                row_data = [unid] + base + areas + [latest_rev, latest_desc, latest_date] + revisions + \
+                           [""] * (max_revisions - len(revisions))
+
                 ws.append(row_data)
                 current_row = ws.max_row
 
