@@ -210,7 +210,7 @@ class TextExtractor:
                 return []
 
             data = data[::-1]
-            rev_idx, desc_idx, date_idx = self.detect_column_indices(data[1:])
+            rev_idx, desc_idx, date_idx = self.detect_column_indices(data)
             extracted_list = []
 
             for row in data:
