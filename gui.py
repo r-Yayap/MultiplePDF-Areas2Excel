@@ -17,6 +17,8 @@ from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
+
+
 class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,7 +27,9 @@ class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
 class XtractorGUI:
     def __init__(self, root):
         self.root = root
+
         self.pdf_viewer = PDFViewer(self, self.root)  # Pass GUI instance and root window
+
 
         self.root.update_idletasks()
 
@@ -179,10 +183,10 @@ class XtractorGUI:
         # Zoom Slider
         self.zoom_var = ctk.DoubleVar(value=self.pdf_viewer.current_zoom)  # Initialize with the current zoom level
         self.zoom_frame = ctk.CTkFrame(self.root, fg_color="transparent")
-        self.zoom_out_label = ctk.CTkLabel(self.zoom_frame, text="➖", font=(BUTTON_FONT, 14))
+        self.zoom_out_label = ctk.CTkLabel(self.zoom_frame, text="➖", font=(BUTTON_FONT, 10))
         self.zoom_slider = ctk.CTkSlider(self.zoom_frame, from_=0.1, to=4, variable=self.zoom_var,
-                                         command=self.update_zoom, width=170)
-        self.zoom_in_label = ctk.CTkLabel(self.zoom_frame, text="➕", font=(BUTTON_FONT, 14))
+                                         command=self.update_zoom, width=170, height=8)
+        self.zoom_in_label = ctk.CTkLabel(self.zoom_frame, text="➕", font=(BUTTON_FONT, 10))
 
         self.zoom_out_label.pack(side="left", padx=(5, 2))
         self.zoom_slider.pack(side="left")
@@ -193,11 +197,11 @@ class XtractorGUI:
         self.recent_pdf_button = ctk.CTkLabel(
             self.root,
             text="↩",
-            font=(BUTTON_FONT, 12, "bold"),  # 🔹 Make it bold
+            font=(BUTTON_FONT, 12, "bold"),
             text_color="lightblue",
             cursor="hand2",
             width=24,
-            height=24  # ⬛ More square-like
+            height=24
         )
         self.recent_pdf_button.pack(pady=2)
         self.recent_pdf_button.bind("<Button-1>", lambda e: self.open_recent_pdf())
@@ -205,7 +209,7 @@ class XtractorGUI:
         self.close_pdf_button = ctk.CTkLabel(
             self.root,
             text="X",
-            font=(BUTTON_FONT, 10, "bold"),  # 🔹 Make it bold
+            font=(BUTTON_FONT, 10, "bold"),
             text_color="red",
             cursor="hand2",
             width=24,
@@ -260,6 +264,11 @@ class XtractorGUI:
 
         # Placeholder for Treeview widget
         self.files_tree_widget = None
+
+        self.files_tree_widget = CheckboxTreeview(self.files_tree_container, show="tree", height=10)
+        self.files_tree_widget.pack(side="left", fill="both", expand=True)
+        self.files_tree_widget.column("#0", width=800, stretch=False)
+
         # Counter Label (created only once)
         self.pdf_counter_label = ctk.CTkLabel(self.files_tree_frame, text="Selected PDFs: 0", font=(BUTTON_FONT, 9))
         self.pdf_counter_label.pack(pady=(5, 0), anchor="center")
@@ -289,7 +298,7 @@ class XtractorGUI:
                                                        values=pattern_options,
                                                        variable=self.revision_pattern_var,
                                                        width=240, height=24,
-                                                       fg_color="#5A6C89", button_color="#5A6C89", text_color="white")
+                                                       fg_color="red4", button_color="red4", text_color="white")
         self.revision_pattern_menu.pack(pady=(5, 5))
 
         # 🛈 How to Use Button (Revision Table)
@@ -319,9 +328,26 @@ class XtractorGUI:
         self.export_button.pack(side="left", padx=5)
 
         # 🗑 Clear Button (Full width)
-        self.clear_areas_button = ctk.CTkButton(tab_rectangles, text="🗑 Clear All Areas", command=self.clear_all_areas,
-                                                font=(BUTTON_FONT, 9), width=240, height=24, fg_color="red4")
-        self.clear_areas_button.pack(pady=(5, 15))
+        # 🧹 Row of Clear Buttons
+        clear_frame = ctk.CTkFrame(tab_rectangles, fg_color="transparent", width=240, height=24)
+        clear_frame.pack(pady=(5, 15))
+
+        # 🟥 Clear Extraction Areas
+        self.clear_extraction_button = ctk.CTkButton(clear_frame, text="Clear Area",
+                                                     command=self.clear_extraction_areas,
+                                                     font=(BUTTON_FONT, 9), width=75, height=24, fg_color="gray35")
+        self.clear_extraction_button.pack(side="left", padx=5)
+
+        # 🟩 Clear Revision Table
+        self.clear_revision_button = ctk.CTkButton(clear_frame, text="Clear Rev",
+                                                   command=self.clear_revision_area,
+                                                   font=(BUTTON_FONT, 9), width=75, height=24, fg_color="gray35")
+        self.clear_revision_button.pack(side="left", padx=5)
+
+        # 🗑 Clear Button (Full width)
+        self.clear_areas_button = ctk.CTkButton(clear_frame, text="Clear All", command=self.clear_all_areas,
+                                                font=(BUTTON_FONT, 9), width=75, height=24, fg_color="gray35")
+        self.clear_areas_button.pack(side="left", padx=5)
 
         # Treeview inside a sub-frame
         self.areas_frame = ctk.CTkFrame(tab_rectangles, width=240)
@@ -416,9 +442,8 @@ class XtractorGUI:
                                             "📌 IF REVISION TABLE IS USED:\n"
                                             "  - Adds revision rows (Rev, Desc, Date)\n"
                                             "  - Saves NDJSON with structured revision info\n\n"
-                                            "🧠 IF OCR IS ENABLED:\n"
-                                            "  - Extracts text from scanned PDFs\n"
-                                            "  - Can embed area images\n\n"
+                                            "🧠 IF TEXT IS OCR-ed:\n"
+                                            "  - Texts will be colored red\n"
                                             )
         self.extract_description_box.configure(state="disabled")  # Make it read-only
         self.extract_description_box.pack(pady=(0, 10))
@@ -497,6 +522,25 @@ class XtractorGUI:
             self.pdf_viewer.canvas.itemconfig(rect_id, outline="yellow", width=3)
             self.pdf_viewer.selected_rectangle_id = rect_id
 
+    def clear_extraction_areas(self):
+        """Clears only extraction areas, leaving the revision area untouched."""
+        self.pdf_viewer.areas.clear()
+        for rect_id in self.pdf_viewer.rectangle_list:
+            self.pdf_viewer.canvas.delete(rect_id)
+        self.pdf_viewer.rectangle_list.clear()
+        self.update_areas_treeview()
+        self.pdf_viewer.update_rectangles()
+        print("Cleared only extraction areas.")
+
+    def clear_revision_area(self):
+        """Clears only the revision area, leaving extraction areas untouched."""
+        if self.pdf_viewer.revision_rectangle_id:
+            self.pdf_viewer.canvas.delete(self.pdf_viewer.revision_rectangle_id)
+        self.pdf_viewer.revision_rectangle_id = None
+        self.pdf_viewer.revision_area = None
+        self.pdf_viewer.update_rectangles()
+        print("Cleared only revision table area.")
+
     def show_revision_help(self):
         window = ctk.CTkToplevel(self.root)
         window.title("Revision Table Area and Pattern Explanation")
@@ -517,7 +561,7 @@ class XtractorGUI:
         sidebar_width = self.tab_view.winfo_width() + 20
         window_height = self.root.winfo_height()
 
-        self.zoom_frame.place(x=sidebar_width + 10, y=window_height - 65)
+        self.zoom_frame.place(x=sidebar_width + 0, y=window_height - 57)
         # Place recent + close buttons at top-right
         self.recent_pdf_button.place(x=sidebar_width + 0, y=23)
         self.close_pdf_button.place(x=sidebar_width + 30, y=23)
@@ -631,6 +675,17 @@ class XtractorGUI:
             self.dropped_pdf_set = set()  # reset
             self.build_folder_tree()
             self.update_pdf_counter()
+
+            # ✅ Display the first PDF if none is currently shown
+            if not self.pdf_viewer.pdf_document:
+                for root_dir, _, files in os.walk(self.pdf_folder):
+                    for file in sorted(files):
+                        if file.lower().endswith(".pdf"):
+                            first_pdf = os.path.join(root_dir, file)
+                            self.pdf_viewer.display_pdf(first_pdf)
+                            self.recent_pdf_path = first_pdf
+                            print(f"Displayed first PDF from folder: {first_pdf}")
+                            return
             return
 
         messagebox.showerror("Invalid Drop", "Please drop a PDF file or a folder.")
@@ -695,7 +750,7 @@ class XtractorGUI:
         print("OCR menu dropdown clicked:", choice)
 
         def enable_ocr_menu(enabled):
-            color = "green4" if enabled else "gray29"
+            color = "red4" if enabled else "gray29"
             self.ocr_menu.configure(fg_color=color, button_color=color)
             self.dpi_menu.configure(state="normal" if enabled else "disabled", fg_color=color, button_color=color)
 
@@ -937,7 +992,7 @@ class XtractorGUI:
             self.pdf_viewer.update_rectangles()
 
             # Zoom and version controls
-            self.zoom_frame.place_configure(x=sidebar_width + 10, y=new_height - 65)
+            self.zoom_frame.place_configure(x=sidebar_width + 0, y=new_height - 57)
 
 
         except Exception as e:

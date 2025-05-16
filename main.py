@@ -51,15 +51,18 @@ The following provides an overview of each module and how they work together:
 This modular setup enables easy maintainability, allowing new features or changes with minimal impact on other modules.
 """
 import multiprocessing
-
 import customtkinter as ctk
 from gui import XtractorGUI,CTkDnD
 from constants import INITIAL_WIDTH, INITIAL_HEIGHT, INITIAL_X_POSITION, INITIAL_Y_POSITION, VERSION_TEXT
 
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("xtractor-dark-red.json")  # <-- Make sure this file exists
+
+
 class XtractorApp:
     def __init__(self):
         self.root = CTkDnD()
-        self.root.title("Xtractor " + VERSION_TEXT + " --FINAL")
+        self.root.title("Xtractor " + VERSION_TEXT)
         self.root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}+{INITIAL_X_POSITION}+{INITIAL_Y_POSITION}")
         self.gui = XtractorGUI(self.root)
 
