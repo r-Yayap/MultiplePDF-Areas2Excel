@@ -54,16 +54,30 @@ import multiprocessing
 import customtkinter as ctk
 from gui import XtractorGUI,CTkDnD
 from constants import INITIAL_WIDTH, INITIAL_HEIGHT, INITIAL_X_POSITION, INITIAL_Y_POSITION, VERSION_TEXT
+import sys
+import os
+import customtkinter as ctk
+
+def resource_path(relative_path):
+    """Get the absolute path to a resource (used for PyInstaller compatibility)"""
+    try:
+        base_path = sys._MEIPASS  # PyInstaller's temp folder
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# Use the absolute path
+theme_path = resource_path("style/xtractor-dark-red.json")
+ctk.set_default_color_theme(theme_path)
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("xtractor-dark-red.json")  # <-- Make sure this file exists
-
 
 class XtractorApp:
     def __init__(self):
         self.root = CTkDnD()
         self.root.title("Xtractor " + VERSION_TEXT)
         self.root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}+{INITIAL_X_POSITION}+{INITIAL_Y_POSITION}")
+        self.root.iconbitmap(resource_path("style/xtractor-logo.ico"))
         self.gui = XtractorGUI(self.root)
 
     def run(self):

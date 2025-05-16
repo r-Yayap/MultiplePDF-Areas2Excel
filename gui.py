@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox, StringVar
 from openpyxl import Workbook, load_workbook
 from constants import *
 from extractor import TextExtractor
+from customtkinter import CTkImage
 
 from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
@@ -17,6 +18,14 @@ from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
 from tkinterdnd2 import TkinterDnD, DND_ALL
 
+from PIL import Image, ImageTk  # Make sure this is at the top
+import sys
+
+def resource_path(relative_path):
+    try:
+        return os.path.join(sys._MEIPASS, relative_path)
+    except AttributeError:
+        return os.path.abspath(relative_path)
 
 
 class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -434,15 +443,16 @@ class XtractorGUI:
         self.extract_description_box = ctk.CTkTextbox(tab_extract, width=240, height=200, wrap="word",
                                                       font=(BUTTON_FONT, 9))
         self.extract_description_box.insert("end",
-                                            "📤 EXTRACTION SUMMARY\n\n"
-                                            "✅ EXCEL FILE (.xlsx):\n"
+                                            "EXTRACTION SUMMARY\n\n"
+                                            "Output Excel File (.xlsx):\n"
                                             "  - One row per PDF page\n"
                                             "  - Columns from selected areas\n"
                                             "  - Hyperlinks to original PDF files\n\n"
-                                            "📌 IF REVISION TABLE IS USED:\n"
+                                            "IF REVISION TABLE IS USED:\n"
+                                            "  ️‼️‼️EXTRACTION TIME WILL INCREASE BY x3 or x4‼️‼️\n\n"
                                             "  - Adds revision rows (Rev, Desc, Date)\n"
                                             "  - Saves NDJSON with structured revision info\n\n"
-                                            "🧠 IF TEXT IS OCR-ed:\n"
+                                            "IF TEXT IS OCR-ed:\n"
                                             "  - Texts will be colored red\n"
                                             )
         self.extract_description_box.configure(state="disabled")  # Make it read-only
@@ -463,9 +473,24 @@ class XtractorGUI:
                                      command=lambda t=tool: self.show_tool_instructions(t["instructions"]))
             help_btn.pack(pady=(0, 5))
 
-        self.version_label = ctk.CTkLabel(tab_tools, text=VERSION_TEXT, fg_color="transparent",
-                                          text_color="gray59", font=(BUTTON_FONT, 9))
-        self.version_label.pack(pady=10, anchor="w")
+        # Load PNG from style folder
+        logo_image = Image.open(resource_path("style/xtractor-logo.png"))
+        logo_image = logo_image.resize((180, 180), Image.Resampling.LANCZOS)
+        logo_photo = CTkImage(light_image=logo_image, dark_image=logo_image, size=(180, 180))
+
+        # Create a label to hold the image
+        self.logo_label = ctk.CTkLabel(tab_tools, image=logo_photo, text="", width=180, height=45)
+        self.logo_label.image = logo_photo  # Prevent garbage collection
+        self.logo_label.pack(pady=(20, 10), anchor="center")
+
+        self.version_label = ctk.CTkLabel(
+            tab_tools,
+            text=VERSION_TEXT,
+            fg_color="transparent",
+            text_color="gray59",
+            font=(BUTTON_FONT, 9)
+        )
+        self.version_label.pack(pady=(0, 15), anchor="center")  # ⬅️ anchor set to center
         self.version_label.bind("<Button-1>", self.display_version_info)
 
         self.root.after(300, self.place_zoom_and_version_controls)
@@ -548,6 +573,7 @@ class XtractorGUI:
         text_box = ctk.CTkTextbox(window, wrap="word", font=(BUTTON_FONT, 11))
         text_box.insert("end",
             "🟩 Revision Table Help\n\n"
+            "  ️Note: EXTRACTION TIME WILL INCREASE BY x3 or x4 if you use this feature\n\n"
             "• Use 'Revision Table' mode to select a SINGLE AREA containing revision history -revision, date, description.\n\n"
             "• Do not include in the selection area the -header-/-footer- (the one with Rev Date Description).\n\n"
             "• After selecting the area, use the dropdown to choose the expected revision format (e.g. A, B, C or A1, B2).\n\n"
@@ -746,6 +772,7 @@ class XtractorGUI:
             print(f"Error scanning {folder_path}: {e}")
         return False
 
+    #not needed
     def ocr_menu_callback(self, choice):
         print("OCR menu dropdown clicked:", choice)
 
@@ -754,8 +781,6 @@ class XtractorGUI:
             self.ocr_menu.configure(fg_color=color, button_color=color)
             self.dpi_menu.configure(state="normal" if enabled else "disabled", fg_color=color, button_color=color)
 
-
-        # Check tessdata only for OCR modes that need it
         if choice in ("Default", "OCR-All", "Text1st+Image-beta"):
             found_tesseract_path = find_tessdata()
             if found_tesseract_path:
