@@ -114,12 +114,17 @@ class PDFViewer:
 
     def handle_pdf_drop(self, event):
         path = event.data.strip().replace("{", "").replace("}", "")
-        if path.lower().endswith(".pdf") and os.path.isfile(path):
-            self.parent.recent_pdf_path = path  # update recent path
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pdf" and os.path.isfile(path):
+            self.parent.recent_pdf_path = path
             self.display_pdf(path)
             print(f"🪂 Dropped PDF loaded in canvas: {path}")
+        elif ext in [".xlsx", ".xls", ".xlsm"] and os.path.isfile(path):
+            # Delegate import to the GUI handler
+            print(f"📥 Dropped Excel file detected: {path}")
+            self.parent.import_rectangles_from_file(path)
         else:
-            print(f"⚠️ Dropped item is not a valid PDF: {path}")
+            print(f"⚠️ Dropped item is not a valid PDF or Excel file: {path}")
 
     def set_custom_title(self):
         """Prompts user for a custom title and assigns it to the selected rectangle."""

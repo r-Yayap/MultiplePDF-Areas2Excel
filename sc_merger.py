@@ -2,18 +2,30 @@
 import os
 import re
 import tkinter as tk
+import sys
+import customtkinter as ctk
+import pandas as pd
 from difflib import SequenceMatcher
 from tkinter import filedialog, messagebox
 from datetime import datetime
-
-import customtkinter as ctk
-import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 
 from tkinterdnd2 import TkinterDnD, DND_ALL
+
+def resource_path(relative_path):
+    """Get the absolute path to a resource (used for PyInstaller compatibility)"""
+    try:
+        base_path = sys._MEIPASS  # PyInstaller's temp folder
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+theme_path = resource_path("style/xtractor-dark-red.json")
+ctk.set_default_color_theme(theme_path)
+ctk.set_appearance_mode("dark")
 
 # Helper to auto-select a header based on keywords.
 def auto_select_header(headers, keywords):
@@ -935,6 +947,7 @@ class MergerGUI:
         # Use our custom CTkDnD main window for drag-and-drop support.
         self.mergerApp = CTkDnD() if master is None else ctk.CTkToplevel(master)
         self.mergerApp.title("Conflux")
+        self.mergerApp.iconbitmap(resource_path("style/xtractor-logo.ico"))
 
         # File paths for three Excel files and the output file.
         self.excel1_path = tk.StringVar()

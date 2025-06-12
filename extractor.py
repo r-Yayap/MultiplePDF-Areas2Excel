@@ -59,17 +59,45 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
         csv_writer = csv.writer(csv_file)
 
         for row in result_rows:
-            file_size, mod_date, folder, filename, page_no, areas, revisions = row
-            revisions_flat = [f"{r['rev']} | {r['desc']} | {r['date']}" for r in revisions]
-            latest_rev = revisions[-1]['rev'] if revisions else ""
-            latest_desc = revisions[-1]['desc'] if revisions else ""
-            latest_date = revisions[-1]['date'] if revisions else ""
+            # fill missing elements
+            if len(row) < 8:
+                row = list(row) + [None] * (8 - len(row))
+            file_size, mod_date, folder, filename, page_no, areas, revisions, page_rect = row
+
+            # Defensive fix for page_rect (if needed, as before)
+            if page_rect is not None and isinstance(page_rect, (list, tuple)) and len(page_rect) == 4:
+                page_rect = fitz.Rect(page_rect)
+            else:
+                page_rect = None
+
+            page_size_str = f"{page_rect.width:.1f} x {page_rect.height:.1f}" if page_rect else ""
+
+            # Defensive check: revisions should be a list, last item should be a dict
+            if isinstance(revisions, list) and len(revisions) > 0 and isinstance(revisions[-1], dict):
+                latest_rev = revisions[-1].get('rev', '')
+                latest_desc = revisions[-1].get('desc', '')
+                latest_date = revisions[-1].get('date', '')
+            else:
+                latest_rev = ""
+                latest_desc = ""
+                latest_date = ""
+
+            # Defensive: ensure areas is a list of tuples (text, img_path)
+            if not isinstance(areas, list):
+                areas = []
+            areas = [(a if isinstance(a, tuple) and len(a) == 2 else (str(a), "")) for a in areas]
 
             text_values = [text for text, _ in areas]
+            if len(text_values) < len(extractor.areas):
+                text_values += [""] * (len(extractor.areas) - len(text_values))
 
-            # CSV Row
-            csv_row = [unid, file_size, mod_date, folder, filename, page_no] + text_values + \
-                      [latest_rev, latest_desc, latest_date, revisions_flat]
+            revisions_flat = [
+                f"{r.get('rev', '')} | {r.get('desc', '')} | {r.get('date', '')}" if isinstance(r, dict) else str(r)
+                for r in revisions or []
+            ]
+
+            csv_row = [unid, file_size, mod_date, folder, filename, page_no, page_size_str] + \
+                      text_values + [latest_rev, latest_desc, latest_date, revisions_flat]
 
             csv_writer.writerow(csv_row)
 
@@ -81,11 +109,10 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
         if jsonl_file:
             jsonl_file.close()
 
-    # Explicit cleanup
     extractor = None
     gc.collect()
 
-    return True  # only a small flag indicating success
+    return True
 
 def _unwrap_process_single_pdf(args):
     return process_single_pdf_standalone(*args)
@@ -109,7 +136,7 @@ class TextExtractor:
         self.batch_threshold = batch_threshold
 
         # Initialize headers with fixed metadata columns
-        self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
+        self.headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"]
 
         # Dictionary to store unique header assignments per area
         self.unique_headers_mapping = {}  # Maps each rectangle index to a unique column header
@@ -194,6 +221,43 @@ class TextExtractor:
         print(f"🎯 Validated → rev: {rev}, desc: {desc}, date: {date}")
         return rev, desc, date
 
+    def is_footer_or_header_row(self, row, rev_idx=0):
+        """
+        Detects if a row is a footer/header or not real revision data.
+
+        Exclude rows that:
+        - Are mostly empty, OR
+        - Have unwanted keywords *and* do NOT have a valid revision pattern in the revision column.
+        """
+
+        normalized = [str(cell).strip().lower() if cell else "" for cell in row]
+
+        unwanted_keywords = [
+            "revision", "rev date description", "by chk'd",
+            "date", "description", "no.", "rev", "checked by"
+        ]
+
+        empty_count = sum(1 for cell in normalized if cell == "")
+        if empty_count >= len(normalized) * 0.75:
+            return True
+
+        rev_col_val = ""
+        if rev_idx is not None and rev_idx < len(normalized):
+            rev_col_val = normalized[rev_idx]
+
+        # If the rev_col_val matches revision pattern, it's likely a real revision row
+        if self.revision_regex.fullmatch(rev_col_val.upper()):
+            # Valid revision found, so do NOT exclude
+            return False
+
+        # Otherwise, if any unwanted keyword is found in the row, exclude it
+        for keyword in unwanted_keywords:
+            for cell in normalized:
+                if keyword in cell:
+                    return True
+
+        return False
+
     def extract_revision_history_from_page_obj(self, page, revision_coordinates):
         try:
             if not revision_coordinates or len(revision_coordinates) != 4:
@@ -216,11 +280,20 @@ class TextExtractor:
                 return []
 
             data = data[::-1]
+
+            # Detect revision column index first
             rev_idx, desc_idx, date_idx = self.detect_column_indices(data)
+
+            # Filter rows by passing detected revision index
+            filtered_data = [row for row in data if not self.is_footer_or_header_row(row, rev_idx)]
+
+            rev_idx, desc_idx, date_idx = self.detect_column_indices(filtered_data)
+
             extracted_list = []
 
-            for row in data:
-                if not any(row): continue
+            for row in filtered_data:
+                if not any(row):
+                    continue
                 rev, desc, date = self.parse_revision_row(row, rev_idx, desc_idx, date_idx)
                 if rev and desc and date:
                     extracted_list.append({"rev": rev, "desc": desc, "date": date})
@@ -253,7 +326,7 @@ class TextExtractor:
         wb = Workbook()
         ws = wb.active
 
-        base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"]
+        base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"]
         area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
         extra_headers = ["Latest Revision", "Latest Description", "Latest Date"]
         revision_headers = [f"Rev{i + 1}" for i in range(max_revisions)]
@@ -269,11 +342,14 @@ class TextExtractor:
 
             for row in reader:
                 unid = row[0]
-                base = row[1:6]
-                areas = row[6:6 + len(self.areas)]
-                latest_rev = row[6 + len(self.areas)]
-                latest_desc = row[6 + len(self.areas) + 1]
-                latest_date = row[6 + len(self.areas) + 2]
+                base = row[1:7]  # Size, Date, Folder, Filename, Page No, Page Size
+                areas = row[7:7 + len(self.areas)]
+                base_index = 7 + len(self.areas)
+                latest_rev = row[base_index] if len(row) > base_index else ""
+                latest_desc = row[base_index + 1] if len(row) > base_index + 1 else ""
+                latest_date = row[base_index + 2] if len(row) > base_index + 2 else ""
+                # revisions_flat is row[base_index + 3], you may or may not need to parse it here
+
                 revisions = eval(row[-1]) if row[-1].startswith("[") else []
 
                 row_data = [unid] + base + areas + [latest_rev, latest_desc, latest_date] + revisions + \
@@ -355,8 +431,11 @@ class TextExtractor:
         # Combine CSV
         with open(combined_csv, "w", newline="", encoding="utf-8") as outfile:
             writer = csv.writer(outfile)
-            writer.writerow(["UNID", "Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No"] +
-                            [self.unique_headers_mapping[i] for i in range(len(self.areas))] + ["__revisions__"])
+            writer.writerow(
+                ["UNID", "Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"] +
+                [self.unique_headers_mapping[i] for i in range(len(self.areas))] +
+                ["Latest Revision", "Latest Description", "Latest Date", "__revisions__"]
+            )
 
             for f in temp_csv_files:
                 with open(f, "r", encoding="utf-8") as infile:
@@ -420,32 +499,55 @@ class TextExtractor:
 
     def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
+        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+            print(f"Skipping missing or empty file: {pdf_path}")
+            result_rows = [[
+                0,
+                "",
+                "",
+                os.path.basename(pdf_path),
+                0,
+                [("Error: File not found or empty", "")],  # list of one tuple
+                []
+            ]]
+
+            return result_rows
+
         try:
-            # Ensure the file exists and is not empty
-            if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
-                print(f"Skipping missing or empty file: {pdf_path}")
-                result_rows = [["Error", "File not found or empty", "", pdf_path, "",
-                                "FileNotFoundError: File not found or empty"]]
-
-
-                return result_rows
 
             # Open the PDF file with additional validation and caching
             try:
-                # Use memory-efficient loading for large files
                 pdf_document = fitz.open(pdf_path, filetype="pdf")
                 if not pdf_document.is_pdf:
                     raise ValueError("Not a valid PDF file")
-
-                # Enable faster text extraction
                 fitz.TOOLS.set_small_glyph_heights(True)
+            except (fitz.FileDataError, fitz.EmptyFileError) as e:
+                print(f"PDF corrupted or empty: {pdf_path}, {e}")
+                result_rows = [[
+                    0,
+                    "",
+                    "",
+                    os.path.basename(pdf_path),
+                    0,
+                    f"Error: Corrupted or empty PDF: {str(e)}",
+                    []
+                ]]
+                return result_rows
+
             except Exception as e:
                 print(f"Error opening PDF {pdf_path}: {e}")
-                result_rows = [["Error", "Invalid PDF", "", pdf_path, "",
-                                f"PDFError: {str(e)}"]]
-
-
+                result_rows = [[
+                    0,
+                    "",
+                    "",
+                    os.path.basename(pdf_path),
+                    0,
+                    f"Error: Invalid PDF: {str(e)}",
+                    []
+                ]]
                 return result_rows
+
+
             file_size = os.path.getsize(pdf_path)
             last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
             folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
@@ -476,7 +578,7 @@ class TextExtractor:
 
                     result_rows.append([
                         file_size, last_modified_date, folder, filename, page_number + 1,
-                        extracted_areas, revision_data  # No UNID here
+                        extracted_areas, revision_data, list(page.rect)  # page size as 8th element
                     ])
 
                     del extracted_areas
@@ -487,8 +589,12 @@ class TextExtractor:
                 except Exception as e:
                     print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
                     result_rows.append(
-                        [file_size, last_modified_date, folder, filename, page_number + 1, "Error processing page",
-                         str(e)])
+                        [file_size, last_modified_date, folder, filename, page_number + 1,
+                         [("Error processing page", "")],
+                         [],
+                         None  # Add this to keep length consistent
+                         ]
+                    )
 
             pdf_document.close()
             del pdf_document
@@ -499,8 +605,16 @@ class TextExtractor:
         except Exception as e:
             print(f"Error processing {pdf_path}: {e}")
             # Add an error placeholder for this file in results
-            result_rows = [
-                [file_size, last_modified_date, folder, filename, "Error", f"File Processing Error: {str(e)}"]]
+            result_rows = [[
+                file_size if 'file_size' in locals() else 0,
+                last_modified_date if 'last_modified_date' in locals() else "",
+                folder if 'folder' in locals() else "",
+                filename if 'filename' in locals() else os.path.basename(pdf_path),
+                0,
+                f"Error: File Processing Error: {str(e)}",
+                [],
+                None  # Add None here for page.rect to keep consistent
+            ]]
 
             gc.collect()
             # total_files.value += 1  # Update progress counter even on error
@@ -657,17 +771,22 @@ class TextExtractor:
                     #     continue
 
                     # Unpack metadata and extracted area data for the page
-                    file_size, last_modified, folder, filename, page_number, extracted_areas, revision_data = row_data
+                    file_size, last_modified, folder, filename, page_number, page_rect, extracted_areas, revision_data = row_data
 
                     # Prepare row for insertion
                     row_index = ws.max_row + 1
                     metadata = [file_size, last_modified, folder, filename, page_number]
 
-                    # Write metadata to columns 1-5
+                    # Add page size string (e.g. "width x height")
+                    page_size_str = f"{page_rect.width:.1f} x {page_rect.height:.1f}" if page_rect else ""
+
+                    metadata.append(page_size_str)  # Now metadata has 6 items
+
+                    # Write metadata (6 columns)
                     for col, data in enumerate(metadata, start=1):
                         cell = ws.cell(row=row_index, column=col)
                         cell.value = data
-                        if col == 4:  # Set filename as a hyperlink in column 4
+                        if col == 4:  # hyperlink on filename column remains at 4
                             absolute_path = os.path.abspath(os.path.join(self.pdf_folder, folder, filename))
                             cell.hyperlink = absolute_path
                             cell.style = "Hyperlink"
@@ -683,7 +802,6 @@ class TextExtractor:
                         text, img_path = extracted_areas[index] if isinstance(extracted_areas, list) else (
                         extracted_areas, None)
 
-                        # Place text in the designated column, checking for OCR and cleaning
                         text_cell = ws.cell(row=row_index, column=col_index)
                         cleaned_text = self.clean_text(text.replace("_OCR_", "")) if text != "Error" else "Error"
                         text_cell.value = cleaned_text

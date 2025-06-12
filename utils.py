@@ -237,8 +237,8 @@ def get_cell_dimensions(sheet, cell):
 REVISION_PATTERNS = {
 
     "XX": {
-        "pattern": r"^0[0-9]$",
-        "examples": ["00", "01", "02"]
+        "pattern": r"^\d{2}$",
+        "examples": ["00", "01", "02", "10", "11", "12", "99"]
     },
 
     "Alphabet Only": {

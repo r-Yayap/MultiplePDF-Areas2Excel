@@ -120,6 +120,34 @@ class XtractorGUI:
         except Exception as e:
             messagebox.showerror("Import Error", f"Could not import areas: {e}")
 
+    def import_rectangles_from_file(self, file_path):
+        try:
+            wb = load_workbook(file_path)
+            ws_area = wb["Rectangles"] if "Rectangles" in wb.sheetnames else wb.active
+
+            self.pdf_viewer.areas = []
+            for row in ws_area.iter_rows(min_row=2, values_only=True):
+                title, x0, y0, x1, y1 = row
+                self.pdf_viewer.areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
+
+            # Handle revision area if present
+            if "RevisionTable" in wb.sheetnames:
+                ws_rev = wb["RevisionTable"]
+                for row in ws_rev.iter_rows(min_row=2, values_only=True):
+                    title, x0, y0, x1, y1 = row
+                    if all(isinstance(coord, (int, float)) for coord in [x0, y0, x1, y1]):
+                        self.pdf_viewer.revision_area = {"title": title, "coordinates": [x0, y0, x1, y1]}
+                        break
+            else:
+                self.pdf_viewer.revision_area = None
+
+            self.pdf_viewer.update_rectangles()
+            self.update_areas_treeview()
+            print(f"✅ Imported areas from dropped Excel file: {file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Import Error", f"Could not import areas from dropped Excel file: {e}")
+
     def clear_all_areas(self):
         """Clears all areas and updates the display."""
         self.pdf_viewer.clear_areas()  # Clear area rectangles
