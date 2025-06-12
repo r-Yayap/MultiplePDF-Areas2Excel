@@ -21,6 +21,8 @@ from tkinterdnd2 import TkinterDnD, DND_ALL
 from PIL import Image, ImageTk  # Make sure this is at the top
 import sys
 
+
+
 def resource_path(relative_path):
     try:
         return os.path.join(sys._MEIPASS, relative_path)
@@ -684,16 +686,29 @@ class XtractorGUI:
         self.update_pdf_counter()
 
     def recursive_set_check_state(self, item_id):
-        item = self.files_tree_widget.item(item_id)
-        values = item.get("values", [])
-        if values:
-            full_path = os.path.abspath(values[0])
-            tag = "checked" if full_path in self.dropped_pdf_set else "unchecked"
-            self.files_tree_widget.item(item_id, tags=(tag,))
+        children = self.files_tree_widget.get_children(item_id)
+        if not children:
+            # Leaf node (file)
+            item = self.files_tree_widget.item(item_id)
+            values = item.get("values", [])
+            if values:
+                full_path = os.path.abspath(values[0])
+                tag = "checked" if full_path in self.dropped_pdf_set else "unchecked"
+                self.files_tree_widget.item(item_id, tags=(tag,))
+                return tag == "checked"
+            else:
+                self.files_tree_widget.item(item_id, tags=("unchecked",))
+                return False
         else:
-            # Folder node – recurse
-            for child_id in self.files_tree_widget.get_children(item_id):
-                self.recursive_set_check_state(child_id)
+            # Folder node
+            any_child_checked = False
+            for child in children:
+                if self.recursive_set_check_state(child):
+                    any_child_checked = True
+
+            tag = "checked" if any_child_checked else "unchecked"
+            self.files_tree_widget.item(item_id, tags=(tag,))
+            return any_child_checked
 
     def drop_pdf_folder(self, event):
         raw_data = event.data.strip()
@@ -703,46 +718,44 @@ class XtractorGUI:
         dropped_pdfs = [p for p in cleaned_paths if os.path.isfile(p) and p.lower().endswith(".pdf")]
         dropped_folders = [p for p in cleaned_paths if os.path.isdir(p)]
 
-        # Case 1: PDFs dropped directly
-        if dropped_pdfs:
-            self.dropped_pdf_set = set(dropped_pdfs)
-            common_root = os.path.commonpath(dropped_pdfs)
-            self.pdf_folder = common_root if os.path.isdir(common_root) else os.path.dirname(dropped_pdfs[0])
-            self.pdf_folder_entry.delete(0, ctk.END)
-            self.pdf_folder_entry.insert(0, self.pdf_folder)
-            self.build_folder_tree()
-            for iid in self.files_tree_widget.get_children(""):
-                self.recursive_set_check_state(iid)
-            self.update_pdf_counter()
+        # Collect all PDFs from dropped folders recursively
+        def collect_pdfs_from_folder(folder_path):
+            collected = []
+            for root, _, files in os.walk(folder_path):
+                for file in files:
+                    if file.lower().endswith(".pdf"):
+                        collected.append(os.path.join(root, file))
+            return collected
 
-            if not self.pdf_viewer.pdf_document:
-                self.pdf_viewer.display_pdf(dropped_pdfs[0])
-                self.recent_pdf_path = dropped_pdfs[0]
-                print(f"Loaded dropped PDF: {dropped_pdfs[0]}")
+        all_pdfs = dropped_pdfs.copy()
+        for folder in dropped_folders:
+            all_pdfs.extend(collect_pdfs_from_folder(folder))
+
+        if not all_pdfs:
+            messagebox.showerror("Invalid Drop", "No PDF files found in the dropped folders or files.")
             return
 
-        # Case 2: A single folder was dropped
-        if len(dropped_folders) == 1:
-            self.pdf_folder = dropped_folders[0]
-            self.pdf_folder_entry.delete(0, ctk.END)
-            self.pdf_folder_entry.insert(0, self.pdf_folder)
-            self.dropped_pdf_set = set()  # reset
-            self.build_folder_tree()
-            self.update_pdf_counter()
+        # Set PDF folder as the common root folder of all PDFs dropped/found
+        common_root = os.path.commonpath(all_pdfs)
+        if not os.path.isdir(common_root):
+            common_root = os.path.dirname(all_pdfs[0])  # fallback
 
-            # ✅ Display the first PDF if none is currently shown
-            if not self.pdf_viewer.pdf_document:
-                for root_dir, _, files in os.walk(self.pdf_folder):
-                    for file in sorted(files):
-                        if file.lower().endswith(".pdf"):
-                            first_pdf = os.path.join(root_dir, file)
-                            self.pdf_viewer.display_pdf(first_pdf)
-                            self.recent_pdf_path = first_pdf
-                            print(f"Displayed first PDF from folder: {first_pdf}")
-                            return
-            return
+        self.pdf_folder = common_root
+        self.pdf_folder_entry.delete(0, ctk.END)
+        self.pdf_folder_entry.insert(0, self.pdf_folder)
 
-        messagebox.showerror("Invalid Drop", "Please drop a PDF file or a folder.")
+        self.dropped_pdf_set = set(all_pdfs)
+
+        self.build_folder_tree()
+        for iid in self.files_tree_widget.get_children(""):
+            self.recursive_set_check_state(iid)
+        self.update_pdf_counter()
+
+        # Display first PDF if none loaded
+        if not self.pdf_viewer.pdf_document:
+            self.pdf_viewer.display_pdf(all_pdfs[0])
+            self.recent_pdf_path = all_pdfs[0]
+            print(f"Loaded first PDF from dropped items: {all_pdfs[0]}")
 
     def drop_sample_pdf(self, event):
         path = event.data.strip().replace("{", "").replace("}", "")
