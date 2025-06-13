@@ -23,7 +23,7 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-theme_path = resource_path("style/xtractor-dark-red.json")
+theme_path = resource_path("style/conflux-dark-red.json")
 ctk.set_default_color_theme(theme_path)
 ctk.set_appearance_mode("dark")
 
@@ -119,8 +119,9 @@ class ExcelMerger:
         # --- NEW: Add title_match column ---
         if title_column1 and title_column2 and title_column3 and compare_excel2 and compare_excel3:
             merged_df['title_match'] = merged_df.apply(
-                lambda row: f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel2', ''))}, "
-                            f"{ExcelMerger.titles_match(row.get('title_excel1', ''), row.get('title_excel3', ''))}",
+                lambda
+                    row: f"{ExcelMerger.titles_match(str(row.get('title_excel1', '')).strip(), str(row.get('title_excel2', '')).strip())}, " \
+                         f"{ExcelMerger.titles_match(str(row.get('title_excel1', '')).strip(), str(row.get('title_excel3', '')).strip())}",
                 axis=1
             )
         elif title_column1 and title_column2 and compare_excel2:
@@ -266,6 +267,16 @@ class ExcelMerger:
             custom_checks=custom_checks,
             filename_column=filename_column
         )
+
+        if title_column1 and title_column2:
+            merged_df['title_match'] = merged_df.apply(
+                lambda row: "True" if ExcelMerger.titles_match(
+                    str(row.get('title_excel1', '')).strip(), str(row.get('title_excel2', '')).strip()
+                ) else "False",
+                axis=1
+            )
+        else:
+            merged_df['title_match'] = "N/A"
 
         temp_file_path = ExcelMerger._save_merged_to_excel(merged_df, output_path)
 
@@ -1323,33 +1334,33 @@ class MergerGUI:
     # --- Drag and Drop Handlers ---
     def drop_excel1(self, event):
         file_path = event.data.strip().replace("{", "").replace("}", "")
-        if file_path.lower().endswith((".xlsx", ".xls")):
+        if file_path.lower().endswith((".xlsx", ".xlsm")):
             self.excel1_path.set(file_path)
             self._load_excel1_headers(file_path)
             filename = os.path.basename(file_path)
-            self.excel1_button.configure(text=filename, fg_color="#217346")
+            self.excel1_button.configure(text=filename, fg_color="#990d10")
         else:
-            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx or .xlsm).")
 
     def drop_excel2(self, event):
         file_path = event.data.strip().replace("{", "").replace("}", "")
-        if file_path.lower().endswith((".xlsx", ".xls")):
+        if file_path.lower().endswith((".xlsx", ".xlsm")):
             self.excel2_path.set(file_path)
             self._load_excel2_headers(file_path)
             filename = os.path.basename(file_path)
-            self.excel2_button.configure(text=filename, fg_color="#217346")
+            self.excel2_button.configure(text=filename, fg_color="#990d10")
         else:
-            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx or .xlsm).")
 
     def drop_excel3(self, event):
         file_path = event.data.strip().replace("{", "").replace("}", "")
-        if file_path.lower().endswith((".xlsx", ".xls")):
+        if file_path.lower().endswith((".xlsx", ".xlsm")):
             self.excel3_path.set(file_path)
             self._load_excel3_headers(file_path)
             filename = os.path.basename(file_path)
-            self.excel3_button.configure(text=filename, fg_color="#217346")
+            self.excel3_button.configure(text=filename, fg_color="#990d10")
         else:
-            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx, .xls).")
+            messagebox.showerror("Error", "Please drag and drop a valid Excel file (.xlsx or .xlsm).")
 
     def _browse_excel1(self):
         file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx;*.xls")],
