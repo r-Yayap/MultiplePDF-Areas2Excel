@@ -494,13 +494,39 @@ class XtractorGUI:
         tool_frame.pack(pady=10, fill="both", expand=True)
 
         for label, tool in tool_definitions.items():
-            btn = ctk.CTkButton(tool_frame, text=label, width=240, height=28, font=(BUTTON_FONT, 10),
-                                command=tool["action"])
+            # Create the main tool button
+            if label == "📐 PDF & DWG Checker":
+                # Pass self.root explicitly when launching PDF/DWG Checker popup
+                btn = ctk.CTkButton(
+                    tool_frame,
+                    text=label,
+                    width=240,
+                    height=28,
+                    font=(BUTTON_FONT, 10),
+                    command=lambda root=self.root, func=tool["action"]: func(root)
+                )
+            else:
+                btn = ctk.CTkButton(
+                    tool_frame,
+                    text=label,
+                    width=240,
+                    height=28,
+                    font=(BUTTON_FONT, 10),
+                    command=tool["action"]
+                )
             btn.pack(pady=(10, 2))
 
-            help_btn = ctk.CTkButton(tool_frame, text="How to use?", width=240, height=20, font=(BUTTON_FONT, 9),
-                                     fg_color="gray20", hover_color="gray30",
-                                     command=lambda t=tool: self.show_tool_instructions(t["instructions"]))
+            # Create the "How to use?" help button next to it, capturing tool text correctly
+            help_btn = ctk.CTkButton(
+                tool_frame,
+                text="How to use?",
+                width=240,
+                height=20,
+                font=(BUTTON_FONT, 9),
+                fg_color="gray20",
+                hover_color="gray30",
+                command=lambda t=tool: self.show_tool_instructions(t["instructions"])
+            )
             help_btn.pack(pady=(0, 5))
 
         # Load PNG from style folder
