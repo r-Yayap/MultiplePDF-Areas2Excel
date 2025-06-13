@@ -155,7 +155,7 @@ class PDFDWGCheckerApp:
         # self.summary_box = ctk.CTkTextbox(self.root, width=580, height=120, font=("Verdana", 12))
         # self.summary_box.configure(state="disabled")
         # self.summary_box.pack(padx=15, pady=(10, 10))
-        self.summary_box = tk.Text(self.root, width=70, height=7, font=("Verdana", 12), wrap="word")
+        self.summary_box = tk.Text(self.root, width=70, height=7, font=("Verdana", 12), wrap="word", bg="#2e2e2e",fg="white", insertbackground="white")
         self.summary_box.configure(state="disabled")
         self.summary_box.pack(padx=15, pady=(10, 10))
 
