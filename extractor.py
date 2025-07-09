@@ -196,9 +196,26 @@ class TextExtractor:
                 elif any(kw in text for kw in DESC_KEYWORDS):
                     col_scores[col_idx]["desc"] += 1
 
-        rev_idx = max(col_scores.items(), key=lambda x: x[1]["rev"], default=(None, {}))[0]
-        desc_idx = max(col_scores.items(), key=lambda x: x[1]["desc"], default=(None, {}))[0]
-        date_idx = max(col_scores.items(), key=lambda x: x[1]["date"], default=(None, {}))[0]
+        # ─── Pick each column once (winner-takes-slot, then remove) ───
+        scores = {k: v.copy() for k, v in col_scores.items()}  # make a mutable copy
+
+        def pick(metric):
+            """
+            Return the column index that scores highest on the chosen metric,
+            but only if its score is > 0. Remove that column so it can't be
+            selected again.
+            """
+            if not scores:
+                return None
+            best = max(scores, key=lambda c: scores[c][metric])
+            if scores[best][metric] == 0:  # no evidence → treat as 'not found'
+                return None
+            scores.pop(best)
+            return best
+
+        rev_idx = pick("rev")  # first pass
+        desc_idx = pick("desc")  # second pass, cannot reuse rev_idx
+        date_idx = pick("date")  # third pass, cannot reuse previous two
 
         #print(f"🔍 Column Indices Detected → Rev: {rev_idx}, Desc: {desc_idx}, Date: {date_idx}")
         return rev_idx, desc_idx, date_idx
