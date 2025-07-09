@@ -26,7 +26,7 @@ DATE_REGEX = re.compile(r"""
     (?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}) |                    # e.g. 07/05/25 or 19-03-2025
     (?:\d{1,2}\s*[-]?\s*[A-Za-z]{3,9}\s*[-]?\s*\d{2,4})    # e.g. 7 Apr 25 or 7-Apr-2025
 """, re.VERBOSE | re.IGNORECASE)
-DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission"]
+DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission","ifc","tender","addendum"]
 
 def print_ram(): #for debug
     process = psutil.Process(os.getpid())
