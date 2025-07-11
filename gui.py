@@ -549,7 +549,7 @@ class XtractorGUI:
         self.version_label.pack(pady=(0, 15), anchor="center")  # ⬅️ anchor set to center
         self.version_label.bind("<Button-1>", self.display_version_info)
 
-        self.root.after(300, self.place_zoom_and_version_controls)
+        self.root.after_idle(self.update_floating_controls)
 
     def show_tool_instructions(self, text):
         window = ctk.CTkToplevel(self.root)
@@ -638,6 +638,21 @@ class XtractorGUI:
         text_box.pack(padx=10, pady=10, fill="both", expand=True)
         window.grab_set()
 
+    def update_floating_controls(self):
+        """
+        Pin Recent↩, Close X, and the Zoom slider to the same x-coordinate
+        as the PDF canvas.  Because the canvas is already placed with
+        resize_canvas(), this avoids guessing sidebar/border widths.
+        """
+        self.root.update_idletasks()  # make sure coordinates are current
+
+        canvas_x = self.pdf_viewer.canvas.winfo_x()  # ← true viewer start
+        win_h = self.root.winfo_height()
+        gap = 4  # visual gap from sidebar
+
+        self.recent_pdf_button.place(x=canvas_x + gap, y=23)
+        self.close_pdf_button.place(x=canvas_x + gap + 30, y=23)
+        self.zoom_frame.place(x=canvas_x + gap, y=win_h - 57)
 
     def place_zoom_and_version_controls(self):
         sidebar_width = self.tab_view.winfo_width() + 20
@@ -1086,6 +1101,7 @@ class XtractorGUI:
             # Zoom and version controls
             self.zoom_frame.place_configure(x=sidebar_width + 0, y=new_height - 57)
 
+            self.update_floating_controls()
 
         except Exception as e:
             print(f"Error resizing widgets: {e}")
