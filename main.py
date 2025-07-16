@@ -13,15 +13,27 @@ from constants import (
     VERSION_TEXT
 )
 
+from pathlib import Path
+
 # ────────────────────────────────────────────────────────────
 #  Helper: resource path (PyInstaller-safe)
 # ────────────────────────────────────────────────────────────
-def resource_path(rel):
-    try:
-        base = sys._MEIPASS                   # PyInstaller temp dir
-    except AttributeError:
-        base = os.path.abspath(".")
-    return os.path.join(base, rel)
+def resource_path(rel: str) -> str:
+    """
+    Return an absolute path to a bundled resource that works for:
+    • normal `python main.py` runs
+    • Nuitka --standalone builds
+    • PyInstaller one-file / one-dir builds
+    """
+    # -------- if we are inside a frozen app ---------------------------
+    if getattr(sys, "frozen", False):
+        # PyInstaller defines _MEIPASS; other freezers (Nuitka, cx_Freeze) don't.
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        # running from source – use the directory where *this* file lives
+        base_dir = Path(__file__).parent
+
+    return str(base_dir / rel)
 
 
 # Apply theme once (fast)

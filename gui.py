@@ -21,13 +21,24 @@ from tkinterdnd2 import TkinterDnD, DND_ALL
 from PIL import Image, ImageTk  # Make sure this is at the top
 import sys
 
+from pathlib import Path
 
+def resource_path(rel: str) -> str:
+    """
+    Return an absolute path to a bundled resource that works for:
+    • normal `python main.py` runs
+    • Nuitka --standalone builds
+    • PyInstaller one-file / one-dir builds
+    """
+    # -------- if we are inside a frozen app ---------------------------
+    if getattr(sys, "frozen", False):
+        # PyInstaller defines _MEIPASS; other freezers (Nuitka, cx_Freeze) don't.
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        # running from source – use the directory where *this* file lives
+        base_dir = Path(__file__).parent
 
-def resource_path(relative_path):
-    try:
-        return os.path.join(sys._MEIPASS, relative_path)
-    except AttributeError:
-        return os.path.abspath(relative_path)
+    return str(base_dir / rel)
 
 
 class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
