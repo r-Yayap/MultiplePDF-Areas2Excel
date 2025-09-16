@@ -18,6 +18,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from utils import adjust_coordinates_for_rotation, find_tessdata
 import psutil #for debug
+from openpyxl.cell import WriteOnlyCell
 
 
 # Define patterns
@@ -335,7 +336,8 @@ class TextExtractor:
         return re.sub(r'\s+', ' ', text)
 
     def stream_to_excel(self, csv_path, final_output_path, max_revisions):
-        wb = Workbook()
+        needs_images = (self.ocr_settings.get("enable_ocr") == "Text1st+Image-beta")
+        wb = Workbook(write_only=not needs_images)  # normal if images, write-only otherwise
         ws = wb.active
 
         base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"]
@@ -345,14 +347,18 @@ class TextExtractor:
         headers = ["UNID"] + base_headers + area_headers + extra_headers + revision_headers
         ws.append(headers)
 
+        # helpful indices (0-based for lists)
+        filename_col_idx0 = headers.index("Filename")  # index within the final row we append
+        folder_col_idx0 = headers.index("Folder")
+        area_first_idx0 = 1 + len(base_headers)  # after UNID + base headers
+        ocr_font = Font(color="FF3300")
+
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             next(reader)  # skip header row
 
-            ocr_font = Font(color="FF3300")
-            area_start_col = 1 + len(["UNID"] + base_headers)
-
             for row in reader:
+                # unpack columns from CSV
                 unid = row[0]
                 base = row[1:7]  # Size, Date, Folder, Filename, Page No, Page Size
                 areas = row[7:7 + len(self.areas)]
@@ -360,52 +366,79 @@ class TextExtractor:
                 latest_rev = row[base_index] if len(row) > base_index else ""
                 latest_desc = row[base_index + 1] if len(row) > base_index + 1 else ""
                 latest_date = row[base_index + 2] if len(row) > base_index + 2 else ""
-                # revisions_flat is row[base_index + 3], you may or may not need to parse it here
 
-                revisions = eval(row[-1]) if row[-1].startswith("[") else []
+                # ✅ parse revisions from JSON (safer than eval)
+                rev_str = row[-1] if row else "[]"
+                try:
+                    revisions = json.loads(rev_str) if rev_str.strip().startswith("[") else []
+                except json.JSONDecodeError:
+                    revisions = []
 
-                row_data = [unid] + base + areas + [latest_rev, latest_desc, latest_date] + revisions + \
-                           [""] * (max_revisions - len(revisions))
+                # pad revision columns
+                padded_revisions = revisions + [""] * (max_revisions - len(revisions))
 
-                ws.append(row_data)
-                current_row = ws.max_row
+                # assemble plain values for the final row
+                row_values = [unid] + base + areas + [latest_rev, latest_desc, latest_date] + padded_revisions
 
-                # Apply hyperlink styling to filename cell
-                folder_col_idx = headers.index("Folder") + 1
-                filename_col_idx = headers.index("Filename") + 1
+                if needs_images:
+                    # -------- NORMAL MODE: your existing style logic (post-append edits) --------
+                    ws.append(row_values)
+                    current_row = ws.max_row
 
-                folder_cell = ws.cell(row=current_row, column=folder_col_idx)
-                filename_cell = ws.cell(row=current_row, column=filename_col_idx)
+                    # hyperlink on filename
+                    folder_val = row_values[folder_col_idx0]
+                    filename_val = row_values[filename_col_idx0]
+                    if folder_val and filename_val:
+                        abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder_val, filename_val))
+                        filename_cell = ws.cell(row=current_row, column=filename_col_idx0 + 1)
+                        filename_cell.hyperlink = abs_path
+                        filename_cell.font = Font(color="0000FF", underline="single")
 
-                if folder_cell.value and filename_cell.value:
-                    abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder_cell.value, filename_cell.value))
-                    filename_cell.hyperlink = abs_path
-                    filename_cell.font = Font(color="0000FF", underline="single")
+                    # OCR styling + embed images
+                    for i in range(len(area_headers)):
+                        col = area_first_idx0 + i
+                        cell = ws.cell(row=current_row, column=col + 1)
+                        if isinstance(cell.value, str) and "_OCR_" in cell.value:
+                            cell.font = ocr_font
+                            cell.value = cell.value.replace("_OCR_", "").strip()
 
-                # ✅ OCR styling + image embedding per cell
-                for i in range(len(area_headers)):
-                    cell = ws.cell(row=current_row, column=area_start_col + i)
-
-                    if isinstance(cell.value, str) and "_OCR_" in cell.value:
-                        cell.font = ocr_font
-                        cell.value = cell.value.replace("_OCR_", "").strip()
-
-                    if self.ocr_settings["enable_ocr"] == "Text1st+Image-beta":
-                        folder = base[2]  # Folder
-                        filename = base[3]  # Filename
-                        page_no = base[4]  # Page No
-
-                        image_filename = f"{filename}_page{page_no}_area{i}.png"
-                        image_path = os.path.join(self.temp_image_folder, image_filename)
-
-                        if os.path.exists(image_path):
-                            try:
+                        # embed image (only in Text1st+Image-beta)
+                        try:
+                            folder_val = row_values[folder_col_idx0]
+                            filename_val = row_values[filename_col_idx0]
+                            page_no = row_values[headers.index("Page No")]
+                            image_filename = f"{filename_val}_page{page_no}_area{i}.png"
+                            image_path = os.path.join(self.temp_image_folder, image_filename)
+                            if os.path.exists(image_path):
                                 img = ExcelImage(image_path)
-                                img.anchor = f"{get_column_letter(area_start_col + i)}{current_row}"
+                                img.anchor = f"{get_column_letter(col + 1)}{current_row}"
                                 ws.add_image(img)
-                            except Exception as e:
-                                print(f"⚠️ Failed to embed image {image_filename}: {e}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to embed image: {e}")
 
+                else:
+                    # -------- WRITE-ONLY MODE: pre-style using WriteOnlyCell --------
+                    row_cells = []
+                    # Compute absolute path once for hyperlink
+                    folder_val = row_values[folder_col_idx0]
+                    filename_val = row_values[filename_col_idx0]
+                    abs_path = os.path.abspath(os.path.join(self.pdf_folder, folder_val, filename_val)) \
+                        if folder_val and filename_val else None
+
+                    for idx0, val in enumerate(row_values):
+                        c = WriteOnlyCell(ws, value=val)
+                        # filename hyperlink
+                        if idx0 == filename_col_idx0 and abs_path:
+                            c.font = Font(color="0000FF", underline="single")
+                            c.hyperlink = abs_path
+                        # OCR red font for area cells
+                        if area_first_idx0 <= idx0 < area_first_idx0 + len(area_headers):
+                            if isinstance(val, str) and "_OCR_" in val:
+                                c.value = val.replace("_OCR_", "").strip()
+                                c.font = ocr_font
+                        row_cells.append(c)
+
+                    ws.append(row_cells)
 
         # Save file
         if os.path.exists(self.output_excel_path):
@@ -418,14 +451,12 @@ class TextExtractor:
         wb.save(output_path)
         final_output_path.value = output_path
 
-        # ✅ Copy NDJSON from temp folder to match Excel path
+        # Copy NDJSON next to Excel (if produced)
         ndjson_temp_path = os.path.join(self.temp_image_folder, "streamed_revisions.ndjson")
         ndjson_output_path = output_path.replace(".xlsx", "_revisions.ndjson")
-
         try:
             if os.path.exists(ndjson_temp_path):
                 shutil.copy(ndjson_temp_path, ndjson_output_path)
-                #print(f"✅ NDJSON revision file saved → {ndjson_output_path}")
             else:
                 print(f"⚠️ NDJSON temp file not found at {ndjson_temp_path}")
         except Exception as e:
@@ -478,9 +509,13 @@ class TextExtractor:
         max_revs = 0
         with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            next(reader)
+            next(reader, None)
             for row in reader:
-                revisions = eval(row[-1]) if row[-1].startswith("[") else []
+                rev_str = row[-1] if row else "[]"
+                try:
+                    revisions = json.loads(rev_str) if rev_str.strip().startswith("[") else []
+                except json.JSONDecodeError:
+                    revisions = []
                 max_revs = max(max_revs, len(revisions))
         return max_revs
 
@@ -571,7 +606,7 @@ class TextExtractor:
             for page_number in range(pdf_document.page_count):
                 try:
                     page = pdf_document[page_number]
-                    page.remove_rotation()
+                    #page.remove_rotation()
                     extracted_areas = []
 
                     for area_index, area in enumerate(self.areas):
