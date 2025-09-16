@@ -673,10 +673,6 @@ class TextExtractor:
                 # Validate and save image
                 img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
 
-                # Ensure temp folder exists
-                if not os.path.exists(self.temp_image_folder):
-                    os.makedirs(self.temp_image_folder, exist_ok=True)
-
                 # Save image with size validation (20MB max)
                 pix.save(img_path)
                 if os.path.getsize(img_path) > 10 * 1024 * 1024:  # 20MB
