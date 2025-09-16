@@ -59,51 +59,46 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
         csv_writer = csv.writer(csv_file)
 
         for row in result_rows:
-            # fill missing elements
             if len(row) < 8:
                 row = list(row) + [None] * (8 - len(row))
+
             file_size, mod_date, folder, filename, page_no, areas, revisions, page_rect = row
 
-            # Defensive fix for page_rect (if needed, as before)
+            # rect -> string
             if page_rect is not None and isinstance(page_rect, (list, tuple)) and len(page_rect) == 4:
                 page_rect = fitz.Rect(page_rect)
             else:
                 page_rect = None
-
             page_size_str = f"{page_rect.width:.1f} x {page_rect.height:.1f}" if page_rect else ""
 
-            # Defensive check: revisions should be a list, last item should be a dict
-            if isinstance(revisions, list) and len(revisions) > 0 and isinstance(revisions[-1], dict):
-                latest_rev = revisions[-1].get('rev', '')
-                latest_desc = revisions[-1].get('desc', '')
-                latest_date = revisions[-1].get('date', '')
-            else:
-                latest_rev = ""
-                latest_desc = ""
-                latest_date = ""
-
-            # Defensive: ensure areas is a list of tuples (text, img_path)
+            # normalize areas to list[(text, img_path)]
             if not isinstance(areas, list):
                 areas = []
             areas = [(a if isinstance(a, tuple) and len(a) == 2 else (str(a), "")) for a in areas]
-
             text_values = [text for text, _ in areas]
             if len(text_values) < len(extractor.areas):
                 text_values += [""] * (len(extractor.areas) - len(text_values))
 
-            revisions_flat = [
-                f"{r.get('rev', '')} | {r.get('desc', '')} | {r.get('date', '')}" if isinstance(r, dict) else str(r)
-                for r in revisions or []
-            ]
+            # latest rev (best-effort)
+            if isinstance(revisions, list) and revisions and isinstance(revisions[-1], dict):
+                latest_rev = revisions[-1].get("rev", "")
+                latest_desc = revisions[-1].get("desc", "")
+                latest_date = revisions[-1].get("date", "")
+            else:
+                latest_rev = latest_desc = latest_date = ""
 
-            csv_row = [unid, file_size, mod_date, folder, filename, page_no, page_size_str] + \
-                      text_values + [latest_rev, latest_desc, latest_date, revisions_flat]
+            # page-level UNID
+            page_unid = f"{unid}-{page_no}"
 
+            # serialize full revisions as JSON (safer than eval on read)
+            revisions_json = json.dumps(revisions or [], ensure_ascii=False)
+
+            csv_row = [page_unid, file_size, mod_date, folder, filename, page_no, page_size_str] + \
+                      text_values + [latest_rev, latest_desc, latest_date, revisions_json]
             csv_writer.writerow(csv_row)
 
-            # NDJSON Row (optional)
             if jsonl_file:
-                json.dump({"unid": unid, "revisions": revisions}, jsonl_file, ensure_ascii=False)
+                json.dump({"unid": page_unid, "revisions": revisions or []}, jsonl_file, ensure_ascii=False)
                 jsonl_file.write("\n")
 
         if jsonl_file:
@@ -665,7 +660,13 @@ class TextExtractor:
             # OCR with image saving regardless of extracted text for Text1st+Image-beta
             elif self.ocr_settings["enable_ocr"] == "Text1st+Image-beta":
                 text_area = page.get_text("text", clip=adjusted_coordinates)
-                pix = page.get_pixmap(clip=area_coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
+
+                scale = self.ocr_settings.get("scale", None)
+                if scale is not None:
+                    mat = fitz.Matrix(scale, scale)
+                    pix = page.get_pixmap(matrix=mat, clip=area_coordinates)
+                else:
+                    pix = page.get_pixmap(clip=area_coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
 
                 if not os.path.exists(self.temp_image_folder):
                     os.makedirs(self.temp_image_folder, exist_ok=True)
@@ -673,12 +674,12 @@ class TextExtractor:
                 # Validate and save image
                 img_path = os.path.join(self.temp_image_folder, f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
 
-                # Save image with size validation (20MB max)
+                # Save image with size validation (30MB max)
                 pix.save(img_path)
-                if os.path.getsize(img_path) > 10 * 1024 * 1024:  # 20MB
+                if os.path.getsize(img_path) > 30 * 1024 * 1024:  # 30MB
                     os.remove(img_path)
                     img_path = None
-                    print(f"Warning: Skipped large image (>10MB) from {pdf_path} page {page_number + 1}")
+                    print(f"Warning: Skipped large image (>30MB) from {pdf_path} page {page_number + 1}")
 
                 # Apply OCR if no text found
                 if not text_area.strip():
@@ -721,16 +722,25 @@ class TextExtractor:
         if not os.path.exists(self.temp_image_folder):
              os.makedirs(self.temp_image_folder, exist_ok=True)
 
-        pix = page.get_pixmap(clip=coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
+        scale = self.ocr_settings.get("scale", None)
+        if scale is not None:
+            mat = fitz.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=mat, clip=coordinates)
+        else:
+            pix = page.get_pixmap(clip=coordinates, dpi=self.ocr_settings.get("dpi_value", 150))
+
         pdfdata = pix.pdfocr_tobytes(language="eng", tessdata=self.tessdata_folder)
-        clipdoc = fitz.open("pdf", pdfdata)
-        text_area = "_OCR_" + clipdoc[0].get_text()
+        with fitz.open("pdf", pdfdata) as clipdoc:
+            text_area = "_OCR_" + clipdoc[0].get_text()
+
+        img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
+        pix.save(img_path)
+
         clipdoc.close()
         del clipdoc
         gc.collect()
-        img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
-        pix.save(img_path)
         del pix
+
         return text_area, img_path
 
     def extract_revision_history_from_page(self, pdf_path, page, filename, page_number):
