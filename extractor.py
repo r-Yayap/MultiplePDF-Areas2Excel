@@ -29,49 +29,10 @@ DATE_REGEX = re.compile(r"""
 """, re.VERBOSE | re.IGNORECASE)
 DESC_KEYWORDS = ["issued for", "issue", "submission", "schematic", "detailed", "concept", "design", "construction", "revised", "resubmission","ifc","tender","addendum"]
 
-def print_ram():
-    try:
-        proc = psutil.Process(os.getpid())
-        procs = [proc] + proc.children(recursive=True)
-
-        total_rss = 0
-        total_uss = 0
-        lines = []
-
-        for p in procs:
-            try:
-                with p.oneshot():
-                    info = getattr(p, "memory_full_info", None)
-                    if info:
-                        mem = p.memory_full_info()
-                        rss = mem.rss
-                        uss = getattr(mem, "uss", rss)  # USS may not exist on some platforms
-                    else:
-                        mem = p.memory_info()
-                        rss = mem.rss
-                        uss = getattr(mem, "uss", rss)
-                    total_rss += rss
-                    total_uss += uss
-                    lines.append(f"  PID {p.pid:<6} {p.name():<25} RSS={rss/1024/1024:.1f} MB  USS={uss/1024/1024:.1f} MB")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        print("📊 Memory by process:")
-        for line in lines:
-            print(line)
-        print(f"🧮 Total RSS={total_rss/1024/1024:.1f} MB   Total USS={total_uss/1024/1024:.1f} MB   (procs={len(procs)})")
-    except Exception as e:
-        print(f"⚠️ RAM check failed: {e}")
-
-
-def _set_final_output_path(final_output_path, output_path):
-    try:
-        if hasattr(final_output_path, "value"):
-            final_output_path.value = output_path
-        else:
-            print(f"DEBUG: No final_output_path.value; using -> {output_path}")
-    except Exception as e:
-        print(f"DEBUG: could not set final_output_path: {e}")
+def print_ram(): #for debug
+    process = psutil.Process(os.getpid())
+    mem_mb = process.memory_info().rss / 1024 / 1024
+    print(f"📊 Current RAM usage: {mem_mb:.2f} MB")
 
 def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder, unid, revision_regex):
     extractor = TextExtractor(
@@ -374,12 +335,15 @@ class TextExtractor:
         # Step 4: Remove extra spaces between words
         return re.sub(r'\s+', ' ', text)
 
-
-
     def stream_to_excel(self, csv_path, final_output_path, max_revisions):
         needs_images = (self.ocr_settings.get("enable_ocr") == "Text1st+Image-beta")
-        wb = Workbook(write_only=not needs_images)
-        ws = wb.active if not wb.write_only else wb.create_sheet(title="Sheet1")
+        wb = Workbook(write_only=not needs_images)  # normal if images, write-only otherwise
+
+        # ✅ In write-only mode there's no active sheet; you must create one.
+        if wb.write_only:
+            ws = wb.create_sheet(title="Sheet1")
+        else:
+            ws = wb.active
 
         base_headers = ["Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"]
         area_headers = [self.unique_headers_mapping[i] for i in range(len(self.areas))]
@@ -415,8 +379,19 @@ class TextExtractor:
                 except json.JSONDecodeError:
                     revisions = []
 
-                # pad revision columns
-                padded_revisions = revisions + [""] * (max_revisions - len(revisions))
+                flat_revs = []
+                for item in revisions:
+                    if isinstance(item, dict):
+                        r = (item.get("rev") or "").strip()
+                        d = (item.get("desc") or "").strip()
+                        dt = (item.get("date") or "").strip()
+                        flat_revs.append(" | ".join(x for x in (r, d, dt) if x))
+                    else:
+                        flat_revs.append("" if item is None else str(item))
+
+                # keep width to max_revisions
+                padded_revisions = (flat_revs[:max_revisions] +
+                                    [""] * max(0, max_revisions - len(flat_revs)))
 
                 # assemble plain values for the final row
                 row_values = [unid] + base + areas + [latest_rev, latest_desc, latest_date] + padded_revisions
@@ -490,7 +465,7 @@ class TextExtractor:
             output_path = self.output_excel_path
 
         wb.save(output_path)
-        _set_final_output_path(final_output_path, output_path)
+        final_output_path.value = output_path
 
         # Copy NDJSON next to Excel (if produced)
         ndjson_temp_path = os.path.join(self.temp_image_folder, "streamed_revisions.ndjson")
@@ -583,35 +558,27 @@ class TextExtractor:
         # After multiprocessing ends, combine CSV/NDJSON files quickly
         self.combine_temp_files(final_output_path)
 
+
+
     def process_single_pdf(self, pdf_path):
-        """Processes a single PDF file, extracting text and images as necessary.
-        Always returns rows shaped as:
-          [file_size, last_modified_date, folder, filename, page_no, areas, revisions, page_rect]
-        where page_rect is a list [x0,y0,x1,y1] or None.
-        """
-        # --- Compute filesystem metadata FIRST so we can use it for any error return ---
-        filename = os.path.basename(pdf_path)
-        # If self.pdf_folder is set, keep folder relative; else fall back to absolute dir
-        try:
-            folder = os.path.relpath(os.path.dirname(pdf_path),
-                                     self.pdf_folder) if self.pdf_folder else os.path.dirname(pdf_path)
-        except Exception:
-            folder = os.path.dirname(pdf_path)
+        """Processes a single PDF file, extracting text and images as necessary."""
+        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+            print(f"Skipping missing or empty file: {pdf_path}")
+            result_rows = [[
+                0,
+                "",
+                "",
+                os.path.basename(pdf_path),
+                0,
+                [("Error: File not found or empty", "")],  # list of one tuple
+                []
+            ]]
 
-        exists = os.path.exists(pdf_path)
-        size = os.path.getsize(pdf_path) if exists else 0
-        mod_dt = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S') if exists else ""
-
-        def _err_row(msg, page_no=0):
-            # Keep the 8-column shape expected by downstream code/CSV combiner
-            return [[size, mod_dt, folder, filename, page_no, [("Error: " + msg, "")], [], None]]
-
-        # --- Early exits for missing/empty ---
-        if (not exists) or size == 0:
-            return _err_row("File not found or empty")
+            return result_rows
 
         try:
-            # Try to open the PDF
+
+            # Open the PDF file with additional validation and caching
             try:
                 pdf_document = fitz.open(pdf_path, filetype="pdf")
                 if not pdf_document.is_pdf:
@@ -619,25 +586,51 @@ class TextExtractor:
                 fitz.TOOLS.set_small_glyph_heights(True)
             except (fitz.FileDataError, fitz.EmptyFileError) as e:
                 print(f"PDF corrupted or empty: {pdf_path}, {e}")
-                return _err_row(f"Corrupted or empty PDF: {str(e)}")
+                result_rows = [[
+                    0,
+                    "",
+                    "",
+                    os.path.basename(pdf_path),
+                    0,
+                    f"Error: Corrupted or empty PDF: {str(e)}",
+                    []
+                ]]
+                return result_rows
+
             except Exception as e:
                 print(f"Error opening PDF {pdf_path}: {e}")
-                return _err_row(f"Invalid PDF: {str(e)}")
+                result_rows = [[
+                    0,
+                    "",
+                    "",
+                    os.path.basename(pdf_path),
+                    0,
+                    f"Error: Invalid PDF: {str(e)}",
+                    []
+                ]]
+                return result_rows
 
-            result_rows = []
 
-            # Process pages safely
+            file_size = os.path.getsize(pdf_path)
+            last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
+            folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
+            filename = os.path.basename(pdf_path)
+
+            result_rows = []  # Collect each page's data here
+
+            # Process each page safely
             for page_number in range(pdf_document.page_count):
                 try:
                     page = pdf_document[page_number]
+                    #page.remove_rotation()
                     extracted_areas = []
 
                     for area_index, area in enumerate(self.areas):
                         coordinates = area["coordinates"]
-                        text_area, img_path = self.extract_text_from_area(
-                            page, coordinates, pdf_path, page_number, area_index
-                        )
-                        # Treat empty as blank, keep tuple shape
+                        text_area, img_path = self.extract_text_from_area(page, coordinates, pdf_path, page_number,
+                                                                          area_index)
+
+                        # If text_area is empty, treat it as blank rather than "Error"
                         extracted_areas.append((text_area if text_area != "Error" else "", img_path or ""))
 
                     revision_data = []
@@ -647,32 +640,48 @@ class TextExtractor:
                         )
 
                     result_rows.append([
-                        size, mod_dt, folder, filename, page_number + 1,
-                        extracted_areas, revision_data, list(page.rect)  # page size (kept as list)
+                        file_size, last_modified_date, folder, filename, page_number + 1,
+                        extracted_areas, revision_data, list(page.rect)  # page size as 8th element
                     ])
 
-                    # cleanup
-                    del extracted_areas, revision_data, page
-                    gc.collect()
+                    del extracted_areas
+                    del revision_data
+                    del page
+                    gc.collect()  # ✅ Force garbage collection
 
                 except Exception as e:
                     print(f"Error processing page {page_number + 1} in {pdf_path}: {e}")
-                    result_rows.append([
-                        size, mod_dt, folder, filename, page_number + 1,
-                        [("Error processing page", "")],
-                        [],
-                        None
-                    ])
+                    result_rows.append(
+                        [file_size, last_modified_date, folder, filename, page_number + 1,
+                         [("Error processing page", "")],
+                         [],
+                         None  # Add this to keep length consistent
+                         ]
+                    )
 
             pdf_document.close()
             del pdf_document
             gc.collect()
+
             return result_rows
 
         except Exception as e:
             print(f"Error processing {pdf_path}: {e}")
-            # Single error row for the file, preserving folder/filename
-            return _err_row(f"File Processing Error: {str(e)}")
+            # Add an error placeholder for this file in results
+            result_rows = [[
+                file_size if 'file_size' in locals() else 0,
+                last_modified_date if 'last_modified_date' in locals() else "",
+                folder if 'folder' in locals() else "",
+                filename if 'filename' in locals() else os.path.basename(pdf_path),
+                0,
+                f"Error: File Processing Error: {str(e)}",
+                [],
+                None  # Add None here for page.rect to keep consistent
+            ]]
+
+            gc.collect()
+            # total_files.value += 1  # Update progress counter even on error
+            return result_rows
 
     def get_pdf_files(self, selected_paths=None):
         """Return only explicitly selected PDF files if provided, else fallback to scanning."""
@@ -924,7 +933,7 @@ class TextExtractor:
         try:
             wb.save(output_filename)
             wb.close()
-            _set_final_output_path(final_output_path, output_filename)
+            final_output_path.value = output_filename  # ✅ Save to shared multiprocessing Value
 
             print(f"Consolidated results saved to {output_filename}")
         except Exception as e:
