@@ -748,19 +748,17 @@ class TextExtractor:
 
         except fitz.EmptyFileError as e:
             print(f"Error: {pdf_path} is empty or corrupted: {e}")
-            return f"EmptyFileError: {str(e)}", None
-
+            return "", None
         except fitz.FileNotFoundError as e:
             print(f"Error: {pdf_path} not found: {e}")
-            return f"FileNotFoundError: {str(e)}", None
-
+            return "", None
         except RuntimeError as e:
             print(f"Runtime error on page {page_number + 1} in {pdf_path}: {e}")
-            return f"RuntimeError: {str(e)}", None
-
+            return "", None
         except Exception as e:
             print(f"Unexpected error extracting text from area {area_index} in {pdf_path}, Page {page_number + 1}: {e}")
-            return f"UnexpectedError: {str(e)}", None
+            return "", None
+
 
     def apply_ocr(self, page, coordinates, pdf_path, page_number, area_index):
         """Applies OCR on a specified area and returns the extracted text and image path."""
