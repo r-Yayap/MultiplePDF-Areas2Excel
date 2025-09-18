@@ -590,7 +590,8 @@ class TextExtractor:
                 max_revs = max(max_revs, len(revisions))
         return max_revs
 
-    def start_extraction(self, progress_counter, total_files, final_output_path, selected_paths):
+    # extractor.py
+    def start_extraction(self, progress_counter, total_files, final_output_path, selected_paths, cancel_event=None):
         n_workers = multiprocessing.cpu_count()
         pdf_files = selected_paths
         total_files.value = len(pdf_files)
@@ -603,16 +604,43 @@ class TextExtractor:
             for idx, pdf_path in enumerate(pdf_files)
         ]
 
-        procs = max(1, min(10, n_workers - 2))
         ctx = multiprocessing.get_context("spawn")
-        with ctx.Pool(processes= procs, maxtasksperchild=25) as pool:
+        aborted = False
+
+        # TIP: if you want headroom for the UI:
+        # procs = max(1, n_workers - 2)
+        procs = max(1, n_workers - 2)
+
+        pool = ctx.Pool(processes=procs, maxtasksperchild=25)
+        try:
             for _ in pool.imap_unordered(_unwrap_process_single_pdf, jobs, chunksize=1):
+                # cancellation check
+                if cancel_event is not None and cancel_event.is_set():
+                    aborted = True
+                    pool.terminate()  # stop dispatching new work
+                    break
+
                 with progress_counter.get_lock():
                     progress_counter.value += 1
                     if progress_counter.value % 50 == 0:
                         print_ram()
+        finally:
+            # make sure workers exit
+            try:
+                pool.close()
+            except Exception:
+                pass
+            try:
+                pool.join()
+            except Exception:
+                pass
 
-        self.combine_temp_files(final_output_path)
+        # Even if aborted, we can try to combine whatever was produced so far.
+        # If you prefer to skip on cancel, guard this with `if not aborted:`
+        try:
+            self.combine_temp_files(final_output_path)
+        except Exception as e:
+            print(f"combine_temp_files failed (aborted={aborted}): {e}")
 
     def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
