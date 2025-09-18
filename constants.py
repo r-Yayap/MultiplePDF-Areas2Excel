@@ -1,6 +1,6 @@
 # constants.py
 
-VERSION_TEXT = "1.2"
+VERSION_TEXT = "1.3-test"
 
 # Application settings
 INITIAL_WIDTH = 965
