@@ -35,52 +35,36 @@ def print_ram(): #for debug
     print(f"📊 Current RAM usage: {mem_mb:.2f} MB")
 
 def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, pdf_folder, temp_image_folder, unid, revision_regex):
-    extractor = TextExtractor(
-        pdf_folder=pdf_folder,
-        output_excel_path="",
-        areas=areas,
-        ocr_settings=ocr_settings,
-        revision_regex=revision_regex,
-        batch_threshold=0
-    )
+    extractor = TextExtractor(pdf_folder=pdf_folder, output_excel_path="",
+                              areas=areas, ocr_settings=ocr_settings,
+                              revision_regex=revision_regex, batch_threshold=0)
     extractor.revision_area = revision_area
     extractor.temp_image_folder = temp_image_folder
-
-    result_rows = extractor.process_single_pdf(pdf_path)
 
     csv_path = os.path.join(temp_image_folder, f"temp_{unid}.csv")
     jsonl_path = os.path.join(temp_image_folder, f"temp_{unid}.ndjson")
 
-    # Stream directly to temp CSV/NDJSON (per worker)
     with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
-        jsonl_file = None
-        if revision_area:  # ✅ Only open NDJSON if revision_area is defined
-            jsonl_file = open(jsonl_path, "w", encoding="utf-8")
+        jsonl_file = open(jsonl_path, "w", encoding="utf-8") if revision_area else None
+        writer = csv.writer(csv_file)
 
-        csv_writer = csv.writer(csv_file)
+        for row in extractor.process_single_pdf_iter(pdf_path):
+            # row = [file_size, mod_date, folder, filename, page_no, areas, revisions, page_rect]
+            file_size, mod_date, folder, filename, page_no, areas_list, revisions, page_rect = (row + [None]*8)[:8]
 
-        for row in result_rows:
-            if len(row) < 8:
-                row = list(row) + [None] * (8 - len(row))
-
-            file_size, mod_date, folder, filename, page_no, areas, revisions, page_rect = row
-
-            # rect -> string
             if page_rect is not None and isinstance(page_rect, (list, tuple)) and len(page_rect) == 4:
                 page_rect = fitz.Rect(page_rect)
             else:
                 page_rect = None
             page_size_str = f"{page_rect.width:.1f} x {page_rect.height:.1f}" if page_rect else ""
 
-            # normalize areas to list[(text, img_path)]
-            if not isinstance(areas, list):
-                areas = []
-            areas = [(a if isinstance(a, tuple) and len(a) == 2 else (str(a), "")) for a in areas]
-            text_values = [text for text, _ in areas]
+            # normalize areas
+            areas_list = areas_list if isinstance(areas_list, list) else []
+            areas_list = [(a if isinstance(a, tuple) and len(a) == 2 else (str(a), "")) for a in areas_list]
+            text_values = [text for text, _ in areas_list]
             if len(text_values) < len(extractor.areas):
                 text_values += [""] * (len(extractor.areas) - len(text_values))
 
-            # latest rev (best-effort)
             if isinstance(revisions, list) and revisions and isinstance(revisions[-1], dict):
                 latest_rev = revisions[-1].get("rev", "")
                 latest_desc = revisions[-1].get("desc", "")
@@ -88,15 +72,11 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
             else:
                 latest_rev = latest_desc = latest_date = ""
 
-            # page-level UNID
             page_unid = f"{unid}-{page_no}"
-
-            # serialize full revisions as JSON (safer than eval on read)
             revisions_json = json.dumps(revisions or [], ensure_ascii=False)
 
-            csv_row = [page_unid, file_size, mod_date, folder, filename, page_no, page_size_str] + \
-                      text_values + [latest_rev, latest_desc, latest_date, revisions_json]
-            csv_writer.writerow(csv_row)
+            writer.writerow([page_unid, file_size, mod_date, folder, filename, page_no, page_size_str]
+                            + text_values + [latest_rev, latest_desc, latest_date, revisions_json])
 
             if jsonl_file:
                 json.dump({"unid": page_unid, "revisions": revisions or []}, jsonl_file, ensure_ascii=False)
@@ -107,7 +87,6 @@ def process_single_pdf_standalone(pdf_path, areas, revision_area, ocr_settings, 
 
     extractor = None
     gc.collect()
-
     return True
 
 def _unwrap_process_single_pdf(args):
@@ -273,51 +252,127 @@ class TextExtractor:
 
     def extract_revision_history_from_page_obj(self, page, revision_coordinates):
         try:
+            # validate coords
             if not revision_coordinates or len(revision_coordinates) != 4:
                 return []
 
+            # 1) normalize rotation so coords = unrotated basis (like your standalone)
+            orig_rot = int(getattr(page, "rotation", 0)) % 360
+            page.remove_rotation()
+
             clip_rect = fitz.Rect(revision_coordinates)
             if clip_rect.is_empty or clip_rect.get_area() < 100:
-                print(f"⚠️ Revision area too small or empty, skipping.")
                 return []
 
-            tables = page.find_tables(clip=clip_rect)
-            if not tables or not tables.tables:
-                print("❌ No tables found.")
+            # 2) cheap word-count precheck to avoid heavy find_tables on sparse regions
+            try:
+                word_count = len(page.get_text("words", clip=clip_rect))
+            except Exception:
+                word_count = -1
+            if 0 <= word_count < 6:  # same threshold you used
                 return []
 
-            table = tables.tables[0]
-            data = table.extract()
+            # 3) try find_tables directly on the clipped page
+            data = None
+            try:
+                tabs = page.find_tables(clip=clip_rect)
+                if tabs and tabs.tables:
+                    data = tabs.tables[0].extract()
+            except Exception:
+                data = None
+
+            # 4) fallback: build a tiny temp page from the clip and run find_tables there
             if not data or len(data) < 2:
-                print("❌ Not enough rows to detect header or parse data.")
+                tmp = fitz.open()
+                try:
+                    dst = tmp.new_page(width=clip_rect.width, height=clip_rect.height)
+                    dst.show_pdf_page(fitz.Rect(0, 0, clip_rect.width, clip_rect.height),
+                                      page.parent, page.number, clip=clip_rect)
+                    try:
+                        tabs = dst.find_tables()
+                        if tabs and tabs.tables:
+                            data = tabs.tables[0].extract()
+                    except Exception:
+                        data = None
+                finally:
+                    tmp.close()
+
+            if not data or len(data) < 2:
                 return []
 
+            # 5) parse (your existing logic)
             data = data[::-1]
-
-            # Detect revision column index first
             rev_idx, desc_idx, date_idx = self.detect_column_indices(data)
+            filtered = [r for r in data if not self.is_footer_or_header_row(r, rev_idx)]
+            rev_idx, desc_idx, date_idx = self.detect_column_indices(filtered)
 
-            # Filter rows by passing detected revision index
-            filtered_data = [row for row in data if not self.is_footer_or_header_row(row, rev_idx)]
-
-            rev_idx, desc_idx, date_idx = self.detect_column_indices(filtered_data)
-
-            extracted_list = []
-
-            for row in filtered_data:
+            out = []
+            for row in filtered:
                 if not any(row):
                     continue
                 rev, desc, date = self.parse_revision_row(row, rev_idx, desc_idx, date_idx)
                 if rev and desc and date:
-                    extracted_list.append({"rev": rev, "desc": desc, "date": date})
-                else:
-                    print(f"⛔ Skipped incomplete row: {row}")
-
-            return extracted_list
+                    out.append({"rev": rev, "desc": desc, "date": date})
+            return out
 
         except Exception as e:
             print(f"❌ Error during revision extraction: {e}")
             return []
+
+    def process_single_pdf_iter(self, pdf_path):
+        """Yield one row per page (instead of returning a big list)."""
+        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+            yield [0, "", "", os.path.basename(pdf_path), 0,
+                   [("Error: File not found or empty", "")], [], None]
+            return
+
+        try:
+            pdf_document = fitz.open(pdf_path, filetype="pdf")
+            if not pdf_document.is_pdf:
+                raise ValueError("Not a valid PDF")
+            fitz.TOOLS.set_small_glyph_heights(True)
+        except Exception as e:
+            yield [0, "", "", os.path.basename(pdf_path), 0, f"Error: {e}", [], None]
+            return
+
+        file_size = os.path.getsize(pdf_path)
+        last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
+        folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
+        filename = os.path.basename(pdf_path)
+
+        try:
+            for page_number in range(pdf_document.page_count):
+                try:
+                    page = pdf_document[page_number]
+                    extracted_areas = []
+                    for area_index, area in enumerate(self.areas):
+                        coords = area["coordinates"]
+                        text_area, img_path = self.extract_text_from_area(page, coords, pdf_path, page_number,
+                                                                          area_index)
+                        extracted_areas.append((text_area if text_area != "Error" else "", img_path or ""))
+
+                    revision_data = []
+                    if self.revision_area:
+                        revision_data = self.extract_revision_history_from_page_obj(page,
+                                                                                    self.revision_area["coordinates"])
+
+                    yield [
+                        file_size, last_modified_date, folder, filename, page_number + 1,
+                        extracted_areas, revision_data, list(page.rect)
+                    ]
+                finally:
+                    try:
+                        del page
+                    except:
+                        pass
+                    gc.collect()
+        finally:
+            try:
+                pdf_document.close()
+            except:
+                pass
+            del pdf_document
+            gc.collect()
 
     def clean_text(self, text):
         """Cleans text by replacing newlines, stripping, and removing illegal characters."""
@@ -535,7 +590,7 @@ class TextExtractor:
                 max_revs = max(max_revs, len(revisions))
         return max_revs
 
-    def start_extraction(self, progress_counter, total_files, final_output_path,selected_paths):
+    def start_extraction(self, progress_counter, total_files, final_output_path, selected_paths):
         n_workers = multiprocessing.cpu_count()
         pdf_files = selected_paths
         total_files.value = len(pdf_files)
@@ -543,22 +598,20 @@ class TextExtractor:
         os.makedirs(self.temp_image_folder, exist_ok=True)
 
         jobs = [
-            (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder, self.temp_image_folder,
-             str(10000 + idx), self.revision_regex.pattern)
+            (pdf_path, self.areas, self.revision_area, self.ocr_settings, self.pdf_folder,
+             self.temp_image_folder, str(10000 + idx), self.revision_regex.pattern)
             for idx, pdf_path in enumerate(pdf_files)
         ]
 
-        with multiprocessing.Pool(processes=n_workers) as pool:
-            for _ in pool.imap_unordered(_unwrap_process_single_pdf, jobs):
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(processes=max(10, n_workers), maxtasksperchild=25) as pool:
+            for _ in pool.imap_unordered(_unwrap_process_single_pdf, jobs, chunksize=1):
                 with progress_counter.get_lock():
                     progress_counter.value += 1
                     if progress_counter.value % 50 == 0:
                         print_ram()
 
-        # After multiprocessing ends, combine CSV/NDJSON files quickly
         self.combine_temp_files(final_output_path)
-
-
 
     def process_single_pdf(self, pdf_path):
         """Processes a single PDF file, extracting text and images as necessary."""
@@ -727,6 +780,13 @@ class TextExtractor:
 
                 # Save image with size validation (30MB max)
                 pix.save(img_path)
+
+                try:
+                    del pix
+                except:
+                    pass
+                gc.collect()
+
                 if os.path.getsize(img_path) > 30 * 1024 * 1024:  # 30MB
                     os.remove(img_path)
                     img_path = None
