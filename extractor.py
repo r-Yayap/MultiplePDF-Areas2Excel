@@ -321,24 +321,24 @@ class TextExtractor:
 
     def process_single_pdf_iter(self, pdf_path):
         """Yield one row per page (instead of returning a big list)."""
-        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
-            yield [0, "", "", os.path.basename(pdf_path), 0,
+        file_size, last_modified_date, folder, filename = self._safe_path_meta(pdf_path)
+
+        # Missing or 0-byte file → still output folder + filename
+        if (not os.path.exists(pdf_path)) or (file_size == 0):
+            yield [file_size, last_modified_date, folder, filename, 0,
                    [("Error: File not found or empty", "")], [], None]
             return
 
+        # Try open; on failure, still keep folder info
         try:
             pdf_document = fitz.open(pdf_path, filetype="pdf")
             if not pdf_document.is_pdf:
                 raise ValueError("Not a valid PDF")
             fitz.TOOLS.set_small_glyph_heights(True)
         except Exception as e:
-            yield [0, "", "", os.path.basename(pdf_path), 0, f"Error: {e}", [], None]
+            yield [file_size, last_modified_date, folder, filename, 0,
+                   [("Error: " + str(e), "")], [], None]
             return
-
-        file_size = os.path.getsize(pdf_path)
-        last_modified_date = datetime.fromtimestamp(os.path.getmtime(pdf_path)).strftime('%Y-%m-%d %H:%M:%S')
-        folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
-        filename = os.path.basename(pdf_path)
 
         try:
             for page_number in range(pdf_document.page_count):
@@ -347,14 +347,16 @@ class TextExtractor:
                     extracted_areas = []
                     for area_index, area in enumerate(self.areas):
                         coords = area["coordinates"]
-                        text_area, img_path = self.extract_text_from_area(page, coords, pdf_path, page_number,
-                                                                          area_index)
+                        text_area, img_path = self.extract_text_from_area(
+                            page, coords, pdf_path, page_number, area_index
+                        )
                         extracted_areas.append((text_area if text_area != "Error" else "", img_path or ""))
 
                     revision_data = []
                     if self.revision_area:
-                        revision_data = self.extract_revision_history_from_page_obj(page,
-                                                                                    self.revision_area["coordinates"])
+                        revision_data = self.extract_revision_history_from_page_obj(
+                            page, self.revision_area["coordinates"]
+                        )
 
                     yield [
                         file_size, last_modified_date, folder, filename, page_number + 1,
@@ -589,6 +591,24 @@ class TextExtractor:
                     revisions = []
                 max_revs = max(max_revs, len(revisions))
         return max_revs
+
+    def _safe_path_meta(self, pdf_path):
+        """Return (size, last_modified, folder, filename) even when file is missing/corrupt."""
+        filename = os.path.basename(pdf_path)
+        # Prefer relative folder; fall back to absolute if relpath is impossible (e.g., different drives on Windows)
+        try:
+            folder = os.path.relpath(os.path.dirname(pdf_path), self.pdf_folder)
+        except Exception:
+            folder = os.path.dirname(pdf_path)
+
+        try:
+            st = os.stat(pdf_path)
+            size = st.st_size
+            last_modified = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        except OSError:
+            size = 0
+            last_modified = ""
+        return size, last_modified, folder, filename
 
     # extractor.py
     def start_extraction(self, progress_counter, total_files, final_output_path, selected_paths, cancel_event=None):
