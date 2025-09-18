@@ -603,8 +603,9 @@ class TextExtractor:
             for idx, pdf_path in enumerate(pdf_files)
         ]
 
+        procs = max(1, min(10, n_workers - 2))
         ctx = multiprocessing.get_context("spawn")
-        with ctx.Pool(processes=max(10, n_workers), maxtasksperchild=25) as pool:
+        with ctx.Pool(processes= procs, maxtasksperchild=25) as pool:
             for _ in pool.imap_unordered(_unwrap_process_single_pdf, jobs, chunksize=1):
                 with progress_counter.get_lock():
                     progress_counter.value += 1
@@ -755,11 +756,11 @@ class TextExtractor:
             if self.ocr_settings["enable_ocr"] == "Default":
                 text_area = page.get_text("text", clip=adjusted_coordinates)
                 if not text_area.strip():  # Perform OCR only if text_area is empty
-                    text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
+                    text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index, save_image=False)
 
             # OCR for all areas, no images saved
             elif self.ocr_settings["enable_ocr"] == "OCR-All":
-                text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
+                text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index, save_image=False)
 
             # OCR with image saving regardless of extracted text for Text1st+Image-beta
             elif self.ocr_settings["enable_ocr"] == "Text1st+Image-beta":
@@ -795,7 +796,7 @@ class TextExtractor:
                 # Apply OCR if no text found
                 if not text_area.strip():
                     try:
-                        text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index)
+                        text_area, _ = self.apply_ocr(page, area_coordinates, pdf_path, page_number, area_index, save_image=False)
                     except Exception as e:
                         print(f"OCR failed for {pdf_path} page {page_number + 1}: {e}")
                         text_area = "OCR_ERROR"
@@ -820,7 +821,7 @@ class TextExtractor:
             return "", None
 
 
-    def apply_ocr(self, page, coordinates, pdf_path, page_number, area_index):
+    def apply_ocr(self, page, coordinates, pdf_path, page_number, area_index, save_image=False):
         """Applies OCR on a specified area and returns the extracted text and image path."""
         if self.tessdata_folder is None:
             self.tessdata_folder = find_tessdata()
@@ -842,13 +843,18 @@ class TextExtractor:
         with fitz.open("pdf", pdfdata) as clipdoc:
             text_area = "_OCR_" + clipdoc[0].get_text()
 
-        img_path = os.path.join(self.temp_image_folder,f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
-        pix.save(img_path)
+        img_path = None
+        if save_image:
+            if not os.path.exists(self.temp_image_folder):
+                os.makedirs(self.temp_image_folder, exist_ok=True)
+            img_path = os.path.join(self.temp_image_folder,
+                                    f"{os.path.basename(pdf_path)}_page{page_number + 1}_area{area_index}.png")
+            pix.save(img_path)
 
-        clipdoc.close()
-        del clipdoc
-        gc.collect()
+        # cleanup
         del pix
+        del pdfdata
+        gc.collect()
 
         return text_area, img_path
 
