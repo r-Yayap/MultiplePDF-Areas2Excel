@@ -66,6 +66,23 @@ class XtractorGUI:
         self.ocr_menu_callback("Default")
         self.setup_bindings()
         self.setup_tooltips()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+    def _on_app_close(self):
+        try:
+            if getattr(self, "cancel_event", None):
+                self.cancel_event.set()
+            if getattr(self, "extraction_process", None) and self.extraction_process.is_alive():
+                self.extraction_process.terminate()
+                self.extraction_process.join(2)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "current_manager", None):
+                self.current_manager.shutdown()
+        except Exception:
+            pass
+        self.root.destroy()
 
     def export_rectangles(self):
         export_file_path = filedialog.asksaveasfilename(
@@ -698,7 +715,7 @@ class XtractorGUI:
         if self.files_tree_widget:
             self.files_tree_widget.destroy()
             self.files_tree_widget = None
-        # destroy old scrollbar (NEW)
+        # destroy old scrollbar
         if self.files_tree_scrollbar:
             try:
                 self.files_tree_scrollbar.destroy()
@@ -706,22 +723,56 @@ class XtractorGUI:
                 pass
             self.files_tree_scrollbar = None
 
+        # guard
+        if not self.pdf_folder or not os.path.isdir(self.pdf_folder):
+            return
+
         style = ttk.Style()
         style.configure("Treeview", font=("Segoe UI", 7))
         style.configure("Treeview.Heading", font=("Arial", 8, "bold"))
 
+        # new tree + scrollbar
         self.files_tree_widget = CheckboxTreeview(self.files_tree_container, show="tree", height=10)
         self.files_tree_widget.pack(side="left", fill="both", expand=True)
         self.files_tree_widget.column("#0", width=800, stretch=False)
 
-        # create and remember the NEW scrollbar
         self.files_tree_scrollbar = ttk.Scrollbar(
             self.files_tree_container, orient="vertical", command=self.files_tree_widget.yview
         )
         self.files_tree_widget.configure(yscrollcommand=self.files_tree_scrollbar.set)
         self.files_tree_scrollbar.pack(side="right", fill="y")
 
-        # ... rest of your function unchanged ...
+        # root node
+        root_text = os.path.basename(self.pdf_folder.rstrip(os.sep)) or self.pdf_folder
+        root_node = self.files_tree_widget.insert("", "end", text=root_text, tags=("checked",))
+
+        # helper to insert children (folders with PDFs and .pdf files)
+        def insert_children(parent, folder_path):
+            try:
+                entries = sorted(os.listdir(folder_path))
+            except Exception as e:
+                print(f"Error accessing {folder_path}: {e}")
+                return
+            for entry in entries:
+                full_path = os.path.join(folder_path, entry)
+                if os.path.isdir(full_path):
+                    if self.has_pdf(full_path):  # only show folders that contain PDFs somewhere under them
+                        node = self.files_tree_widget.insert(parent, "end", text=entry, tags=("checked",))
+                        insert_children(node, full_path)
+                elif entry.lower().endswith(".pdf"):
+                    # if we dropped a subset, only those should be checked; otherwise default to checked
+                    is_dropped_subset = bool(getattr(self, "dropped_pdf_set", set()))
+                    tags = ("checked",) if (not is_dropped_subset or full_path in self.dropped_pdf_set) else (
+                    "unchecked",)
+                    self.files_tree_widget.insert(parent, "end", text=entry, values=[full_path], tags=tags)
+
+        insert_children(root_node, self.pdf_folder)
+
+        # update counter when user clicks/changes checks
+        self.files_tree_widget.bind("<<TreeviewSelect>>", lambda e: self.update_pdf_counter())
+        self.files_tree_widget.bind("<ButtonRelease-1>", lambda e: self.root.after(100, self.update_pdf_counter))
+
+        self.update_pdf_counter()
 
     def recursive_set_check_state(self, item_id):
         children = self.files_tree_widget.get_children(item_id)
@@ -756,7 +807,6 @@ class XtractorGUI:
         dropped_pdfs = [p for p in cleaned_paths if os.path.isfile(p) and p.lower().endswith(".pdf")]
         dropped_folders = [p for p in cleaned_paths if os.path.isdir(p)]
 
-        # Collect all PDFs from dropped folders recursively
         def collect_pdfs_from_folder(folder_path):
             collected = []
             for root, _, files in os.walk(folder_path):
@@ -773,23 +823,29 @@ class XtractorGUI:
             messagebox.showerror("Invalid Drop", "No PDF files found in the dropped folders or files.")
             return
 
-        # Set PDF folder as the common root folder of all PDFs dropped/found
-        common_root = os.path.commonpath(all_pdfs)
+        # choose a common root if possible
+        try:
+            common_root = os.path.commonpath(all_pdfs)
+        except ValueError:
+            # different drives on Windows -> just use the first file’s folder
+            common_root = os.path.dirname(all_pdfs[0])
+
         if not os.path.isdir(common_root):
-            common_root = os.path.dirname(all_pdfs[0])  # fallback
+            common_root = os.path.dirname(all_pdfs[0])
 
         self.pdf_folder = common_root
         self.pdf_folder_entry.delete(0, ctk.END)
         self.pdf_folder_entry.insert(0, self.pdf_folder)
 
+        # mark only the dropped files as "checked"
         self.dropped_pdf_set = set(all_pdfs)
 
         self.build_folder_tree()
-        for iid in self.files_tree_widget.get_children(""):
-            self.recursive_set_check_state(iid)
+        # (optional) if you want to force recalculating tag state top-down:
+        # for iid in self.files_tree_widget.get_children(""):
+        #     self.recursive_set_check_state(iid)
         self.update_pdf_counter()
 
-        # Display first PDF if none loaded
         if not self.pdf_viewer.pdf_document:
             self.pdf_viewer.display_pdf(all_pdfs[0])
             self.recent_pdf_path = all_pdfs[0]
@@ -884,8 +940,12 @@ class XtractorGUI:
 
     def browse_pdf_folder(self):
         self.pdf_folder = filedialog.askdirectory()
+        if not self.pdf_folder:
+            return
         self.pdf_folder_entry.delete(0, ctk.END)
         self.pdf_folder_entry.insert(0, self.pdf_folder)
+        # we are browsing a whole folder -> no subset filter
+        self.dropped_pdf_set = set()
         self.build_folder_tree()
 
     def browse_output_path(self):
@@ -1024,8 +1084,7 @@ class XtractorGUI:
         # spawn ONE process (daemon True is fine; parent app exit will kill it)
         self.extraction_process = multiprocessing.Process(
             target=extractor.start_extraction,
-            args=(progress_counter, total_files, final_output_path, selected_paths, self.cancel_event),
-            daemon=True
+            args=(progress_counter, total_files, final_output_path, selected_paths, self.cancel_event)
         )
         self.extraction_process.start()
 
