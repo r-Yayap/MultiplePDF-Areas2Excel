@@ -1,3 +1,4 @@
+#extraction_service.py
 from __future__ import annotations
 import csv, gc, json, os, secrets, shutil
 from dataclasses import asdict
@@ -12,6 +13,14 @@ from app.infra.excel_writer import write_from_csv, copy_ndjson
 from utils import adjust_coordinates_for_rotation
 
 # ===== Helpers (kept top-level for Windows pickling) =====
+
+def _open_temp_writers(temp_dir: Path, unid_prefix: str, with_revisions: bool):
+    csv_path = temp_dir / f"temp_{unid_prefix}.csv"
+    csv_f = open(csv_path, "w", newline="", encoding="utf-8")
+    csv_w = csv.writer(csv_f)
+    ndjson_f = open(temp_dir / f"temp_{unid_prefix}.ndjson", "w", encoding="utf-8") if with_revisions else None
+    return csv_w, csv_f, ndjson_f
+
 def _process_single_pdf_star(args):
     """
     Safe wrapper for pool: never raises; returns dict with only primitives.
@@ -108,143 +117,163 @@ def _write_temp_csv(
                     revs = []
                 jf.write(json.dumps({"unid": unid, "revisions": revs}, ensure_ascii=False) + "\n")
 
-from utils import adjust_coordinates_for_rotation
+
 
 def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: str) -> int:
     pdf = PdfAdapter()
     ocr = OcrAdapter(req["ocr_tess"])
     parser = RevisionParser(req["rev_regex"])
 
-    areas_rects: list[tuple] = req["areas_rects"]
-    revision_rect: Optional[tuple] = req["rev_area_rect"]
-
-    ocr_mode = req["ocr_mode"]; dpi = max(1, int(req["ocr_dpi"] or 150))
+    areas_rects: list[tuple] = list(req["areas_rects"])
+    revision_rect: Optional[tuple] = req.get("rev_area_rect")
+    ocr_mode = req["ocr_mode"]
+    dpi = max(1, int(req["ocr_dpi"] or 150))
     scale = req.get("ocr_scale")
     pdf_root = Path(req["pdf_root"])
 
-    rows_out = []
+    # open temp writers once, write per page
+    csv_w, csv_f, ndjson_f = _open_temp_writers(temp_dir, unid_prefix, with_revisions=bool(revision_rect))
+    pages_written = 0
 
-    with pdf.open(pdf_path) as doc:
-        page_count = doc.page_count
-        for page_no in range(page_count):
-            page = doc[page_no]
+    try:
+        with pdf.open(pdf_path) as doc:
+            page_count = doc.page_count
 
-            # page rect + rotation
-            pr = tuple(pdf.page_rect(page))  # (x0,y0,x1,y1)
-            pw, ph = (pr[2]-pr[0], pr[3]-pr[1])
-            rotation = getattr(page, "rotation", 0)
+            for page_no in range(page_count):
+                page = doc[page_no]
 
-            # ----- Extract areas -----
-            area_texts: list[str] = []
-            for idx, raw_clip in enumerate(areas_rects):
-                # 1) rotation-adjust to current page basis
-                adj = adjust_coordinates_for_rotation(raw_clip, rotation, ph, pw)
-                # 2) clip sanitize
-                clip = _sanitize_clip(adj, pr)
-                if clip is None:
-                    area_texts.append("")  # nothing to extract
-                    continue
-
-                text_area = ""
+                # ---- metadata (size / modtime) ----
                 try:
-                    if ocr_mode == "Default":
-                        text_area = pdf.get_text(page, clip)
-                        if not text_area.strip():
+                    st = pdf_path.stat()
+                    size = st.st_size
+                    last_mod = __import__("datetime").datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    size, last_mod = 0, ""
+
+                pr = tuple(pdf.page_rect(page))  # (x0,y0,x1,y1)
+                pw, ph = (pr[2]-pr[0], pr[3]-pr[1])
+                rotation = getattr(page, "rotation", 0)
+
+                # ---- areas ----
+                area_texts: list[str] = []
+                area_texts: list[str] = []
+                for idx, raw in enumerate(areas_rects):
+                    # rotate to page basis (same as your old extractor)
+                    adj = adjust_coordinates_for_rotation(raw, rotation, ph, pw)
+                    clip = _sanitize_clip(adj, pr)
+                    if clip is None:
+                        area_texts.append("")
+                        continue
+
+                    text_area = ""
+                    try:
+                        if ocr_mode == "Default":
+                            text_area = pdf.get_text(page, clip)
+                            if not text_area.strip():
+                                text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
+                        elif ocr_mode == "OCR-All":
                             text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
-
-                    elif ocr_mode == "OCR-All":
-                        text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
-
-                    elif ocr_mode == "Text1st+Image-beta":
-                        text_area = pdf.get_text(page, clip)
-                        # save image regardless; guard errors
-                        try:
-                            pix = pdf.render_pixmap(page, clip, dpi=dpi, scale=scale)
-                            out_img = temp_dir / f"{pdf_path.name}_page{page_no+1}_area{idx}.png"
-                            pix.save(str(out_img))
+                        elif ocr_mode == "Text1st+Image-beta":
+                            text_area = pdf.get_text(page, clip)
+                            # save image regardless
                             try:
-                                if out_img.stat().st_size > 30 * 1024 * 1024:
-                                    out_img.unlink(missing_ok=True)
+                                pix = pdf.render_pixmap(page, clip, dpi=dpi, scale=scale)
+                                out_img = temp_dir / f"{pdf_path.name}_page{page_no + 1}_area{idx}.png"
+                                pix.save(str(out_img))
+                                try:
+                                    del pix
+                                except Exception:
+                                    pass
+                                # 30MB guard
+                                try:
+                                    if out_img.stat().st_size > 30 * 1024 * 1024:
+                                        out_img.unlink(missing_ok=True)
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
+                            if not text_area.strip():
+                                try:
+                                    text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
+                                except Exception:
+                                    text_area = "OCR_ERROR"
+                        else:
+                            text_area = pdf.get_text(page, clip)
+                    except Exception:
+                        text_area = ""
+
+                    area_texts.append(_clean_text(text_area) if text_area.strip() else "")
+
+                # ---- revision table ----
+                revisions = []
+                if revision_rect:
+                    try:
+                        # normalize rotation (like your old extractor)
+                        try:
+                            pdf.remove_rotation(page)
                         except Exception:
-                            # swallow any pixmap errors; we still keep the text
                             pass
 
-                        if not text_area.strip():
-                            try:
-                                text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
-                            except Exception:
-                                text_area = "OCR_ERROR"
-                    else:
-                        text_area = pdf.get_text(page, clip)
-                except Exception:
-                    # absolutely never raise from worker
-                    text_area = ""
+                        pr2 = tuple(pdf.page_rect(page))
+                        rclip = _sanitize_clip(revision_rect, pr2)
+                        if rclip:
+                            wc = pdf.words_count(page, rclip)
+                            if wc < 0 or wc >= 6:
+                                rows = pdf.find_table_rows(page, rclip)
+                                if rows:
+                                    revisions = parser.parse_table_rows(rows)
+                    except Exception:
+                        revisions = []
+                # ---- final row (write immediately) ----
+                folder = _rel_folder(pdf_path, pdf_root)
+                filename = pdf_path.name
+                pr_final = tuple(pdf.page_rect(page))
+                page_size_str = f"{pr_final[2]-pr_final[0]:.1f} x {pr_final[3]-pr_final[1]:.1f}"
 
-                text_area = _clean_text(text_area)
-                area_texts.append(text_area if text_area.strip() else "")
+                latest_rev = latest_desc = latest_date = ""
+                if isinstance(revisions, list) and revisions:
+                    last = revisions[-1]
+                    latest_rev  = last.get("rev", "")
+                    latest_desc = last.get("desc", "")
+                    latest_date = last.get("date", "")
 
-            # ----- Revision table (normalize rotation there) -----
-            revisions = []
-            if revision_rect:
+                unid = f"{unid_prefix}-{page_no+1}"
+                row = [unid, size, last_mod, folder, filename, page_no+1, page_size_str] \
+                      + area_texts + [latest_rev, latest_desc, latest_date, json.dumps(revisions, ensure_ascii=False)]
+                csv_w.writerow(row)
+
+                if ndjson_f is not None:
+                    ndjson_f.write(json.dumps({"unid": unid, "revisions": revisions}, ensure_ascii=False) + "\n")
+
+                pages_written += 1
+
+                # periodic flush + GC keeps memory flat for huge PDFs
+                if (page_no + 1) % 5 == 0:
+                    try:
+                        csv_f.flush()
+                        if ndjson_f: ndjson_f.flush()
+                    except Exception:
+                        pass
+                    import gc as _gc
+                    _gc.collect()
+
                 try:
-                    # work against unrotated geometry for table finding
-                    pdf.remove_rotation(page)
+                    del page
                 except Exception:
                     pass
 
-                # recalc page rect after rotation removal
-                pr2 = tuple(pdf.page_rect(page))
-                # NOTE: revision_rect in GUI coordinates (unrotated) — just sanitize
-                rclip = _sanitize_clip(revision_rect, pr2)
-                if rclip:
-                    wc = pdf.words_count(page, rclip)
-                    if wc < 0 or wc >= 6:
-                        try:
-                            rows = pdf.find_table_rows(page, rclip)
-                            if rows:
-                                revisions = parser.parse_table_rows(rows)
-                        except Exception:
-                            revisions = []
-
-            # ----- metadata -----
+    finally:
+        try:
+            csv_f.close()
+        except Exception:
+            pass
+        if ndjson_f:
             try:
-                st = pdf_path.stat()
-                size = st.st_size
-                last_mod = __import__("datetime").datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                ndjson_f.close()
             except Exception:
-                size = 0; last_mod = ""
+                pass
 
-            folder = _rel_folder(pdf_path, pdf_root)
-            filename = pdf_path.name
-            pr_final = tuple(pdf.page_rect(page))
-            page_size_str = f"{pr_final[2]-pr_final[0]:.1f} x {pr_final[3]-pr_final[1]:.1f}"
-
-            latest_rev = latest_desc = latest_date = ""
-            if isinstance(revisions, list) and revisions:
-                last = revisions[-1]
-                latest_rev  = last.get("rev", "")
-                latest_desc = last.get("desc", "")
-                latest_date = last.get("date", "")
-
-            unid = f"{unid_prefix}-{page_no+1}"
-            rows_out.append(
-                [unid, size, last_mod, folder, filename, page_no+1, page_size_str]
-                + area_texts + [latest_rev, latest_desc, latest_date, json.dumps(revisions, ensure_ascii=False)]
-            )
-
-            try: del page
-            except Exception: pass
-            gc.collect()
-
-    _write_temp_csv(
-        temp_dir / f"temp_{unid_prefix}.csv",
-        (temp_dir / f"temp_{unid_prefix}.ndjson") if revision_rect else None,
-        rows_out,
-        write_revisions=bool(revision_rect)
-    )
-    return page_count if page_count > 0 else 1
+    return pages_written if pages_written > 0 else 1
 
 # ===== Main Service =====
 
@@ -347,8 +376,11 @@ class ExtractionService:
         )
 
         if errors:
-            # optionally write a small _errors.txt next to the Excel output
-            pass
+            errlog = req.output_excel.with_suffix(".errors.txt")
+            try:
+                errlog.write_text("\n".join(errors), encoding="utf-8")
+            except Exception:
+                pass
 
         # place NDJSON copy near Excel (if revisions were enabled)
         if req.revision_area:
