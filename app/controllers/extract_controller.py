@@ -1,68 +1,76 @@
-import multiprocessing as mp
-import time
+from __future__ import annotations
+import multiprocessing as mp, time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional, Iterable
 
 from app.domain.models import ExtractionRequest
-from extractor import TextExtractor  # your existing implementation
+from app.services.extraction_service import ExtractionService
+from app.infra.pdf_adapter import PdfAdapter
+
 
 @dataclass
 class ExtractionJob:
     process: mp.Process
-    total_files: mp.Value
+    total_pages: mp.Value
     progress: mp.Value
-    final_output_path: "mp.managers.ValueProxy[str]"
     cancel_event: mp.Event
     manager: mp.Manager
+    final_output_path: "mp.managers.ValueProxy[str]"
     started_at: float
 
+def _run_service(
+    req: ExtractionRequest,
+    progress: mp.Value,
+    total: mp.Value,
+    final_output_path: "mp.managers.ValueProxy[str]",
+    cancel_evt: mp.Event
+):
+    svc = ExtractionService()
+    pdf = PdfAdapter()
+
+    try:
+        total.value = sum(pdf.page_count(p) for p in req.pdf_paths)
+    except Exception:
+        total.value = 0
+
+    def on_progress(proc: int, tot: int):
+        progress.value = proc
+
+    def should_cancel() -> bool:
+        return cancel_evt.is_set()
+
+    out = svc.extract(req, on_progress=on_progress, should_cancel=should_cancel)
+    final_output_path.value = str(out)
+
 class ExtractController:
-    """
-    UI-agnostic orchestration:
-    - start(req) returns a job handle
-    - poll(job) -> (processed, total) or None when finished
-    - finish(job) -> output path (or None if cancelled)
-    - cancel(job)
-    """
-
     def start(self, req: ExtractionRequest) -> ExtractionJob:
-        progress_counter = mp.Value('i', 0)
-        total_files = mp.Value('i', 0)
-        cancel_event = mp.Event()
+        progress = mp.Value('i', 0)
+        total = mp.Value('i', 0)
+        cancel_evt = mp.Event()
         manager = mp.Manager()
-        final_output_path = manager.Value("s", "")
+        final_out = manager.Value("s", "")
 
-        extractor = TextExtractor(
-            pdf_folder=str(Path(req.pdf_paths[0]).parent),   # keeps your current constructor happy
-            output_excel_path=str(req.output_excel),
-            areas=[{"title": a.title, "coordinates": list(a.rect)} for a in req.areas],
-            ocr_settings={"enable_ocr": req.ocr.mode, "dpi_value": req.ocr.dpi, "tessdata_folder": str(req.ocr.tessdata_dir) if req.ocr.tessdata_dir else None},
-            revision_regex=req.revision_regex,
-        )
-        extractor.revision_area = {"title": req.revision_area.title, "coordinates": list(req.revision_area.rect)} if req.revision_area else None
-
-        # IMPORTANT: keep your current target signature
         p = mp.Process(
-            target=extractor.start_extraction,
-            args=(progress_counter, total_files, final_output_path, [str(p) for p in req.pdf_paths], cancel_event),
+            target=_run_service,
+            args=(req, progress, total, final_out, cancel_evt),
             daemon=False
         )
         p.start()
 
         return ExtractionJob(
             process=p,
-            total_files=total_files,
-            progress=progress_counter,
-            final_output_path=final_output_path,
-            cancel_event=cancel_event,
+            total_pages=total,
+            progress=progress,
+            cancel_event=cancel_evt,
             manager=manager,
+            final_output_path=final_out,
             started_at=time.time(),
         )
 
     def poll(self, job: ExtractionJob) -> Optional[tuple[int, int]]:
         if job.process.is_alive():
-            return (job.progress.value, job.total_files.value)
+            return (job.progress.value, job.total_pages.value)
         return None
 
     def finish(self, job: ExtractionJob) -> Optional[Path]:

@@ -17,6 +17,10 @@ from constants import (
 from dpi_utils import init_windows_dpi_awareness, apply_scaling, install_dpi_watcher
 
 
+from app.logging_setup import configure_logging
+logger = configure_logging()
+logger.info("App starting…")
+
 # ────────────────────────────────────────────────────────────
 #  Helper: resource path (PyInstaller/Nuitka/Python-safe)
 # ────────────────────────────────────────────────────────────

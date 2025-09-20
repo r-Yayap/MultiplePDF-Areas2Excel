@@ -8,9 +8,8 @@ import sys
 from tkinter import filedialog, messagebox, StringVar
 from openpyxl import Workbook, load_workbook
 from constants import *
-from extractor import TextExtractor
 from customtkinter import CTkImage
-
+from typing import Any
 from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
@@ -19,10 +18,41 @@ from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
 from PIL import Image, ImageTk  # Make sure this is at the top
 
-
-from app.controllers.extract_controller import ExtractController
 from app.domain.models import AreaSpec, OcrSettings, ExtractionRequest
+from app.controllers.extract_controller import ExtractController
 from pathlib import Path
+
+import logging
+from app.logging_setup import configure_logging
+logger = configure_logging()
+
+
+def _is_spec(a: Any) -> bool:
+    try:
+        from app.domain.models import AreaSpec
+        return isinstance(a, AreaSpec)
+    except Exception:
+        return False
+
+def _area_title(a: Any) -> str:
+    return a.title if _is_spec(a) else a["title"]
+
+def _area_coords(a: Any):
+    return list(a.rect) if _is_spec(a) else a["coordinates"]
+
+def _to_spec(a: Any):
+    from app.domain.models import AreaSpec
+    return a if _is_spec(a) else AreaSpec(title=a["title"], rect=tuple(a["coordinates"]))
+
+def _maybe_to_dict(a: Any) -> dict:
+    # convenient when exporting, etc.
+    return {"title": a.title, "coordinates": list(a.rect)} if _is_spec(a) else a
+
+def _rev_area_to_spec(a: Any):
+    if a is None:
+        return None
+    return _to_spec(a)
+
 
 # DnD (safe import)
 try:
@@ -40,6 +70,25 @@ class CTkDnD(ctk.CTk, *( (TkinterDnD.DnDWrapper,) if DND_ENABLED else tuple() ))
         if DND_ENABLED:
             self.TkdndVersion = TkinterDnD._require(self)
 
+
+def _preflight(self) -> tuple[bool, str]:
+    if not self.pdf_viewer.areas:
+        return False, "No areas defined. Please draw at least one area."
+    if not self.pdf_folder or not os.path.isdir(self.pdf_folder):
+        return False, "The selected PDF folder does not exist."
+    if not self.output_excel_path:
+        return False, "Please choose an Excel output path."
+    out_dir = os.path.dirname(self.output_excel_path)
+    if not os.path.isdir(out_dir):
+        return False, "The output folder does not exist."
+    if not os.access(out_dir, os.W_OK):
+        return False, "You do not have write permission to the output folder."
+    # at least one checked PDF:
+    checked = [iid for iid in self.files_tree_widget.get_checked()
+               if str(self.files_tree_widget.item(iid).get("text","")).lower().endswith(".pdf")]
+    if not checked:
+        return False, "Please check at least one PDF to extract."
+    return True, ""
 
 def resource_path(rel: str) -> str:
     """
@@ -120,13 +169,17 @@ class XtractorGUI:
             ws_area.title = "Rectangles"
             ws_area.append(["Title", "x0", "y0", "x1", "y1"])
             for area in self.pdf_viewer.areas:
-                ws_area.append([area["title"]] + area["coordinates"])
+                title = _area_title(area)
+                x0, y0, x1, y1 = _area_coords(area)
+                ws_area.append([title, x0, y0, x1, y1])
 
             if self.pdf_viewer.revision_area:
                 ws_rev = wb.create_sheet("RevisionTable")
                 ws_rev.append(["Title", "x0", "y0", "x1", "y1"])
-                rev = self.pdf_viewer.revision_area
-                ws_rev.append([rev["title"]] + rev["coordinates"])
+                ra = self.pdf_viewer.revision_area
+                title = _area_title(ra)
+                x0, y0, x1, y1 = _area_coords(ra)
+                ws_rev.append([title, x0, y0, x1, y1])
 
             wb.save(export_file_path)
             wb.close()
@@ -208,13 +261,11 @@ class XtractorGUI:
         print("All areas and revision table cleared.")
 
     def update_areas_treeview(self):
-        """Updates the Treeview with only area mode rectangles (excludes revision)."""
         self.areas_tree.delete(*self.areas_tree.get_children())
         self.treeview_item_ids = {}
-
         for index, area in enumerate(self.pdf_viewer.areas):
-            title = area.title
-            x0, y0, x1, y1 = area.rect
+            title = _area_title(area)
+            x0, y0, x1, y1 = _area_coords(area)
             item_id = self.areas_tree.insert("", "end", values=(title, x0, y0, x1, y1))
             self.treeview_item_ids[item_id] = index
 
@@ -1012,7 +1063,7 @@ class XtractorGUI:
             messagebox.showerror("Invalid Output Path", "Select a valid folder.")
             return
 
-        # collect checked PDFs (unchanged)
+        # collect checked PDFs
         checked = self.files_tree_widget.get_checked()
         selected_paths = []
         for iid in checked:
@@ -1028,7 +1079,7 @@ class XtractorGUI:
         # close viewer to release any file locks
         self.pdf_viewer.close_pdf()
 
-        # progress UI (unchanged UI)
+        # progress UI
         self.start_time = time.time()
         self.progress_window = ctk.CTkToplevel(self.root)
         self.progress_window.title("Progress")
@@ -1039,7 +1090,7 @@ class XtractorGUI:
 
         self.progress_label = ctk.CTkLabel(self.progress_window, text="Processing PDFs...")
         self.progress_label.pack(pady=(10, 2))
-        self.total_files_label = ctk.CTkLabel(self.progress_window, text="Total files: 0")
+        self.total_files_label = ctk.CTkLabel(self.progress_window, text="Total: 0")
         self.total_files_label.pack(pady=2)
 
         self.progress_var = ctk.DoubleVar(value=0)
@@ -1050,7 +1101,7 @@ class XtractorGUI:
         cancel_btn.pack(pady=(2, 8))
         self.progress_window.protocol("WM_DELETE_WINDOW", self.on_cancel_extraction)
 
-        # build domain request
+        # build domain request (accept both dict & dataclass areas)
         selected_pattern_display = self.revision_pattern_var.get()
         selected_pattern_key = self.revision_dropdown_map[selected_pattern_display]
         selected_revision_regex = REVISION_PATTERNS[selected_pattern_key]["pattern"]
@@ -1058,34 +1109,32 @@ class XtractorGUI:
         req = ExtractionRequest(
             pdf_paths=selected_paths,
             output_excel=Path(self.output_excel_path),
-            areas=list(self.pdf_viewer.areas),
-            revision_area=self.pdf_viewer.revision_area and AreaSpec(
-                title=self.pdf_viewer.revision_area["title"],
-                rect=tuple(self.pdf_viewer.revision_area["coordinates"])
-            ),
+            areas=[_to_spec(a) for a in self.pdf_viewer.areas],
+            revision_area=_rev_area_to_spec(self.pdf_viewer.revision_area),
             revision_regex=selected_revision_regex,
             ocr=OcrSettings(
                 mode=self.ocr_settings['enable_ocr'],
                 dpi=int(self.ocr_settings['dpi_value']),
                 tessdata_dir=Path(self.ocr_settings['tessdata_folder']) if self.ocr_settings.get(
-                    'tessdata_folder') else None
-            )
+                    'tessdata_folder') else None,
+                scale=self.ocr_settings.get("scale")
+            ),
+            pdf_root=Path(self.pdf_folder)
         )
 
         # start job via controller
-        self.cancel_event = None  # controller manages its own cancel
         self._job = self.extractor.start(req)
 
         def _tick():
-            alive = self.extractor.poll(self._job)
-            if alive is not None:
-                processed, total = alive
+            polled = self.extractor.poll(self._job)
+            if polled is not None:
+                processed, total = polled
                 if total > 0:
-                    self.total_files_label.configure(text=f"Processed: {processed}/{total}")
-                    self.progress_var.set(processed / total)
+                    self.total_files_label.configure(text=f"Processed pages: {processed}/{total}")
+                    self.progress_var.set(processed / max(total, 1))
                 self.root.after(100, _tick)
             else:
-                # finished (or cancelled)
+                # finished (or cancelled / error)
                 try:
                     self.progress_var.set(1)
                 except Exception:
@@ -1095,17 +1144,23 @@ class XtractorGUI:
                 except Exception:
                     pass
 
-                out = self.extractor.finish(self._job)
+                out = self.extractor.finish(self._job)  # Path | None
                 self._job = None
-                if out and out.exists():
-                    end_time = time.time()
-                    elapsed = end_time - self.start_time
-                    formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-                    if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
-                        try:
-                            os.startfile(out)
-                        except Exception as e:
-                            messagebox.showerror("Error", f"Could not open the Excel file: {e}")
+
+                end_time = time.time()
+                elapsed = end_time - self.start_time
+                formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
+
+                if not out or not out.exists():
+                    # treat as cancelled or failed (controller does not return a separate status)
+                    messagebox.showinfo("Stopped", f"Extraction was cancelled or failed after {formatted}.")
+                    return
+
+                if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
+                    try:
+                        os.startfile(out)
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
         self.root.after(100, _tick)
 
@@ -1122,13 +1177,15 @@ class XtractorGUI:
         if total_files.value > 0:
             processed = progress_counter.value
             self.total_files_label.configure(text=f"Processed: {processed}/{total_files.value}")
-            self.progress_var.set(processed / total_files.value)
+            self.progress_var.set(processed / max(total_files.value, 1))
 
         if extraction_process.is_alive():
             self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
             return
 
-        # finished or cancelled/crashed
+        # process finished
+        status = (self.shared or {}).get("status", "done")
+        err = (self.shared or {}).get("error", "")
         try:
             self.progress_var.set(1)
         except Exception:
@@ -1147,39 +1204,33 @@ class XtractorGUI:
             pass
         self.extraction_process = None
 
-        final_output_file = (self.final_output_path.value or self.output_excel_path).strip()
-
-        # shut down Manager
+        # shutdown manager safely
         try:
             if getattr(self, "current_manager", None):
                 self.current_manager.shutdown()
         except Exception:
             pass
         self.current_manager = None
-        self.final_output_path = None
 
-        # drop small UI refs
-        self.progress_var = None
-        self.progress_label = None
-        self.total_files_label = None
-        self.progress_bar = None
+        final_output_file = (self.final_output_path.value or self.output_excel_path).strip()
 
-        # if user cancelled, just bail silently
-        if getattr(self, "cancel_event", None) and self.cancel_event.is_set():
-            self.cancel_event = None
+        if status == "cancelled":
+            logger.info("User cancelled; no dialog.")
+            return
+        if status == "error":
+            logger.error("Worker error: %s", err)
+            messagebox.showerror("Extraction failed", err or "An unknown error occurred. See logs for details.")
             return
 
-        # else normal completion dialog
-        end_time = time.time()
-        elapsed = end_time - self.start_time
+        # success
+        elapsed = time.time() - self.start_time
         formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        response = messagebox.askyesno("Extraction Complete",
-                                       f"PDF extraction completed in {formatted}.\nOpen the Excel file?")
-        if response and final_output_file and os.path.exists(final_output_file):
-            try:
-                os.startfile(final_output_file)
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not open the Excel file: {e}")
+        if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
+            if final_output_file and os.path.exists(final_output_file):
+                try:
+                    os.startfile(final_output_file)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""
