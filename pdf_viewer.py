@@ -127,7 +127,7 @@ class PDFViewer:
         self.placeholder_text_id = self.canvas.create_text(
             canvas_width // 2,
             canvas_height // 2,
-            text="DRAG & DROP\nSample PDF here",
+            text="  DRAG & DROP\nSample PDF here\nand/or areas",
             fill="gray70",
             font=("Arial", self._px(20), "italic"),
             anchor="center"
