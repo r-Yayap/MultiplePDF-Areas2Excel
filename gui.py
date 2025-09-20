@@ -4,6 +4,7 @@ import os
 import re
 import time
 import customtkinter as ctk
+import sys
 from tkinter import filedialog, messagebox, StringVar
 from openpyxl import Workbook, load_workbook
 from constants import *
@@ -16,10 +17,11 @@ from utils import find_tessdata
 from utils import REVISION_PATTERNS
 from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
-
 from PIL import Image, ImageTk  # Make sure this is at the top
-import sys
 
+
+from app.controllers.extract_controller import ExtractController
+from app.domain.models import AreaSpec, OcrSettings, ExtractionRequest
 from pathlib import Path
 
 # DnD (safe import)
@@ -61,6 +63,8 @@ def resource_path(rel: str) -> str:
 class XtractorGUI:
     def __init__(self, root):
         self.root = root
+
+        self.extractor = ExtractController()
 
         # compute UI scale from Tk (dpi-aware thanks to main.py)
         self._ui_scale = float(self.root.tk.call('tk', 'scaling')) / (96 / 72)  # = 1.0 at 96 DPI
@@ -209,9 +213,9 @@ class XtractorGUI:
         self.treeview_item_ids = {}
 
         for index, area in enumerate(self.pdf_viewer.areas):
-            coordinates = area["coordinates"]
-            title = area["title"]
-            item_id = self.areas_tree.insert("", "end", values=(title, *coordinates))
+            title = area.title
+            x0, y0, x1, y1 = area.rect
+            item_id = self.areas_tree.insert("", "end", values=(title, x0, y0, x1, y1))
             self.treeview_item_ids[item_id] = index
 
     def open_sample_pdf(self):
@@ -993,47 +997,22 @@ class XtractorGUI:
         zoom_level = float(value)
         self.pdf_viewer.set_zoom(zoom_level)  # Update zoom in PDFViewer
 
-    def on_cancel_extraction(self):
-        # Ask once; then set the flag and change the UI text
-        if not hasattr(self, "cancel_event") or self.cancel_event is None:
-            # nothing to cancel; just close the window if present
-            try:
-                self.progress_window.destroy()
-            except Exception:
-                pass
-            return
-
-        if messagebox.askyesno("Cancel extraction", "Stop the extraction now?"):
-            try:
-                self.cancel_event.set()
-            except Exception:
-                pass
-            try:
-                self.progress_label.configure(text="Cancelling…")
-            except Exception:
-                pass
-            # Let update_progress() handle the final cleanup and window close
-
     def start_extraction(self):
-        # --- guards ---
+        # --- guards (unchanged) ---
         if not self.pdf_viewer.areas:
             messagebox.showerror("Extraction Error", "No areas defined. Please select areas before extracting.")
             return
-
         self.pdf_folder = self.pdf_folder_entry.get()
         if not self.pdf_folder or not os.path.isdir(self.pdf_folder):
-            messagebox.showerror("Invalid Folder",
-                                 "The specified PDF folder does not exist. Please select a valid folder.")
+            messagebox.showerror("Invalid Folder", "Select a valid folder.")
             return
-
         self.output_excel_path = self.output_path_entry.get()
         output_dir = os.path.dirname(self.output_excel_path)
         if not self.output_excel_path or not os.path.isdir(output_dir):
-            messagebox.showerror("Invalid Output Path",
-                                 "The specified output path is invalid. Please select a valid folder.")
+            messagebox.showerror("Invalid Output Path", "Select a valid folder.")
             return
 
-        # collect checked PDFs
+        # collect checked PDFs (unchanged)
         checked = self.files_tree_widget.get_checked()
         selected_paths = []
         for iid in checked:
@@ -1041,7 +1020,7 @@ class XtractorGUI:
             if item and "values" in item and item["values"]:
                 path = item["values"][0]
                 if path.lower().endswith(".pdf"):
-                    selected_paths.append(path)
+                    selected_paths.append(Path(path))
         if not selected_paths:
             messagebox.showerror("No Files Selected", "Please check at least one PDF to extract.")
             return
@@ -1049,7 +1028,7 @@ class XtractorGUI:
         # close viewer to release any file locks
         self.pdf_viewer.close_pdf()
 
-        # --- build progress UI ---
+        # progress UI (unchanged UI)
         self.start_time = time.time()
         self.progress_window = ctk.CTkToplevel(self.root)
         self.progress_window.title("Progress")
@@ -1067,49 +1046,77 @@ class XtractorGUI:
         self.progress_bar = ctk.CTkProgressBar(self.progress_window, variable=self.progress_var,
                                                orientation="horizontal", width=260)
         self.progress_bar.pack(pady=8)
-
-        # add a Cancel button
         cancel_btn = ctk.CTkButton(self.progress_window, text="Cancel", width=80, command=self.on_cancel_extraction)
         cancel_btn.pack(pady=(2, 8))
-
-        # if user clicks the [X] on the window, treat as cancel
         self.progress_window.protocol("WM_DELETE_WINDOW", self.on_cancel_extraction)
 
-        # --- shared state ---
-        progress_counter = multiprocessing.Value('i', 0)
-        total_files = multiprocessing.Value('i', 0)
-
-        # revision regex
+        # build domain request
         selected_pattern_display = self.revision_pattern_var.get()
         selected_pattern_key = self.revision_dropdown_map[selected_pattern_display]
         selected_revision_regex = REVISION_PATTERNS[selected_pattern_key]["pattern"]
 
-        extractor = TextExtractor(
-            pdf_folder=self.pdf_folder,
-            output_excel_path=self.output_excel_path,
-            areas=self.pdf_viewer.areas,
-            ocr_settings=self.ocr_settings,
-            revision_regex=selected_revision_regex
+        req = ExtractionRequest(
+            pdf_paths=selected_paths,
+            output_excel=Path(self.output_excel_path),
+            areas=list(self.pdf_viewer.areas),
+            revision_area=self.pdf_viewer.revision_area and AreaSpec(
+                title=self.pdf_viewer.revision_area["title"],
+                rect=tuple(self.pdf_viewer.revision_area["coordinates"])
+            ),
+            revision_regex=selected_revision_regex,
+            ocr=OcrSettings(
+                mode=self.ocr_settings['enable_ocr'],
+                dpi=int(self.ocr_settings['dpi_value']),
+                tessdata_dir=Path(self.ocr_settings['tessdata_folder']) if self.ocr_settings.get(
+                    'tessdata_folder') else None
+            )
         )
-        extractor.revision_area = self.pdf_viewer.revision_area
 
-        # ONE Manager (remember it so we can shut it down)
-        self.current_manager = multiprocessing.Manager()
-        final_output_path = self.current_manager.Value("s", "")
-        self.final_output_path = final_output_path
+        # start job via controller
+        self.cancel_event = None  # controller manages its own cancel
+        self._job = self.extractor.start(req)
 
-        # --- NEW: cancel event ---
-        self.cancel_event = multiprocessing.Event()
+        def _tick():
+            alive = self.extractor.poll(self._job)
+            if alive is not None:
+                processed, total = alive
+                if total > 0:
+                    self.total_files_label.configure(text=f"Processed: {processed}/{total}")
+                    self.progress_var.set(processed / total)
+                self.root.after(100, _tick)
+            else:
+                # finished (or cancelled)
+                try:
+                    self.progress_var.set(1)
+                except Exception:
+                    pass
+                try:
+                    self.progress_window.destroy()
+                except Exception:
+                    pass
 
-        # spawn ONE process (daemon True is fine; parent app exit will kill it)
-        self.extraction_process = multiprocessing.Process(
-            target=extractor.start_extraction,
-            args=(progress_counter, total_files, final_output_path, selected_paths, self.cancel_event)
-        )
-        self.extraction_process.start()
+                out = self.extractor.finish(self._job)
+                self._job = None
+                if out and out.exists():
+                    end_time = time.time()
+                    elapsed = end_time - self.start_time
+                    formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
+                    if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
+                        try:
+                            os.startfile(out)
+                        except Exception as e:
+                            messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
-        # start polling
-        self.root.after(100, self.update_progress, progress_counter, total_files, self.extraction_process)
+        self.root.after(100, _tick)
+
+    def on_cancel_extraction(self):
+        if hasattr(self, "_job") and self._job:
+            if messagebox.askyesno("Cancel extraction", "Stop the extraction now?"):
+                self.extractor.cancel(self._job)
+                try:
+                    self.progress_label.configure(text="Cancelling…")
+                except Exception:
+                    pass
 
     def update_progress(self, progress_counter, total_files, extraction_process):
         if total_files.value > 0:

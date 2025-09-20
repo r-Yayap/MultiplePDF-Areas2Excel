@@ -9,7 +9,7 @@ from tkinter import Menu
 from constants import *
 from tkinter.simpledialog import askstring  # For custom title input
 
-
+from app.domain.models import AreaSpec
 
 
 class PDFViewer:
@@ -230,9 +230,12 @@ class PDFViewer:
 
             zoomed_width = int(self.pdf_width * self.current_zoom)
             zoomed_height = int(self.pdf_height * self.current_zoom)
+            pad = self._px(SCROLLBAR_THICKNESS)  # from constants; your _px handles DPI
             self.canvas.config(yscrollcommand=self.v_scrollbar.set,
                                xscrollcommand=self.h_scrollbar.set,
-                               scrollregion=(0, 0, zoomed_width, zoomed_height))
+                               scrollregion=(0, 0, zoomed_width + pad, zoomed_height + pad)
+                               )
+
         except ValueError as e:
             print(f"Error updating display: {e}")
 
@@ -272,10 +275,11 @@ class PDFViewer:
             ]
 
             if self.selection_mode == "area":
-                self.areas.append({
-                    "coordinates": adjusted_coordinates,
-                    "title": f"Rectangle {len(self.areas) + 1}"
-                })
+                self.areas.append(AreaSpec(
+                    title=f"Rectangle {len(self.areas) + 1}",
+                    rect=(
+                    x0 / self.current_zoom, y0 / self.current_zoom, x1 / self.current_zoom, y1 / self.current_zoom)
+                ))
                 self.rectangle_list.append(self.current_rectangle)
                 self.parent.update_areas_treeview()
             else:
@@ -285,6 +289,8 @@ class PDFViewer:
                 self.revision_area = {"coordinates": adjusted_coordinates, "title": "Revision Table"}
                 self.revision_rectangle_id = self.current_rectangle
                 print("Set Revision Table Rectangle:", self.revision_area)
+
+
 
         self.current_rectangle = None
 
@@ -342,7 +348,7 @@ class PDFViewer:
             self.revision_rectangle_id = None
 
         for area in self.areas:
-            x0, y0, x1, y1 = [coord * self.current_zoom for coord in area["coordinates"]]
+            x0, y0, x1, y1 = [coord * self.current_zoom for coord in area.rect]
             rect_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="red", width=2)
             self.rectangle_list.append(rect_id)
 
@@ -457,8 +463,8 @@ class PDFViewer:
     def set_rectangle_title(self, title):
         """Assigns a selected title to the currently selected rectangle and updates the Treeview."""
         if self.selected_rectangle_index is not None:
-            # Update the title directly in `self.areas` based on the rectangle index
-            self.areas[self.selected_rectangle_index]["title"] = title  # Update title in `self.areas`
+            a = self.areas[self.selected_rectangle_index]
+            self.areas[self.selected_rectangle_index] = AreaSpec(title=title, rect=a.rect)
             print(f"Title '{title}' set for rectangle at Index: {self.selected_rectangle_index}")
 
             # Update the Treeview to reflect the new title
