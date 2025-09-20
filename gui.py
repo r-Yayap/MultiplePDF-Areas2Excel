@@ -53,6 +53,34 @@ def _rev_area_to_spec(a: Any):
         return None
     return _to_spec(a)
 
+# --- helpers to bridge GUI dicts <-> AreaSpec ---
+def _area_get_title_and_coords(area):
+    """Return (title, (x0,y0,x1,y1)) from either a GUI dict or an AreaSpec"""
+    try:
+        # AreaSpec path
+        from app.domain.models import AreaSpec  # local import to avoid cycles
+        if isinstance(area, AreaSpec):
+            t = area.title or "Area"
+            x0, y0, x1, y1 = area.rect
+            return t, (x0, y0, x1, y1)
+    except Exception:
+        pass
+
+    # dict path
+    if isinstance(area, dict):
+        t = area.get("title", "Area")
+        coords = area.get("coordinates") or area.get("rect") or area.get("bbox")
+        if coords and len(coords) == 4:
+            x0, y0, x1, y1 = coords
+            return t, (x0, y0, x1, y1)
+
+    raise TypeError(f"Unsupported area object: {area!r}")
+
+
+def _as_gui_area(area):
+    """Always return a GUI-style dict {'title':..., 'coordinates':[...]}"""
+    t, (x0, y0, x1, y1) = _area_get_title_and_coords(area)
+    return {"title": t, "coordinates": [x0, y0, x1, y1]}
 
 # DnD (safe import)
 try:
@@ -164,21 +192,19 @@ class XtractorGUI:
             return
 
         try:
+            from openpyxl import Workbook
             wb = Workbook()
             ws_area = wb.active
             ws_area.title = "Rectangles"
             ws_area.append(["Title", "x0", "y0", "x1", "y1"])
             for area in self.pdf_viewer.areas:
-                title = _area_title(area)
-                x0, y0, x1, y1 = _area_coords(area)
+                title, (x0, y0, x1, y1) = _area_get_title_and_coords(area)
                 ws_area.append([title, x0, y0, x1, y1])
 
             if self.pdf_viewer.revision_area:
                 ws_rev = wb.create_sheet("RevisionTable")
                 ws_rev.append(["Title", "x0", "y0", "x1", "y1"])
-                ra = self.pdf_viewer.revision_area
-                title = _area_title(ra)
-                x0, y0, x1, y1 = _area_coords(ra)
+                title, (x0, y0, x1, y1) = _area_get_title_and_coords(self.pdf_viewer.revision_area)
                 ws_rev.append([title, x0, y0, x1, y1])
 
             wb.save(export_file_path)
@@ -194,56 +220,35 @@ class XtractorGUI:
         )
         if not import_file_path:
             return
-
-        try:
-            wb = load_workbook(import_file_path)
-            ws_area = wb["Rectangles"] if "Rectangles" in wb.sheetnames else wb.active
-
-            self.pdf_viewer.areas = []
-            for row in ws_area.iter_rows(min_row=2, values_only=True):
-                title, x0, y0, x1, y1 = row
-                self.pdf_viewer.areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
-
-            # Handle revision area
-            revision_area_set = False
-            if "RevisionTable" in wb.sheetnames:
-                ws_rev = wb["RevisionTable"]
-                for row in ws_rev.iter_rows(min_row=2, values_only=True):
-                    title, x0, y0, x1, y1 = row
-                    # ✅ Only set revision area if all coordinates are present
-                    if all(isinstance(coord, (int, float)) for coord in [x0, y0, x1, y1]):
-                        self.pdf_viewer.revision_area = {"title": title, "coordinates": [x0, y0, x1, y1]}
-                        revision_area_set = True
-
-            if not revision_area_set:
-                self.pdf_viewer.revision_area = None  # ✅ Clear revision area if nothing valid was set
-
-            self.pdf_viewer.update_rectangles()
-            self.update_areas_treeview()
-            print(f"Imported areas from {import_file_path}")
-        except Exception as e:
-            messagebox.showerror("Import Error", f"Could not import areas: {e}")
+        self.import_rectangles_from_file(import_file_path)
 
     def import_rectangles_from_file(self, file_path):
         try:
             wb = load_workbook(file_path)
             ws_area = wb["Rectangles"] if "Rectangles" in wb.sheetnames else wb.active
 
-            self.pdf_viewer.areas = []
+            # always store GUI dicts in PDFViewer.areas
+            areas = []
             for row in ws_area.iter_rows(min_row=2, values_only=True):
                 title, x0, y0, x1, y1 = row
-                self.pdf_viewer.areas.append({"title": title, "coordinates": [x0, y0, x1, y1]})
+                if None in (x0, y0, x1, y1):
+                    continue
+                areas.append({"title": title or "Area", "coordinates": [float(x0), float(y0), float(x1), float(y1)]})
+            self.pdf_viewer.areas = areas
 
-            # Handle revision area if present
+            # Revision area (optional)
+            self.pdf_viewer.revision_area = None
             if "RevisionTable" in wb.sheetnames:
                 ws_rev = wb["RevisionTable"]
                 for row in ws_rev.iter_rows(min_row=2, values_only=True):
                     title, x0, y0, x1, y1 = row
-                    if all(isinstance(coord, (int, float)) for coord in [x0, y0, x1, y1]):
-                        self.pdf_viewer.revision_area = {"title": title, "coordinates": [x0, y0, x1, y1]}
-                        break
-            else:
-                self.pdf_viewer.revision_area = None
+                    if None in (x0, y0, x1, y1):
+                        continue
+                    self.pdf_viewer.revision_area = {
+                        "title": title or "Revision",
+                        "coordinates": [float(x0), float(y0), float(x1), float(y1)]
+                    }
+                    break
 
             self.pdf_viewer.update_rectangles()
             self.update_areas_treeview()
@@ -264,8 +269,7 @@ class XtractorGUI:
         self.areas_tree.delete(*self.areas_tree.get_children())
         self.treeview_item_ids = {}
         for index, area in enumerate(self.pdf_viewer.areas):
-            title = _area_title(area)
-            x0, y0, x1, y1 = _area_coords(area)
+            title, (x0, y0, x1, y1) = _area_get_title_and_coords(area)
             item_id = self.areas_tree.insert("", "end", values=(title, x0, y0, x1, y1))
             self.treeview_item_ids[item_id] = index
 
@@ -1063,6 +1067,7 @@ class XtractorGUI:
             messagebox.showerror("Invalid Output Path", "Select a valid folder.")
             return
 
+
         # collect checked PDFs
         checked = self.files_tree_widget.get_checked()
         selected_paths = []
@@ -1101,7 +1106,26 @@ class XtractorGUI:
         cancel_btn.pack(pady=(2, 8))
         self.progress_window.protocol("WM_DELETE_WINDOW", self.on_cancel_extraction)
 
-        # build domain request (accept both dict & dataclass areas)
+        # Build areas list for the request (tolerate dict or AreaSpec)
+        areas_spec = []
+        for a in self.pdf_viewer.areas:
+            try:
+                from app.domain.models import AreaSpec
+                if isinstance(a, AreaSpec):
+                    areas_spec.append(a)
+                    continue
+            except Exception:
+                pass
+            title, (x0, y0, x1, y1) = _area_get_title_and_coords(a)
+            areas_spec.append(AreaSpec(title=title, rect=(x0, y0, x1, y1)))
+
+        # Revision area
+        rev_spec = None
+        if self.pdf_viewer.revision_area:
+            title, (x0, y0, x1, y1) = _area_get_title_and_coords(self.pdf_viewer.revision_area)
+            rev_spec = AreaSpec(title=title, rect=(x0, y0, x1, y1))
+
+        # build domain request
         selected_pattern_display = self.revision_pattern_var.get()
         selected_pattern_key = self.revision_dropdown_map[selected_pattern_display]
         selected_revision_regex = REVISION_PATTERNS[selected_pattern_key]["pattern"]
@@ -1109,17 +1133,15 @@ class XtractorGUI:
         req = ExtractionRequest(
             pdf_paths=selected_paths,
             output_excel=Path(self.output_excel_path),
-            areas=[_to_spec(a) for a in self.pdf_viewer.areas],
-            revision_area=_rev_area_to_spec(self.pdf_viewer.revision_area),
+            areas=areas_spec,
+            revision_area=rev_spec,
             revision_regex=selected_revision_regex,
             ocr=OcrSettings(
                 mode=self.ocr_settings['enable_ocr'],
                 dpi=int(self.ocr_settings['dpi_value']),
                 tessdata_dir=Path(self.ocr_settings['tessdata_folder']) if self.ocr_settings.get(
-                    'tessdata_folder') else None,
-                scale=self.ocr_settings.get("scale")
-            ),
-            pdf_root=Path(self.pdf_folder)
+                    'tessdata_folder') else None
+            )
         )
 
         # start job via controller

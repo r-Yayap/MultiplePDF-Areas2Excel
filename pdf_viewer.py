@@ -109,7 +109,32 @@ class PDFViewer:
         except Exception as e:
             print("Drag & Drop disabled (tkdnd not available):", e)
 
+    # inside class PDFViewer:
 
+    def _area_coords(self, a):
+        # Accept AreaSpec or GUI dict
+        try:
+            from app.domain.models import AreaSpec
+            if isinstance(a, AreaSpec):
+                return tuple(a.rect)
+        except Exception:
+            pass
+        if isinstance(a, dict):
+            coords = a.get("coordinates") or a.get("rect") or a.get("bbox")
+            if coords and len(coords) == 4:
+                return tuple(coords)
+        raise TypeError(f"Unsupported area object: {a!r}")
+
+    def _area_title(self, a, default="Area"):
+        try:
+            from app.domain.models import AreaSpec
+            if isinstance(a, AreaSpec):
+                return a.title or default
+        except Exception:
+            pass
+        if isinstance(a, dict):
+            return a.get("title", default)
+        return default
 
     def show_placeholder(self):
         """Displays the drag & drop hint centered in the canvas."""
@@ -274,23 +299,20 @@ class PDFViewer:
                 y1 / self.current_zoom
             ]
 
+            # replace the block that appends AreaSpec with this
             if self.selection_mode == "area":
-                self.areas.append(AreaSpec(
-                    title=f"Rectangle {len(self.areas) + 1}",
-                    rect=(
-                    x0 / self.current_zoom, y0 / self.current_zoom, x1 / self.current_zoom, y1 / self.current_zoom)
-                ))
+                self.areas.append({
+                    "title": f"Rectangle {len(self.areas) + 1}",
+                    "coordinates": adjusted_coordinates
+                })
                 self.rectangle_list.append(self.current_rectangle)
                 self.parent.update_areas_treeview()
             else:
-                # Only allow one revision area
+                # revision area already stored as dict; keep as-is
                 if self.revision_rectangle_id:
                     self.canvas.delete(self.revision_rectangle_id)
                 self.revision_area = {"coordinates": adjusted_coordinates, "title": "Revision Table"}
                 self.revision_rectangle_id = self.current_rectangle
-                print("Set Revision Table Rectangle:", self.revision_area)
-
-
 
         self.current_rectangle = None
 
@@ -338,7 +360,6 @@ class PDFViewer:
         print("Cleared All Areas")
 
     def update_rectangles(self):
-        """Redraws area and revision rectangles on the canvas."""
         for rect_id in self.rectangle_list:
             self.canvas.delete(rect_id)
         self.rectangle_list.clear()
@@ -347,17 +368,18 @@ class PDFViewer:
             self.canvas.delete(self.revision_rectangle_id)
             self.revision_rectangle_id = None
 
+        # draw normal areas (dicts or AreaSpec)
         for area in self.areas:
-            x0, y0, x1, y1 = [coord * self.current_zoom for coord in area.rect]
+            x0, y0, x1, y1 = [c * self.current_zoom for c in self._area_coords(area)]
             rect_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="red", width=2)
             self.rectangle_list.append(rect_id)
 
-        # Draw revision area if present
+        # draw revision area (dict already)
         if self.revision_area:
             x0, y0, x1, y1 = [c * self.current_zoom for c in self.revision_area["coordinates"]]
             self.revision_rectangle_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="green", width=2)
 
-        # Update Treeview only for normal areas
+        # refresh table
         self.parent.update_areas_treeview()
 
     def set_zoom(self, zoom_level):
@@ -461,13 +483,14 @@ class PDFViewer:
             self.selected_rectangle_index = None
 
     def set_rectangle_title(self, title):
-        """Assigns a selected title to the currently selected rectangle and updates the Treeview."""
         if self.selected_rectangle_index is not None:
             a = self.areas[self.selected_rectangle_index]
-            self.areas[self.selected_rectangle_index] = AreaSpec(title=title, rect=a.rect)
-            print(f"Title '{title}' set for rectangle at Index: {self.selected_rectangle_index}")
-
-            # Update the Treeview to reflect the new title
+            coords = self._area_coords(a)
+            # always store back as GUI dict for consistency
+            self.areas[self.selected_rectangle_index] = {
+                "title": title,
+                "coordinates": list(coords)
+            }
             self.parent.update_areas_treeview()
         else:
             print("No rectangle selected. Title not set.")
