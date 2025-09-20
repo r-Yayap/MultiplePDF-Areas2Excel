@@ -176,12 +176,12 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                             if not text_area.strip():
                                 text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
                         elif ocr_mode == "OCR-All":
-                            text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
+                            text_area = ocr.ocr_clip_to_text(page, raw, dpi, scale)
                         elif ocr_mode == "Text1st+Image-beta":
                             text_area = pdf.get_text(page, clip)
                             # save image regardless
                             try:
-                                pix = pdf.render_pixmap(page, clip, dpi=dpi, scale=scale)
+                                pix = pdf.render_pixmap(page, raw, dpi=dpi, scale=scale)
                                 out_img = temp_dir / f"{pdf_path.name}_page{page_no + 1}_area{idx}.png"
                                 pix.save(str(out_img))
                                 try:
