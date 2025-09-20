@@ -65,7 +65,6 @@ def _sanitize_clip(clip: tuple, page_rect: tuple[float, float, float, float]) ->
     except Exception:
         return None
 
-
 def _rel_folder(pdf_path: Path, root: Path) -> str:
     try:
         return os.path.relpath(pdf_path.parent, root)
@@ -97,12 +96,7 @@ def _prepare_headers(areas: Iterable[AreaSpec]) -> Tuple[list[str], dict]:
         unique[i] = u
     return headers, unique
 
-def _write_temp_csv(
-    csv_path: Path,
-    ndjson_path: Optional[Path],
-    rows: Iterable[list],
-    write_revisions: bool
-):
+def _write_temp_csv(csv_path: Path, ndjson_path: Optional[Path], rows: Iterable[list], write_revisions: bool):
     with open(csv_path, "w", newline="", encoding="utf-8") as cf:
         w = csv.writer(cf)
         # header row for combined step (matches extractor.py combine)
@@ -120,8 +114,6 @@ def _write_temp_csv(
                 except Exception:
                     revs = []
                 jf.write(json.dumps({"unid": unid, "revisions": revs}, ensure_ascii=False) + "\n")
-
-
 
 def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: str) -> int:
     pdf = PdfAdapter()
@@ -160,54 +152,68 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
 
                 # ---- areas ----
                 area_texts: list[str] = []
-                area_texts: list[str] = []
                 for idx, raw in enumerate(areas_rects):
-                    # rotate to page basis (same as your old extractor)
+                    # Text should use rotation-adjusted rect
                     adj = adjust_coordinates_for_rotation(raw, rotation, ph, pw)
-                    clip = _sanitize_clip(adj, pr)
-                    if clip is None:
-                        area_texts.append("")
-                        continue
+
+                    pr = tuple(pdf.page_rect(page))
+                    clip_text = _sanitize_clip(adj, pr)  # for get_text
+                    clip_img = _sanitize_clip(raw, pr)  # for pixmap & OCR (raw like legacy)
 
                     text_area = ""
                     try:
                         if ocr_mode == "Default":
-                            text_area = pdf.get_text(page, clip)
-                            if not text_area.strip():
-                                text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
+                            if clip_text:
+                                text_area = pdf.get_text(page, clip_text)
+                            if (not text_area.strip()) and clip_img:
+                                # OCR on the image crop (raw coords)
+                                text_area = ocr.ocr_clip_to_text(page, clip_img, dpi, scale)
+
                         elif ocr_mode == "OCR-All":
-                            text_area = ocr.ocr_clip_to_text(page, raw, dpi, scale)
+                            if clip_img:
+                                text_area = ocr.ocr_clip_to_text(page, clip_img, dpi, scale)
+                            else:
+                                text_area = ""
+
                         elif ocr_mode == "Text1st+Image-beta":
-                            text_area = pdf.get_text(page, clip)
-                            # save image regardless
-                            try:
-                                pix = pdf.render_pixmap(page, raw, dpi=dpi, scale=scale)
-                                out_img = temp_dir / f"{pdf_path.name}_page{page_no + 1}_area{idx}.png"
-                                pix.save(str(out_img))
+                            # 1) text first with adjusted rect
+                            if clip_text:
+                                text_area = pdf.get_text(page, clip_text)
+
+                            # 2) always save image using the raw rect (visual orientation)
+                            if clip_img:
                                 try:
-                                    del pix
-                                except Exception:
-                                    pass
+                                    pix = pdf.render_pixmap(page, clip_img, dpi=dpi, scale=scale)
+                                    out_img = temp_dir / f"{pdf_path.name}_page{page_no + 1}_area{idx}.png"
+                                    pix.save(str(out_img))
+                                finally:
+                                    try:
+                                        del pix
+                                    except:
+                                        pass
+                                    gc.collect()
                                 # 30MB guard
                                 try:
                                     if out_img.stat().st_size > 30 * 1024 * 1024:
                                         out_img.unlink(missing_ok=True)
                                 except Exception:
                                     pass
-                            except Exception:
-                                pass
-                            if not text_area.strip():
+
+                            # 3) OCR fallback on the same image crop (raw rect)
+                            if (not text_area.strip()) and clip_img:
                                 try:
-                                    text_area = ocr.ocr_clip_to_text(page, clip, dpi, scale)
+                                    text_area = ocr.ocr_clip_to_text(page, clip_img, dpi, scale)
                                 except Exception:
                                     text_area = "OCR_ERROR"
+
                         else:
-                            text_area = pdf.get_text(page, clip)
+                            # Fallback mode: plain text with adjusted rect
+                            if clip_text:
+                                text_area = pdf.get_text(page, clip_text)
                     except Exception:
                         text_area = ""
 
                     area_texts.append(_clean_text(text_area) if text_area.strip() else "")
-
                 # ---- revision table ----
                 revisions = []
                 if revision_rect:
@@ -296,12 +302,7 @@ class ExtractionService:
     def __init__(self):
         self.pdf = PdfAdapter()
 
-    def extract(
-            self,
-            req: ExtractionRequest,
-            on_progress: Optional[Callable[[int, int], None]] = None,
-            should_cancel: Optional[Callable[[], bool]] = None,
-    ) -> Path:
+    def extract(self, req: ExtractionRequest, on_progress: Optional[Callable[[int, int], None]] = None, should_cancel: Optional[Callable[[], bool]] = None,) -> Path:
         # temp dir under app folder (secure random suffix)
         app_dir = Path(getattr(__import__("sys"), "executable", __file__)).parent \
             if getattr(__import__("sys"), "frozen", False) else Path(__file__).parent

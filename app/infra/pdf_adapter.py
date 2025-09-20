@@ -19,6 +19,16 @@ class PdfAdapter:
         with fitz.open(str(path)) as doc:
             return doc.page_count
 
+    def render_pixmap(self, page: "fitz.Page", clip: RectT, dpi: int = 150, scale: Optional[float] = None):
+        r = _safe_clip(page, clip)
+        if r is None:
+            raise ValueError("Empty/invalid clip for pixmap")
+        if scale is not None:
+            mat = fitz.Matrix(scale, scale)
+            return page.get_pixmap(matrix=mat, clip=r)
+        return page.get_pixmap(clip=r, dpi=dpi)
+
+
     @contextmanager
     def open(self, path: str | Path):
         doc = fitz.open(str(path), filetype="pdf")
