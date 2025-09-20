@@ -16,12 +16,28 @@ from utils import find_tessdata
 from utils import REVISION_PATTERNS
 from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
-from tkinterdnd2 import TkinterDnD, DND_ALL
 
 from PIL import Image, ImageTk  # Make sure this is at the top
 import sys
 
 from pathlib import Path
+
+# DnD (safe import)
+try:
+    from tkinterdnd2 import TkinterDnD, DND_ALL
+    DND_ENABLED = True
+except Exception as e:
+    print("tkdnd not available, drag & drop disabled:", e)
+    TkinterDnD = None
+    DND_ALL = None
+    DND_ENABLED = False
+
+class CTkDnD(ctk.CTk, *( (TkinterDnD.DnDWrapper,) if DND_ENABLED else tuple() )):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if DND_ENABLED:
+            self.TkdndVersion = TkinterDnD._require(self)
+
 
 def resource_path(rel: str) -> str:
     """
@@ -41,14 +57,15 @@ def resource_path(rel: str) -> str:
     return str(base_dir / rel)
 
 
-class CTkDnD(ctk.CTk, TkinterDnD.DnDWrapper):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.TkdndVersion = TkinterDnD._require(self)
 
 class XtractorGUI:
     def __init__(self, root):
         self.root = root
+
+        # compute UI scale from Tk (dpi-aware thanks to main.py)
+        self._ui_scale = float(self.root.tk.call('tk', 'scaling')) / (96 / 72)  # = 1.0 at 96 DPI
+        def px(v: float) -> int: return int(round(v * self._ui_scale))
+        self._px = px
 
         self.pdf_viewer = PDFViewer(self, self.root)  # Pass GUI instance and root window
 
@@ -252,7 +269,7 @@ class XtractorGUI:
         self.zoom_frame = ctk.CTkFrame(self.root, fg_color="transparent")
         self.zoom_out_label = ctk.CTkLabel(self.zoom_frame, text="➖", font=(BUTTON_FONT, 10))
         self.zoom_slider = ctk.CTkSlider(self.zoom_frame, from_=0.1, to=4, variable=self.zoom_var,
-                                         command=self.update_zoom, width=170, height=8)
+                                         command=self.update_zoom, width=self._px(170), height=self._px(8))
         self.zoom_in_label = ctk.CTkLabel(self.zoom_frame, text="➕", font=(BUTTON_FONT, 10))
 
         self.zoom_out_label.pack(side="left", padx=(5, 2))
@@ -267,8 +284,8 @@ class XtractorGUI:
             font=(BUTTON_FONT, 12, "bold"),
             text_color="lightblue",
             cursor="hand2",
-            width=24,
-            height=24
+            width=self._px(24),
+            height=self._px(24)
         )
         self.recent_pdf_button.pack(pady=2)
         self.recent_pdf_button.bind("<Button-1>", lambda e: self.open_recent_pdf())
@@ -279,8 +296,8 @@ class XtractorGUI:
             font=(BUTTON_FONT, 10, "bold"),
             text_color="red",
             cursor="hand2",
-            width=24,
-            height=24
+            width=self._px(24),
+            height=self._px(24)
         )
         self.close_pdf_button.pack(pady=2)
         self.close_pdf_button.bind("<Button-1>", lambda e: self.close_pdf())
@@ -300,8 +317,12 @@ class XtractorGUI:
                                                fg_color="transparent", border_width=2, width=240, height=80,
                                                hover_color="#444", text_color="white")
         self.pdf_folder_button.pack(pady=(10, 5))
-        self.pdf_folder_button.drop_target_register(DND_ALL)
-        self.pdf_folder_button.dnd_bind('<<Drop>>', self.drop_pdf_folder)
+        if DND_ENABLED:
+            try:
+                self.pdf_folder_button.drop_target_register(DND_ALL)
+                self.pdf_folder_button.dnd_bind('<<Drop>>', self.drop_pdf_folder)
+            except Exception as e:
+                print("Could not enable DnD on pdf_folder_button:", e)
 
         self.pdf_folder_entry = ctk.CTkEntry(self.root, width=240, height=24, font=(BUTTON_FONT, 9),
                                              placeholder_text="Select Folder with PDFs", border_width=1,
@@ -673,24 +694,23 @@ class XtractorGUI:
         as the PDF canvas.  Because the canvas is already placed with
         resize_canvas(), this avoids guessing sidebar/border widths.
         """
-        self.root.update_idletasks()  # make sure coordinates are current
-
-        canvas_x = self.pdf_viewer.canvas.winfo_x()  # ← true viewer start
+        self.root.update_idletasks()
+        canvas_x = self.pdf_viewer.canvas.winfo_x()
         win_h = self.root.winfo_height()
-        gap = 4  # visual gap from sidebar
+        gap = self._px(4)
+        y_top = self._px(23)
+        y_zoom = win_h - self._px(57)
 
-        self.recent_pdf_button.place(x=canvas_x + gap, y=23)
-        self.close_pdf_button.place(x=canvas_x + gap + 30, y=23)
-        self.zoom_frame.place(x=canvas_x + gap, y=win_h - 57)
+        self.recent_pdf_button.place(x=canvas_x + gap, y=y_top)
+        self.close_pdf_button.place(x=canvas_x + gap + self._px(30), y=y_top)
+        self.zoom_frame.place(x=canvas_x + gap, y=y_zoom)
 
     def place_zoom_and_version_controls(self):
-        sidebar_width = self.tab_view.winfo_width() + 20
+        sidebar_width = self.tab_view.winfo_width() + self._px(20)
         window_height = self.root.winfo_height()
-
-        self.zoom_frame.place(x=sidebar_width + 0, y=window_height - 57)
-        # Place recent + close buttons at top-right
-        self.recent_pdf_button.place(x=sidebar_width + 0, y=23)
-        self.close_pdf_button.place(x=sidebar_width + 30, y=23)
+        self.zoom_frame.place(x=sidebar_width + 0, y=window_height - self._px(57))
+        self.recent_pdf_button.place(x=sidebar_width + 0, y=self._px(23))
+        self.close_pdf_button.place(x=sidebar_width + self._px(30), y=self._px(23))
 
     def setup_bindings(self):
         self.pdf_folder_entry.bind("<KeyRelease>", self.update_pdf_folder)

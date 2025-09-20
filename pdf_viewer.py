@@ -3,16 +3,27 @@
 import pymupdf as fitz
 import customtkinter as ctk
 import tkinter as tk
+import os
+
 from tkinter import Menu
 from constants import *
 from tkinter.simpledialog import askstring  # For custom title input
-from tkinterdnd2 import DND_ALL
-import os
+
+
+
 
 class PDFViewer:
     def __init__(self, parent, master):
         self.parent = parent  # `parent` is the XtractorGUI instance
         self.canvas = ctk.CTkCanvas(master, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
+
+        # UI scaling factor from Tk (works with your main.py DPI setup)
+        self._ui_scale = float(self.canvas.tk.call('tk', 'scaling')) / (96 / 72)  # == 1.0 at 96 DPI
+        def px(v: float) -> int:
+            return int(round(v * self._ui_scale))
+        self._px = px
+        # per-viewer scroll throttle (avoid mutable global)
+        self._scroll_counter = 0
 
         # Add placeholder text
         self.placeholder_text_id = None
@@ -85,10 +96,20 @@ class PDFViewer:
         self.selection_mode = "area"  # Options: "area" or "revision"
         self.revision_area = None  # Holds single revision table rectangle
         self.revision_rectangle_id = None
-        self.selection_mode = "area"  # Can be "area" or "revision"
 
-        self.canvas.drop_target_register(DND_ALL)
-        self.canvas.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+        # Linux/X11 wheel
+        self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))
+        self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
+
+        # at the end of __init__ (instead of the unconditional calls)
+        try:
+            from tkinterdnd2 import DND_ALL
+            self.canvas.drop_target_register(DND_ALL)
+            self.canvas.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+        except Exception as e:
+            print("Drag & Drop disabled (tkdnd not available):", e)
+
+
 
     def show_placeholder(self):
         """Displays the drag & drop hint centered in the canvas."""
@@ -97,7 +118,7 @@ class PDFViewer:
 
         # Fallback if size is not yet available (initial state)
         if canvas_width <= 1 or canvas_height <= 1:
-            canvas_width = CANVAS_WIDTH - 200
+            canvas_width = CANVAS_WIDTH - self._px(200)  # was 200
             canvas_height = CANVAS_HEIGHT
 
         if self.placeholder_text_id:
@@ -108,7 +129,7 @@ class PDFViewer:
             canvas_height // 2,
             text="DRAG & DROP\nSample PDF here",
             fill="gray70",
-            font=("Arial", 20, "italic"),
+            font=("Arial", self._px(20), "italic"),
             anchor="center"
         )
 
@@ -193,45 +214,28 @@ class PDFViewer:
             print("Error: PDF has no pages.")
 
     def update_display(self):
-        """Updates the canvas to display the current PDF page with zoom and scroll configurations."""
-
-        # Only proceed if a valid page is loaded
         if not self.page:
             print("Error updating display: No valid page loaded.")
             return
-
-        # Check if there is a valid PDF page to display
-        if self.page is None:
-            print("No valid page to display.")
-            return
-
         try:
-            # Clear any existing content on the canvas
             self.canvas.delete("all")
+            # ensure we’re using current widget size
+            self.canvas.config(width=self.canvas.winfo_width(), height=self.canvas.winfo_height())
 
-            # Generate a pixmap from the PDF page at the current zoom level
             pix = self.page.get_pixmap(matrix=fitz.Matrix(self.current_zoom, self.current_zoom))
             img = pix.tobytes("ppm")
             img_tk = tk.PhotoImage(data=img)
-
-            # Display the updated image on the canvas
             self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
-
-            # Keep a reference to the image to prevent garbage collection
             self.canvas_image = img_tk
 
-            # Calculate the zoomed dimensions
             zoomed_width = int(self.pdf_width * self.current_zoom)
             zoomed_height = int(self.pdf_height * self.current_zoom)
-
-            # Configure the scroll region of the canvas to match the zoomed dimensions
-            self.canvas.config(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set,
+            self.canvas.config(yscrollcommand=self.v_scrollbar.set,
+                               xscrollcommand=self.h_scrollbar.set,
                                scrollregion=(0, 0, zoomed_width, zoomed_height))
-
         except ValueError as e:
             print(f"Error updating display: {e}")
 
-        # Update any rectangle overlays or additional graphics
         self.update_rectangles()
 
     def start_rectangle(self, event):
@@ -284,28 +288,23 @@ class PDFViewer:
 
         self.current_rectangle = None
 
-
     def auto_scroll_canvas(self, x, y):
-        """Auto-scrolls the canvas if the mouse is near the edges during a drag operation."""
-        global scroll_counter
-        scroll_margin = 20  # Distance from the canvas edge to start scrolling
+        """Auto-scroll while dragging near edges; throttled and DPI-aware."""
+        margin = self._px(SCROLL_MARGIN)  # from constants.py
+        # throttle
+        if self._scroll_counter < SCROLL_INCREMENT_THRESHOLD:
+            self._scroll_counter += 1
+            return
+        self._scroll_counter = 0
 
-        # Only scroll every SCROLL_INCREMENT_THRESHOLD calls
-        if scroll_counter < SCROLL_INCREMENT_THRESHOLD:
-            scroll_counter += 1
-            return  # Skip scrolling this call
-
-        scroll_counter = 0  # Reset counter after threshold is reached
-
-        # Check if the mouse is close to the edges and scroll in small increments
-        if x >= self.canvas.winfo_width() - scroll_margin:
+        if x >= self.canvas.winfo_width() - margin:
             self.canvas.xview_scroll(1, "units")
-        elif x <= scroll_margin:
+        elif x <= margin:
             self.canvas.xview_scroll(-1, "units")
 
-        if y >= self.canvas.winfo_height() - scroll_margin:
+        if y >= self.canvas.winfo_height() - margin:
             self.canvas.yview_scroll(1, "units")
-        elif y <= scroll_margin:
+        elif y <= margin:
             self.canvas.yview_scroll(-1, "units")
 
     def clear_areas(self):
@@ -361,33 +360,32 @@ class PDFViewer:
         self.update_display()  # Refresh the display with the new zoom level
 
     def resize_canvas(self, total_width, total_height, x_offset=0):
-        """Resizes canvas and scrollbars based on available space, respecting left offset."""
+        """Resizes canvas and scrollbars based on available space (DIP→px)."""
+        x_off = self._px(x_offset)
+        extra = self._px(CANVAS_EXTRA_MARGIN)
+        top = self._px(CANVAS_TOP_MARGIN)
+        bot = self._px(CANVAS_BOTTOM_MARGIN)
+        sb_th = self._px(SCROLLBAR_THICKNESS)
 
-        # Reserve space for margins and scrollbars
-        canvas_margin = 20
-        scrollbar_thickness = 14
+        # ensure minimum visible area also scales
+        min_w = self._px(200)
+        min_h = self._px(200)
 
-        # Dynamically calculate canvas size
-        canvas_width = max(200, total_width - x_offset - CANVAS_EXTRA_MARGIN - SCROLLBAR_THICKNESS)
-        canvas_height = max(200, total_height - CANVAS_TOP_MARGIN - CANVAS_BOTTOM_MARGIN)
+        canvas_width = max(min_w, total_width - x_off - extra - sb_th)
+        canvas_height = max(min_h, total_height - top - bot)
 
-        # Reposition and resize canvas
-        self.canvas.place_configure(x=x_offset, y=CANVAS_TOP_MARGIN)
+        # position + size
+        self.canvas.place_configure(x=x_off, y=top)
         self.canvas.config(width=canvas_width, height=canvas_height)
 
-        # Reposition and resize scrollbars
-        self.v_scrollbar.place_configure(x=x_offset + canvas_width  +4, y=CANVAS_TOP_MARGIN)
+        # vertical scrollbar
+        self.v_scrollbar.place_configure(x=x_off + canvas_width + self._px(4), y=top)
         self.v_scrollbar.configure(height=canvas_height)
 
-        self.h_scrollbar.place_configure(x=x_offset, y=CANVAS_TOP_MARGIN + canvas_height + 7)
+        # horizontal scrollbar
+        self.h_scrollbar.place_configure(x=x_off, y=top + canvas_height + self._px(7))
         self.h_scrollbar.configure(width=canvas_width)
 
-        # Scale canvas contents
-        if self.canvas.find_all():
-            scale_x = canvas_width / CANVAS_WIDTH
-            scale_y = canvas_height / CANVAS_HEIGHT
-            self.canvas.scale("all", 0, 0, scale_x, scale_y)
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
         if self.pdf_document is None:
             self.show_placeholder()
@@ -405,7 +403,7 @@ class PDFViewer:
     def show_context_menu(self, event):
         """Displays context menu and highlights the rectangle if right-click occurs near the edge."""
         x, y = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
-        edge_tolerance = 5  # Set the edge tolerance for detecting clicks near the boundary
+        edge_tolerance = self._px(5)  # Set the edge tolerance for detecting clicks near the boundary
 
         # Clear previous selection if any
         self.clear_selection()
@@ -476,7 +474,6 @@ class PDFViewer:
                 del self.areas[index]
 
                 # Update the Treeview and clear selection
-                self.parent.update_areas_treeview()
                 self.selected_rectangle_id = None
                 print("Rectangle deleted.")
 
