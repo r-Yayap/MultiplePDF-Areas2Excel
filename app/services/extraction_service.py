@@ -297,14 +297,14 @@ class ExtractionService:
         self.pdf = PdfAdapter()
 
     def extract(
-        self,
-        req: ExtractionRequest,
-        on_progress: Optional[Callable[[int, int], None]] = None,
-        should_cancel: Optional[Callable[[], bool]] = None,
+            self,
+            req: ExtractionRequest,
+            on_progress: Optional[Callable[[int, int], None]] = None,
+            should_cancel: Optional[Callable[[], bool]] = None,
     ) -> Path:
         # temp dir under app folder (secure random suffix)
         app_dir = Path(getattr(__import__("sys"), "executable", __file__)).parent \
-                  if getattr(__import__("sys"), "frozen", False) else Path(__file__).parent
+            if getattr(__import__("sys"), "frozen", False) else Path(__file__).parent
         base_temp = app_dir / "temp"
         base_temp.mkdir(exist_ok=True)
         temp_dir = base_temp / secrets.token_hex(8)
@@ -329,8 +329,8 @@ class ExtractionService:
         rev_area_rect = tuple(req.revision_area.rect) if req.revision_area else None
 
         req_dict = {
-            "areas_rects": areas_rects,  # list[tuple[4 floats]]
-            "rev_area_rect": rev_area_rect,  # tuple[4] or None
+            "areas_rects": areas_rects,
+            "rev_area_rect": rev_area_rect,
             "rev_regex": str(req.revision_regex),
             "ocr_mode": req.ocr.mode,
             "ocr_dpi": req.ocr.dpi,
@@ -340,46 +340,72 @@ class ExtractionService:
                 req.pdf_paths[0].parent if req.pdf_paths else Path.cwd()),
         }
 
-        # Process files (you can swap to multiprocessing.Pool if you want parallelism now)
         import multiprocessing as mp
         ctx = mp.get_context("spawn")
 
         rev_mode = req.revision_area is not None
-        # Cap procs for rev mode; table-detection is memory-hungry.
-        procs = max(1, min(mp.cpu_count() - 2, mp.cpu_count() - 4 if rev_mode else mp.cpu_count() - 2))
 
-        maxtasks = 5 if rev_mode else 25
-        print(maxtasks)
-        jobs = []
-        for i, p in enumerate(pdf_paths):
-            jobs.append((p, req_dict, temp_dir, str(10000 + i)))
+        # Pool sizing & worker lifetime
+        if rev_mode:
+            procs = max(1, os.cpu_count() - 2)  # conservative in rev mode
+            maxtasks = 1  # each worker handles 1 PDF then dies (kills leaks)
+        else:
+            procs = max(1, os.cpu_count())
+            maxtasks = 25
 
-        errors = []
+        # Batch size (override with env PDF_BATCH_SIZE)
+        batch_size = int(os.getenv("PDF_BATCH_SIZE", "30"))
 
-        with ctx.Pool(processes=procs, maxtasksperchild=maxtasks) as pool:
+        # Build jobs once
+        jobs = [(p, req_dict, temp_dir, str(10000 + i)) for i, p in enumerate(pdf_paths)]
+        errors: list[str] = []
+
+        # Helper: chunk jobs
+        def _chunked(seq, n):
+            for i in range(0, len(seq), n):
+                yield seq[i:i + n]
+
+        cancelled = False
+
+        # ---- run batches ----
+        for bidx, batch in enumerate(_chunked(jobs, batch_size), 1):
+            if cancelled:
+                break
+
+            with ctx.Pool(processes=procs, maxtasksperchild=maxtasks) as pool:
+                try:
+                    for res in pool.imap_unordered(_process_single_pdf_star, batch, chunksize=1):
+                        if should_cancel and should_cancel():
+                            cancelled = True
+                            pool.terminate()
+                            break
+
+                        if not res.get("ok"):
+                            errors.append(res.get("error", "Unknown worker error"))
+                            continue
+
+                        processed += res["pages"]
+                        if on_progress:
+                            on_progress(processed, total_pages)
+                finally:
+                    try:
+                        pool.close()
+                    except Exception:
+                        pass
+                    try:
+                        pool.join()
+                    except Exception:
+                        pass
+
+            # Hard memory reset between batches
             try:
-                for res in pool.imap_unordered(_process_single_pdf_star, jobs, chunksize=1):
-                    if should_cancel and should_cancel():
-                        pool.terminate()
-                        break
-
-                    if not res.get("ok"):
-                        errors.append(res.get("error", "Unknown worker error"))
-                        # keep going; or terminate if you prefer a hard stop
-                        continue
-
-                    processed += res["pages"]
-                    if on_progress:
-                        on_progress(processed, total_pages)
-            finally:
-                try:
-                    pool.close()
-                except Exception:
-                    pass
-                try:
-                    pool.join()
-                except Exception:
-                    pass
+                fitz.TOOLS.store_shrink(100)  # trim MuPDF global store
+            except Exception:
+                pass
+            try:
+                gc.collect()  # free Python objects
+            except Exception:
+                pass
 
         # combine temp CSVs (and NDJSON)
         combined_csv = temp_dir / "streamed_output.csv"
