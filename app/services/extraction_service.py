@@ -12,14 +12,18 @@ from app.services.revision_parser import RevisionParser
 from app.infra.excel_writer import write_from_csv, copy_ndjson
 from utils import adjust_coordinates_for_rotation
 
+import pymupdf as fitz
+
 # ===== Helpers (kept top-level for Windows pickling) =====
 
 def _open_temp_writers(temp_dir: Path, unid_prefix: str, with_revisions: bool):
     csv_path = temp_dir / f"temp_{unid_prefix}.csv"
     csv_f = open(csv_path, "w", newline="", encoding="utf-8")
     csv_w = csv.writer(csv_f)
-    ndjson_f = open(temp_dir / f"temp_{unid_prefix}.ndjson", "w", encoding="utf-8") if with_revisions else None
+    # line-buffered text file (buffering=1) so it flushes per newline
+    ndjson_f = open(temp_dir / f"temp_{unid_prefix}.ndjson", "w", encoding="utf-8", buffering=1) if with_revisions else None
     return csv_w, csv_f, ndjson_f
+
 
 def _process_single_pdf_star(args):
     """
@@ -208,22 +212,26 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                 revisions = []
                 if revision_rect:
                     try:
-                        # normalize rotation (like your old extractor)
-                        try:
-                            pdf.remove_rotation(page)
-                        except Exception:
-                            pass
-
+                        # do NOT call page.remove_rotation(); rotate the rect instead
                         pr2 = tuple(pdf.page_rect(page))
-                        rclip = _sanitize_clip(revision_rect, pr2)
+                        pw2, ph2 = (pr2[2] - pr2[0], pr2[3] - pr2[1])
+                        rotation = getattr(page, "rotation", 0)
+                        adj_rev = adjust_coordinates_for_rotation(revision_rect, rotation, ph2, pw2)
+                        rclip = _sanitize_clip(adj_rev, pr2)
                         if rclip:
                             wc = pdf.words_count(page, rclip)
                             if wc < 0 or wc >= 6:
                                 rows = pdf.find_table_rows(page, rclip)
                                 if rows:
                                     revisions = parser.parse_table_rows(rows)
+                                # free big locals
+                                try:
+                                    del rows
+                                except Exception:
+                                    pass
                     except Exception:
                         revisions = []
+
                 # ---- final row (write immediately) ----
                 folder = _rel_folder(pdf_path, pdf_root)
                 filename = pdf_path.name
@@ -247,8 +255,8 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
 
                 pages_written += 1
 
-                # periodic flush + GC keeps memory flat for huge PDFs
-                if (page_no + 1) % 5 == 0:
+                # periodic flush + GC + store shrink keeps memory flat
+                if (page_no + 1) % 10 == 0:
                     try:
                         csv_f.flush()
                         if ndjson_f: ndjson_f.flush()
@@ -256,11 +264,12 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                         pass
                     import gc as _gc
                     _gc.collect()
+                    try:
+                        import pymupdf as fitz
+                        fitz.TOOLS.store_shrink(100)
+                    except Exception:
+                        pass
 
-                try:
-                    del page
-                except Exception:
-                    pass
 
     finally:
         try:
@@ -272,6 +281,8 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                 ndjson_f.close()
             except Exception:
                 pass
+
+
 
     return pages_written if pages_written > 0 else 1
 
@@ -332,14 +343,20 @@ class ExtractionService:
         # Process files (you can swap to multiprocessing.Pool if you want parallelism now)
         import multiprocessing as mp
         ctx = mp.get_context("spawn")
-        procs = max(1, mp.cpu_count() - 2)
+
+        rev_mode = req.revision_area is not None
+        # Cap procs for rev mode; table-detection is memory-hungry.
+        procs = max(1, min(mp.cpu_count() - 2, mp.cpu_count() - 4 if rev_mode else mp.cpu_count() - 2))
+
+        maxtasks = 5 if rev_mode else 25
+        print(maxtasks)
         jobs = []
         for i, p in enumerate(pdf_paths):
             jobs.append((p, req_dict, temp_dir, str(10000 + i)))
 
         errors = []
 
-        with ctx.Pool(processes=procs, maxtasksperchild=25) as pool:
+        with ctx.Pool(processes=procs, maxtasksperchild=maxtasks) as pool:
             try:
                 for res in pool.imap_unordered(_process_single_pdf_star, jobs, chunksize=1):
                     if should_cancel and should_cancel():
