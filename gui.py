@@ -1,28 +1,26 @@
 # gui.py
-import multiprocessing
 import os
 import re
 import time
 import customtkinter as ctk
 import sys
 from tkinter import filedialog, messagebox, StringVar
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 from constants import *
 from customtkinter import CTkImage
 from typing import Any
-from pdf_viewer import PDFViewer
 from utils import create_tooltip, EditableTreeview
 from utils import find_tessdata
 from utils import REVISION_PATTERNS
 from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
-from PIL import Image, ImageTk  # Make sure this is at the top
+from PIL import Image  # Make sure this is at the top
 
-from app.domain.models import AreaSpec, OcrSettings, ExtractionRequest
+from app.ui.pdf_viewer import PDFViewer
+from app.domain.models import OcrSettings, ExtractionRequest
 from app.controllers.extract_controller import ExtractController
 from pathlib import Path
 
-import logging
 from app.logging_setup import configure_logging
 logger = configure_logging()
 
@@ -234,7 +232,7 @@ class XtractorGUI:
                 if None in (x0, y0, x1, y1):
                     continue
                 areas.append({"title": title or "Area", "coordinates": [float(x0), float(y0), float(x1), float(y1)]})
-            self.pdf_viewer.areas = areas
+            self.pdf_viewer.set_gui_areas(areas)
 
             # Revision area (optional)
             self.pdf_viewer.revision_area = None
@@ -244,14 +242,12 @@ class XtractorGUI:
                     title, x0, y0, x1, y1 = row
                     if None in (x0, y0, x1, y1):
                         continue
-                    self.pdf_viewer.revision_area = {
-                        "title": title or "Revision",
+                    self.pdf_viewer.set_gui_revision_area({
+                        "title": title or "Revision Table",
                         "coordinates": [float(x0), float(y0), float(x1), float(y1)]
-                    }
+                    })
                     break
 
-            self.pdf_viewer.update_rectangles()
-            self.update_areas_treeview()
             print(f"✅ Imported areas from dropped Excel file: {file_path}")
 
         except Exception as e:
@@ -259,10 +255,11 @@ class XtractorGUI:
 
     def clear_all_areas(self):
         """Clears all areas and updates the display."""
-        self.pdf_viewer.clear_areas()  # Clear area rectangles
-        self.pdf_viewer.revision_area = None  # ✅ Clear revision area rectangle
-        self.areas_tree.delete(*self.areas_tree.get_children())  # Clear all entries in the Treeview
-        self.pdf_viewer.update_rectangles()  # ✅ Ensure canvas refresh reflects the change
+        self.pdf_viewer.clear_areas()
+        self.pdf_viewer.set_gui_revision_area(None)  # also clears the green rectangle
+        # Tree refresh is triggered by update_rectangles() inside clear/set,
+        # but keeping the Treeview wipe is harmless:
+        self.areas_tree.delete(*self.areas_tree.get_children())
         print("All areas and revision table cleared.")
 
     def update_areas_treeview(self):
@@ -301,19 +298,10 @@ class XtractorGUI:
             index = self.treeview_item_ids.get(selected_item[0])
             if index is not None:
                 # Remove the rectangle from the canvas
-                rectangle_id = self.pdf_viewer.rectangle_list[index]
-                self.pdf_viewer.canvas.delete(rectangle_id)
-                # Remove the area from PDFViewer's areas and rectangle_list
-                del self.pdf_viewer.areas[index]
-                del self.pdf_viewer.rectangle_list[index]
-
-                # Remove the item from Treeview
+                del self.pdf_viewer.areas[index]  # areas are GUI dicts
+                self.pdf_viewer.update_rectangles()  # rebuilds rectangle_list from areas
                 self.areas_tree.delete(selected_item[0])
-
-                # Update Treeview and canvas display
                 self.update_areas_treeview()
-                self.pdf_viewer.update_rectangles()
-
                 print("Removed rectangle at index", index)
 
     def setup_widgets(self):
@@ -714,22 +702,15 @@ class XtractorGUI:
 
     def clear_extraction_areas(self):
         """Clears only extraction areas, leaving the revision area untouched."""
-        self.pdf_viewer.areas.clear()
-        for rect_id in self.pdf_viewer.rectangle_list:
-            self.pdf_viewer.canvas.delete(rect_id)
-        self.pdf_viewer.rectangle_list.clear()
-        self.update_areas_treeview()
-        self.pdf_viewer.update_rectangles()
+        self.pdf_viewer.set_gui_areas([])
+        self.update_areas_treeview()  # optional; viewer already redraws
         print("Cleared only extraction areas.")
 
     def clear_revision_area(self):
         """Clears only the revision area, leaving extraction areas untouched."""
-        if self.pdf_viewer.revision_rectangle_id:
-            self.pdf_viewer.canvas.delete(self.pdf_viewer.revision_rectangle_id)
-        self.pdf_viewer.revision_rectangle_id = None
-        self.pdf_viewer.revision_area = None
-        self.pdf_viewer.update_rectangles()
+        self.pdf_viewer.set_gui_revision_area(None)
         print("Cleared only revision table area.")
+
 
     def show_revision_help(self):
         window = ctk.CTkToplevel(self.root)
@@ -1108,7 +1089,7 @@ class XtractorGUI:
 
         # Build areas list for the request (tolerate dict or AreaSpec)
         areas_spec = []
-        for a in self.pdf_viewer.areas:
+        for a in self.pdf_viewer.get_gui_areas():
             try:
                 from app.domain.models import AreaSpec
                 if isinstance(a, AreaSpec):

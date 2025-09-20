@@ -9,7 +9,6 @@ from tkinter import Menu
 from constants import *
 from tkinter.simpledialog import askstring  # For custom title input
 
-from app.domain.models import AreaSpec
 
 
 class PDFViewer:
@@ -109,7 +108,45 @@ class PDFViewer:
         except Exception as e:
             print("Drag & Drop disabled (tkdnd not available):", e)
 
-    # inside class PDFViewer:
+    # --- public UI API (small, explicit) ---
+
+    def get_gui_areas(self):
+        """Return GUI dict areas: [{'title':..., 'coordinates':[x0,y0,x1,y1]}, ...]."""
+        return list(self.areas)
+
+    def set_gui_areas(self, areas):
+        """Replace areas with GUI dicts and redraw."""
+        # light validation
+        cleaned = []
+        for a in areas or []:
+            t = (a.get("title") if isinstance(a, dict) else None) or "Area"
+            c = (a.get("coordinates") if isinstance(a, dict) else None)
+            if not (isinstance(c, (list, tuple)) and len(c) == 4):
+                continue
+            x0, y0, x1, y1 = map(float, c)
+            # normalize
+            if x1 < x0: x0, x1 = x1, x0
+            if y1 < y0: y0, y1 = y1, y0
+            cleaned.append({"title": t, "coordinates": [x0, y0, x1, y1]})
+        self.areas = cleaned
+        self.update_rectangles()
+
+    def get_gui_revision_area(self):
+        """Return {'title':..., 'coordinates':[...]} or None."""
+        return dict(self.revision_area) if self.revision_area else None
+
+    def set_gui_revision_area(self, rev):
+        """Set revision area from a GUI dict (or None)."""
+        self.revision_area = None
+        if isinstance(rev, dict):
+            c = rev.get("coordinates")
+            if isinstance(c, (list, tuple)) and len(c) == 4:
+                x0, y0, x1, y1 = map(float, c)
+                if x1 < x0: x0, x1 = x1, x0
+                if y1 < y0: y0, y1 = y1, y0
+                self.revision_area = {"title": rev.get("title") or "Revision Table",
+                                      "coordinates": [x0, y0, x1, y1]}
+        self.update_rectangles()
 
     def _area_coords(self, a):
         # Accept AreaSpec or GUI dict
@@ -292,6 +329,10 @@ class PDFViewer:
                 return
 
             x0, y0, x1, y1 = bbox
+            # normalize so x0<x1, y0<y1
+            if x1 < x0: x0, x1 = x1, x0
+            if y1 < y0: y0, y1 = y1, y0
+
             adjusted_coordinates = [
                 x0 / self.current_zoom,
                 y0 / self.current_zoom,
@@ -303,8 +344,14 @@ class PDFViewer:
             if self.selection_mode == "area":
                 self.areas.append({
                     "title": f"Rectangle {len(self.areas) + 1}",
-                    "coordinates": adjusted_coordinates
+                    "coordinates": [
+                        x0 / self.current_zoom,
+                        y0 / self.current_zoom,
+                        x1 / self.current_zoom,
+                        y1 / self.current_zoom,
+                    ],
                 })
+
                 self.rectangle_list.append(self.current_rectangle)
                 self.parent.update_areas_treeview()
             else:
@@ -370,7 +417,7 @@ class PDFViewer:
 
         # draw normal areas (dicts or AreaSpec)
         for area in self.areas:
-            x0, y0, x1, y1 = [c * self.current_zoom for c in self._area_coords(area)]
+            x0, y0, x1, y1 = [c * self.current_zoom for c in area["coordinates"]]
             rect_id = self.canvas.create_rectangle(x0, y0, x1, y1, outline="red", width=2)
             self.rectangle_list.append(rect_id)
 
@@ -484,13 +531,7 @@ class PDFViewer:
 
     def set_rectangle_title(self, title):
         if self.selected_rectangle_index is not None:
-            a = self.areas[self.selected_rectangle_index]
-            coords = self._area_coords(a)
-            # always store back as GUI dict for consistency
-            self.areas[self.selected_rectangle_index] = {
-                "title": title,
-                "coordinates": list(coords)
-            }
+            self.areas[self.selected_rectangle_index]["title"] = title
             self.parent.update_areas_treeview()
         else:
             print("No rectangle selected. Title not set.")
