@@ -97,25 +97,6 @@ class CTkDnD(ctk.CTk, *( (TkinterDnD.DnDWrapper,) if DND_ENABLED else tuple() ))
             self.TkdndVersion = TkinterDnD._require(self)
 
 
-def _preflight(self) -> tuple[bool, str]:
-    if not self.pdf_viewer.areas:
-        return False, "No areas defined. Please draw at least one area."
-    if not self.pdf_folder or not os.path.isdir(self.pdf_folder):
-        return False, "The selected PDF folder does not exist."
-    if not self.output_excel_path:
-        return False, "Please choose an Excel output path."
-    out_dir = os.path.dirname(self.output_excel_path)
-    if not os.path.isdir(out_dir):
-        return False, "The output folder does not exist."
-    if not os.access(out_dir, os.W_OK):
-        return False, "You do not have write permission to the output folder."
-    # at least one checked PDF:
-    checked = [iid for iid in self.files_tree_widget.get_checked()
-               if str(self.files_tree_widget.item(iid).get("text","")).lower().endswith(".pdf")]
-    if not checked:
-        return False, "Please check at least one PDF to extract."
-    return True, ""
-
 def resource_path(rel: str) -> str:
     """
     Return an absolute path to a bundled resource that works for:
@@ -166,16 +147,8 @@ class XtractorGUI:
 
     def _on_app_close(self):
         try:
-            if getattr(self, "cancel_event", None):
-                self.cancel_event.set()
-            if getattr(self, "extraction_process", None) and self.extraction_process.is_alive():
-                self.extraction_process.terminate()
-                self.extraction_process.join(2)
-        except Exception:
-            pass
-        try:
-            if getattr(self, "current_manager", None):
-                self.current_manager.shutdown()
+            if hasattr(self, "_job") and self._job:
+                self.extractor.cancel(self._job)
         except Exception:
             pass
         self.root.destroy()
@@ -291,18 +264,20 @@ class XtractorGUI:
         self.pdf_viewer.close_pdf()
 
     def remove_row(self):
-        """Removes the selected row from the Treeview and updates the canvas to remove the associated rectangle."""
-        selected_item = self.areas_tree.selection()
-        if selected_item:
-            # Get the rectangle index associated with the selected Treeview item
-            index = self.treeview_item_ids.get(selected_item[0])
-            if index is not None:
-                # Remove the rectangle from the canvas
-                del self.pdf_viewer.areas[index]  # areas are GUI dicts
-                self.pdf_viewer.update_rectangles()  # rebuilds rectangle_list from areas
-                self.areas_tree.delete(selected_item[0])
-                self.update_areas_treeview()
-                print("Removed rectangle at index", index)
+        selected = self.areas_tree.selection()
+        if not selected:
+            return
+        index = self.treeview_item_ids.get(selected[0])
+        if index is None:
+            return
+
+        areas = self.pdf_viewer.get_gui_areas()
+        if 0 <= index < len(areas):
+            del areas[index]
+            self.pdf_viewer.set_gui_areas(areas)
+            self.areas_tree.delete(selected[0])
+            self.update_areas_treeview()
+            print("Removed rectangle at index", index)
 
     def setup_widgets(self):
         # Create a tabbed panel on the left
@@ -745,13 +720,6 @@ class XtractorGUI:
         self.close_pdf_button.place(x=canvas_x + gap + self._px(30), y=y_top)
         self.zoom_frame.place(x=canvas_x + gap, y=y_zoom)
 
-    def place_zoom_and_version_controls(self):
-        sidebar_width = self.tab_view.winfo_width() + self._px(20)
-        window_height = self.root.winfo_height()
-        self.zoom_frame.place(x=sidebar_width + 0, y=window_height - self._px(57))
-        self.recent_pdf_button.place(x=sidebar_width + 0, y=self._px(23))
-        self.close_pdf_button.place(x=sidebar_width + self._px(30), y=self._px(23))
-
     def setup_bindings(self):
         self.pdf_folder_entry.bind("<KeyRelease>", self.update_pdf_folder)
         self.output_path_entry.bind("<KeyRelease>", self.update_output_path)
@@ -1176,64 +1144,64 @@ class XtractorGUI:
                 except Exception:
                     pass
 
-    def update_progress(self, progress_counter, total_files, extraction_process):
-        if total_files.value > 0:
-            processed = progress_counter.value
-            self.total_files_label.configure(text=f"Processed: {processed}/{total_files.value}")
-            self.progress_var.set(processed / max(total_files.value, 1))
-
-        if extraction_process.is_alive():
-            self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
-            return
-
-        # process finished
-        status = (self.shared or {}).get("status", "done")
-        err = (self.shared or {}).get("error", "")
-        try:
-            self.progress_var.set(1)
-        except Exception:
-            pass
-        if getattr(self, "progress_window", None):
-            try:
-                self.progress_window.destroy()
-            except Exception:
-                pass
-            self.progress_window = None
-
-        try:
-            extraction_process.join(timeout=2)
-            extraction_process.close()
-        except Exception:
-            pass
-        self.extraction_process = None
-
-        # shutdown manager safely
-        try:
-            if getattr(self, "current_manager", None):
-                self.current_manager.shutdown()
-        except Exception:
-            pass
-        self.current_manager = None
-
-        final_output_file = (self.final_output_path.value or self.output_excel_path).strip()
-
-        if status == "cancelled":
-            logger.info("User cancelled; no dialog.")
-            return
-        if status == "error":
-            logger.error("Worker error: %s", err)
-            messagebox.showerror("Extraction failed", err or "An unknown error occurred. See logs for details.")
-            return
-
-        # success
-        elapsed = time.time() - self.start_time
-        formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-        if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
-            if final_output_file and os.path.exists(final_output_file):
-                try:
-                    os.startfile(final_output_file)
-                except Exception as e:
-                    messagebox.showerror("Error", f"Could not open the Excel file: {e}")
+    # def update_progress(self, progress_counter, total_files, extraction_process):
+    #     if total_files.value > 0:
+    #         processed = progress_counter.value
+    #         self.total_files_label.configure(text=f"Processed: {processed}/{total_files.value}")
+    #         self.progress_var.set(processed / max(total_files.value, 1))
+    #
+    #     if extraction_process.is_alive():
+    #         self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
+    #         return
+    #
+    #     # process finished
+    #     status = (self.shared or {}).get("status", "done")
+    #     err = (self.shared or {}).get("error", "")
+    #     try:
+    #         self.progress_var.set(1)
+    #     except Exception:
+    #         pass
+    #     if getattr(self, "progress_window", None):
+    #         try:
+    #             self.progress_window.destroy()
+    #         except Exception:
+    #             pass
+    #         self.progress_window = None
+    #
+    #     try:
+    #         extraction_process.join(timeout=2)
+    #         extraction_process.close()
+    #     except Exception:
+    #         pass
+    #     self.extraction_process = None
+    #
+    #     # shutdown manager safely
+    #     try:
+    #         if getattr(self, "current_manager", None):
+    #             self.current_manager.shutdown()
+    #     except Exception:
+    #         pass
+    #     self.current_manager = None
+    #
+    #     final_output_file = (self.final_output_path.value or self.output_excel_path).strip()
+    #
+    #     if status == "cancelled":
+    #         logger.info("User cancelled; no dialog.")
+    #         return
+    #     if status == "error":
+    #         logger.error("Worker error: %s", err)
+    #         messagebox.showerror("Extraction failed", err or "An unknown error occurred. See logs for details.")
+    #         return
+    #
+    #     # success
+    #     elapsed = time.time() - self.start_time
+    #     formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
+    #     if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
+    #         if final_output_file and os.path.exists(final_output_file):
+    #             try:
+    #                 os.startfile(final_output_file)
+    #             except Exception as e:
+    #                 messagebox.showerror("Error", f"Could not open the Excel file: {e}")
 
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""

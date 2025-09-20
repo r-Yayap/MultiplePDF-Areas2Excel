@@ -110,42 +110,48 @@ class PDFViewer:
 
     # --- public UI API (small, explicit) ---
 
-    def get_gui_areas(self):
-        """Return GUI dict areas: [{'title':..., 'coordinates':[x0,y0,x1,y1]}, ...]."""
-        return list(self.areas)
+    # --- public micro-API for GUI <-> viewer ---
 
-    def set_gui_areas(self, areas):
-        """Replace areas with GUI dicts and redraw."""
-        # light validation
-        cleaned = []
+    def get_gui_areas(self) -> list[dict]:
+        """Return areas as GUI dicts."""
+        out = []
+        for a in self.areas:
+            try:
+                coords = self._area_coords(a)
+                title = self._area_title(a, "Area")
+                out.append({"title": title, "coordinates": [float(c) for c in coords]})
+            except Exception:
+                pass
+        return out
+
+    def set_gui_areas(self, areas: list[dict]) -> None:
+        """Replace all areas with GUI dicts and redraw."""
+        norm = []
         for a in areas or []:
-            t = (a.get("title") if isinstance(a, dict) else None) or "Area"
-            c = (a.get("coordinates") if isinstance(a, dict) else None)
-            if not (isinstance(c, (list, tuple)) and len(c) == 4):
-                continue
-            x0, y0, x1, y1 = map(float, c)
-            # normalize
-            if x1 < x0: x0, x1 = x1, x0
-            if y1 < y0: y0, y1 = y1, y0
-            cleaned.append({"title": t, "coordinates": [x0, y0, x1, y1]})
-        self.areas = cleaned
+            coords = self._area_coords(a)
+            title = self._area_title(a, "Area")
+            norm.append({"title": title, "coordinates": [float(c) for c in coords]})
+        self.areas = norm
         self.update_rectangles()
 
     def get_gui_revision_area(self):
-        """Return {'title':..., 'coordinates':[...]} or None."""
-        return dict(self.revision_area) if self.revision_area else None
+        """Return the revision area as a GUI dict (or None)."""
+        return self.revision_area
 
-    def set_gui_revision_area(self, rev):
-        """Set revision area from a GUI dict (or None)."""
-        self.revision_area = None
-        if isinstance(rev, dict):
-            c = rev.get("coordinates")
-            if isinstance(c, (list, tuple)) and len(c) == 4:
-                x0, y0, x1, y1 = map(float, c)
-                if x1 < x0: x0, x1 = x1, x0
-                if y1 < y0: y0, y1 = y1, y0
-                self.revision_area = {"title": rev.get("title") or "Revision Table",
-                                      "coordinates": [x0, y0, x1, y1]}
+    def set_gui_revision_area(self, rev) -> None:
+        """Set/clear the revision area and redraw."""
+        # clear any old green rectangle immediately
+        if self.revision_rectangle_id:
+            self.canvas.delete(self.revision_rectangle_id)
+            self.revision_rectangle_id = None
+
+        if rev is None:
+            self.revision_area = None
+        else:
+            coords = self._area_coords(rev)
+            title = self._area_title(rev, "Revision Table")
+            self.revision_area = {"title": title, "coordinates": [float(c) for c in coords]}
+
         self.update_rectangles()
 
     def _area_coords(self, a):
