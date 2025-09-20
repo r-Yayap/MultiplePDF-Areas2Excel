@@ -1,10 +1,19 @@
+#pdf_adapter.py
 from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 import pymupdf as fitz
 
-RectT = Tuple[float, float, float, float]
+RectT = tuple[float, float, float, float]
+
+def _safe_clip(page: "fitz.Page", clip: RectT) -> Optional[fitz.Rect]:
+    """Intersect + normalize + basic sanity checks to avoid bandwriter errors."""
+    r = fitz.Rect(clip).normalize()
+    r = r & page.rect  # keep inside page bounds
+    if r.is_empty or r.width < 2 or r.height < 2:  # guard tiny/zero regions
+        return None
+    return r
 
 class PdfAdapter:
     def page_count(self, path: str | Path) -> int:
@@ -32,33 +41,56 @@ class PdfAdapter:
             return -1
 
     def find_table_rows(self, page: "fitz.Page", clip: RectT) -> Optional[List[List[str]]]:
-        data = None
+        """
+        Return table rows as a list of list[str], or None if nothing reasonable found.
+        - Sanitizes the clip to avoid 'Invalid bandwriter header...' crashes.
+        - Short-circuits on sparse regions to save time.
+        - Ensures we ONLY return Python strings (no SWIG objects).
+        - Closes any temp documents in all paths.
+        """
+        r = _safe_clip(page, clip)
+        if r is None:
+            return None
+
+        # quick sparse check (avoid expensive table finding when almost empty)
         try:
-            tabs = page.find_tables(clip=fitz.Rect(clip))
-            if tabs and tabs.tables:
-                data = tabs.tables[0].extract()
+            if len(page.get_text("words", clip=r)) < 6:
+                return None
         except Exception:
-            data = None
+            pass
 
-        if data and len(data) >= 2:
-            return data
-
-        # fallback: cut & paste to temp page
-        tmp = fitz.open()
+        # 1) Try tables directly on the page
         try:
-            r = fitz.Rect(clip)
-            dst = tmp.new_page(width=r.width, height=r.height)
-            dst.show_pdf_page(fitz.Rect(0, 0, r.width, r.height), page.parent, page.number, clip=r)
-            try:
-                tabs = dst.find_tables()
-                if tabs and tabs.tables:
-                    data = tabs.tables[0].extract()
-            except Exception:
-                data = None
-        finally:
-            tmp.close()
+            tabs = page.find_tables(clip=r)
+            if tabs and getattr(tabs, "tables", None):
+                data = tabs.tables[0].extract()
+                if data and len(data) >= 2:
+                    return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
+                             for c in row] for row in data]
+        except Exception:
+            pass  # fall through to fallback
 
-        return data if data and len(data) >= 2 else None
+        # 2) Fallback: render the clip into a tiny temp page and find tables there
+        tmp = None
+        try:
+            tmp = fitz.open()
+            dst = tmp.new_page(width=r.width, height=r.height)
+            # IMPORTANT: only call show_pdf_page if width/height > 0
+            if r.width >= 2 and r.height >= 2:
+                dst.show_pdf_page(fitz.Rect(0, 0, r.width, r.height), page.parent, page.number, clip=r)
+                try:
+                    tabs = dst.find_tables()
+                    if tabs and getattr(tabs, "tables", None):
+                        data = tabs.tables[0].extract()
+                        if data and len(data) >= 2:
+                            return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
+                                     for c in row] for row in data]
+                except Exception:
+                    pass
+        finally:
+            if tmp is not None:
+                tmp.close()
+        return None
 
     def page_rect(self, page: "fitz.Page") -> RectT:
         r = page.rect
