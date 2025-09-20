@@ -350,12 +350,12 @@ class ExtractionService:
         if rev_mode:
             procs = max(1, os.cpu_count() - 2)  # conservative in rev mode
             maxtasks = 1  # each worker handles 1 PDF then dies (kills leaks)
+            batch_size = int(os.getenv("PDF_BATCH_SIZE", "30"))
         else:
             procs = max(1, os.cpu_count())
             maxtasks = 25
+            batch_size = int(os.getenv("PDF_BATCH_SIZE", "500"))
 
-        # Batch size (override with env PDF_BATCH_SIZE)
-        batch_size = int(os.getenv("PDF_BATCH_SIZE", "30"))
 
         # Build jobs once
         jobs = [(p, req_dict, temp_dir, str(10000 + i)) for i, p in enumerate(pdf_paths)]
