@@ -57,8 +57,13 @@ class PdfAdapter:
 
     def find_table_rows(self, page: "fitz.Page", clip: RectT) -> Optional[List[List[str]]]:
         """
-        Lean table finder for revision tables.
-        Fallback mini-doc is disabled by default; enable with REV_TABLE_FALLBACK=1.
+        Table finder for revision tables.
+        - Try on-page first (cheap).
+        - If that fails and the page is rotated (90/270), copy the *clipped region*
+          to a tiny temp page and draw it with a compensating rotation so the table
+          is upright; then run find_tables() there.
+        - Optional heavy fallback (mini-doc without rotation) is still controlled by
+          REV_TABLE_FALLBACK=1.
         """
         r = _safe_clip(page, clip)
         if r is None:
@@ -75,7 +80,7 @@ class PdfAdapter:
         if wc > MAX_WORDS:
             return None
 
-        # 1) try on-page
+        # 1) fast path: on original page
         try:
             tabs = page.find_tables(clip=r)
             if tabs and getattr(tabs, "tables", None):
@@ -86,16 +91,28 @@ class PdfAdapter:
         except Exception:
             pass
 
-        # 2) optional fallback (heavy)
-        if os.getenv("REV_TABLE_FALLBACK", "0") != "1":
-            return None
-
-        tmp = None
+        # 2) rotation-normalized fallback for 90/270 pages
         try:
-            tmp = fitz.open()
-            dst = tmp.new_page(width=r.width, height=r.height)
-            if r.width >= 2 and r.height >= 2:
-                dst.show_pdf_page(fitz.Rect(0, 0, r.width, r.height), page.parent, page.number, clip=r)
+            rotation = getattr(page, "rotation", 0) % 360
+        except Exception:
+            rotation = 0
+
+        if rotation in (90, 270):
+            tmp = None
+            try:
+                # swap width/height for 90/270 to avoid clipping after rotate
+                dst_w, dst_h = (r.height, r.width)
+                tmp = fitz.open()
+                dst = tmp.new_page(width=dst_w, height=dst_h)
+
+                # draw the clipped region, compensating the page rotation so the content is upright
+                # rotate expects multiples of 90; use (360-rotation) to deskew
+                dst.show_pdf_page(
+                    fitz.Rect(0, 0, dst_w, dst_h),
+                    page.parent, page.number,
+                    clip=r,
+                    rotate=(360 - rotation) % 360
+                )
                 try:
                     tabs = dst.find_tables()
                     if tabs and getattr(tabs, "tables", None):
@@ -105,11 +122,38 @@ class PdfAdapter:
                                      for c in row] for row in data]
                 except Exception:
                     pass
-        finally:
-            if tmp is not None:
-                tmp.close()
+            finally:
+                if tmp is not None:
+                    tmp.close()
+                # aggressively release MuPDF caches used during show_pdf_page
+                try:
+                    fitz.TOOLS.store_shrink(100)
+                except Exception:
+                    pass
+
+        # 3) optional heavy fallback without rotation (kept behind env flag)
+        if os.getenv("REV_TABLE_FALLBACK", "0") == "1":
+            tmp = None
             try:
-                fitz.TOOLS.store_shrink(100)
-            except Exception:
-                pass
+                tmp = fitz.open()
+                dst = tmp.new_page(width=r.width, height=r.height)
+                if r.width >= 2 and r.height >= 2:
+                    dst.show_pdf_page(fitz.Rect(0, 0, r.width, r.height), page.parent, page.number, clip=r)
+                    try:
+                        tabs = dst.find_tables()
+                        if tabs and getattr(tabs, "tables", None):
+                            data = tabs.tables[0].extract()
+                            if data and len(data) >= 2:
+                                return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
+                                         for c in row] for row in data]
+                    except Exception:
+                        pass
+            finally:
+                if tmp is not None:
+                    tmp.close()
+                try:
+                    fitz.TOOLS.store_shrink(100)
+                except Exception:
+                    pass
+
         return None
