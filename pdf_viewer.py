@@ -360,32 +360,37 @@ class PDFViewer:
         self.update_display()  # Refresh the display with the new zoom level
 
     def resize_canvas(self, total_width, total_height, x_offset=0):
-        """Resizes canvas and scrollbars based on available space (DIP→px)."""
         x_off = self._px(x_offset)
         extra = self._px(CANVAS_EXTRA_MARGIN)
         top = self._px(CANVAS_TOP_MARGIN)
         bot = self._px(CANVAS_BOTTOM_MARGIN)
         sb_th = self._px(SCROLLBAR_THICKNESS)
 
-        # ensure minimum visible area also scales
         min_w = self._px(200)
         min_h = self._px(200)
 
+        # leave space for the vertical scrollbar to the right of the canvas
         canvas_width = max(min_w, total_width - x_off - extra - sb_th)
         canvas_height = max(min_h, total_height - top - bot)
 
-        # position + size
+        # canvas
         self.canvas.place_configure(x=x_off, y=top)
         self.canvas.config(width=canvas_width, height=canvas_height)
 
-        # vertical scrollbar
-        self.v_scrollbar.place_configure(x=x_off + canvas_width + self._px(4), y=top)
+        # vertical scrollbar: exactly the canvas height, no extra fudge
+        self.v_scrollbar.place_configure(x=x_off + canvas_width, y=top)
         self.v_scrollbar.configure(height=canvas_height)
 
-        # horizontal scrollbar
-        self.h_scrollbar.place_configure(x=x_off, y=top + canvas_height + self._px(7))
+        # horizontal scrollbar: sits just below the canvas, stops at the vertical scrollbar
+        self.h_scrollbar.place_configure(x=x_off, y=top + canvas_height)
         self.h_scrollbar.configure(width=canvas_width)
 
+        # bottom-right corner filler (prevents any visual overlap seam)
+        if not hasattr(self, "_corner"):
+            # use parent's bg; "transparent" also works with CTk
+            self._corner = ctk.CTkFrame(self.canvas.master, width=sb_th, height=sb_th, fg_color="transparent")
+        self._corner.place_configure(x=x_off + canvas_width, y=top + canvas_height)
+        self._corner.configure(width=sb_th, height=sb_th)
 
         if self.pdf_document is None:
             self.show_placeholder()
