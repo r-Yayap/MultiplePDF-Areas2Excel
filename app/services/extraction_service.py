@@ -10,7 +10,9 @@ from app.infra.pdf_adapter import PdfAdapter
 from app.infra.ocr_adapter import OcrAdapter
 from app.services.revision_parser import RevisionParser
 from app.infra.excel_writer import write_from_csv, copy_ndjson
-from utils import adjust_coordinates_for_rotation
+
+from app.common.geometry import adjust_coordinates_for_rotation
+
 
 import pymupdf as fitz
 
@@ -24,7 +26,6 @@ def _open_temp_writers(temp_dir: Path, unid_prefix: str, with_revisions: bool):
     ndjson_f = open(temp_dir / f"temp_{unid_prefix}.ndjson", "w", encoding="utf-8", buffering=1) if with_revisions else None
     return csv_w, csv_f, ndjson_f
 
-
 def _process_single_pdf_star(args):
     """
     Safe wrapper for pool: never raises; returns dict with only primitives.
@@ -36,8 +37,6 @@ def _process_single_pdf_star(args):
     except Exception as e:
         # strip to a plain string so it's 100% picklable
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-
-# extraction_service.py (top-level)
 
 def _sanitize_clip(clip: tuple, page_rect: tuple[float, float, float, float]) -> Optional[tuple[float, float, float, float]]:
     """

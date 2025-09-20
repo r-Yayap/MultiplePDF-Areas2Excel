@@ -6,7 +6,7 @@ import tkinter as tk
 import os
 
 from tkinter import Menu
-from constants import *
+from app.ui.constants import *
 from tkinter.simpledialog import askstring  # For custom title input
 
 

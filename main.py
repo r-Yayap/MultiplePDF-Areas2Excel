@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 import customtkinter as ctk
-from gui import CTkDnD, XtractorGUI   # CTkDnD ensures tkdnd is loaded
-from constants import (
+from app.ui.gui import CTkDnD, XtractorGUI   # CTkDnD ensures tkdnd is loaded
+from app.ui.constants import (
     INITIAL_WIDTH, INITIAL_HEIGHT,
     INITIAL_X_POSITION, INITIAL_Y_POSITION,
     VERSION_TEXT
 )
-from dpi_utils import init_windows_dpi_awareness, apply_scaling, install_dpi_watcher
+from app.ui.dpi_utils import init_windows_dpi_awareness, apply_scaling, install_dpi_watcher
 
 
 from app.logging_setup import configure_logging
@@ -30,6 +30,14 @@ def resource_path(rel: str) -> str:
     else:
         base_dir = Path(__file__).parent
     return str(base_dir / rel)
+
+def asset(rel_name: str) -> str:
+    """Return path to UI assets, working in dev and frozen builds."""
+    p = Path(resource_path(f"app/ui/style/{rel_name}"))
+    if p.exists():
+        return str(p)
+    # fallback for dev layouts that still use /style at project root
+    return resource_path(f"style/{rel_name}")
 
 
 # ────────────────────────────────────────────────────────────
@@ -58,7 +66,7 @@ def create_splash(master):
 
     # Logo
     from PIL import Image
-    logo_path  = resource_path("style/xtractor-logo.png")
+    logo_path = asset("xtractor-logo.png")
     logo_img   = ctk.CTkImage(light_image=Image.open(logo_path), size=(120, 120))
     logo_lbl   = ctk.CTkLabel(splash, image=logo_img, text="")
     logo_lbl.pack(pady=(30, 10))
@@ -100,7 +108,7 @@ def _build_and_show(root, splash, cancel_anim):
     root.title("Xtractor " + VERSION_TEXT)
     root.geometry(f"{INITIAL_WIDTH}x{INITIAL_HEIGHT}+{INITIAL_X_POSITION}+{INITIAL_Y_POSITION}")
     try:
-        root.iconbitmap(resource_path("style/xtractor-logo.ico"))
+        root.iconbitmap(asset("xtractor-logo.ico"))
     except Exception:
         pass  # non-Windows or icon missing
 
@@ -141,7 +149,7 @@ def main():
     apply_scaling(root, preferred_ui=1.0)
 
     # D) Theme (after root is created is fine)
-    ctk.set_default_color_theme(resource_path("style/xtractor-dark-red.json"))
+    ctk.set_default_color_theme(asset("xtractor-dark-red.json"))
     ctk.set_appearance_mode("dark")
 
     # E) Splash

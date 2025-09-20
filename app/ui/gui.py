@@ -6,12 +6,9 @@ import customtkinter as ctk
 import sys
 from tkinter import filedialog, messagebox, StringVar
 from openpyxl import load_workbook
-from constants import *
+from app.ui.constants import *
 from customtkinter import CTkImage
 from typing import Any
-from utils import create_tooltip, EditableTreeview
-from utils import find_tessdata
-from utils import REVISION_PATTERNS
 from ttkwidgets import CheckboxTreeview
 from tkinter import ttk
 from PIL import Image  # Make sure this is at the top
@@ -20,6 +17,11 @@ from app.ui.pdf_viewer import PDFViewer
 from app.domain.models import OcrSettings, ExtractionRequest
 from app.controllers.extract_controller import ExtractController
 from pathlib import Path
+
+from app.ui.ui_utils import create_tooltip, EditableTreeview
+from app.common.ocr import find_tessdata
+from app.domain.revision_patterns import REVISION_PATTERNS
+
 
 from app.logging_setup import configure_logging
 logger = configure_logging()
