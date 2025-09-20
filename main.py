@@ -100,7 +100,8 @@ def create_splash(master):
 #  Heavy imports in background
 # ────────────────────────────────────────────────────────────
 def warm_up(event):
-    import fitz, openpyxl, PIL.Image          # heavy libs
+    import pymupdf as fitz
+    import openpyxl, PIL.Image          # heavy libs
     event.set()
 
 # ────────────────────────────────────────────────────────────

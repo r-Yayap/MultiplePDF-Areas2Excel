@@ -1,6 +1,6 @@
 # pdf_viewer.py
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import Menu
