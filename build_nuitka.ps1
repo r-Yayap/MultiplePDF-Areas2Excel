@@ -1,23 +1,74 @@
-# Clean previous build
-# Stop any running main.exe to release file lock
+# build_nuitka.ps1
+$ErrorActionPreference = 'Stop'
+
+# Stop any running instance & clean old build
 Stop-Process -Name main -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
 
-# Compile with Nuitka
-py -3.12 -m nuitka --standalone --enable-plugin=tk-inter --include-data-dir=style=style --include-data-dir=tessdata=tessdata --include-module=tkinterdnd2 --include-module=openpyxl --include-module=pandas --include-module=numpy --include-module=pymupdf --include-module=CTkToolTip --include-module=psutil --include-module=ttkwidgets --include-package-data=customtkinter --windows-icon-from-ico=style/Xtractor-Logo.ico --windows-console-mode=attach --jobs=24 --lto=no --output-dir=build main.py
+# Resolve Python (prefer active venv)
+$PythonCmd = $null; $PyArgs = @()
+if ($env:VIRTUAL_ENV -and (Test-Path (Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe'))) {
+  $PythonCmd = Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe'
+} elseif (Get-Command python -ErrorAction SilentlyContinue) {
+  $PythonCmd = (Get-Command python).Source
+} elseif (Get-Command py -ErrorAction SilentlyContinue) {
+  $PythonCmd = (Get-Command py).Source
+  $PyArgs = @('-3.12')
+} else { throw "No Python found. Activate your venv or install Python 3.12." }
 
-# Ensure style directory is present in distribution
-Copy-Item -Path style -Destination build\main.dist\style -Recurse -Force
+# Ensure Nuitka is available
+try { & $PythonCmd @($PyArgs + @('-c','import nuitka')) | Out-Null }
+catch {
+  Write-Host "Installing Nuitka in the current environment..."
+  & $PythonCmd @($PyArgs + @('-m','pip','install','-U','pip','setuptools','wheel','nuitka','zstandard','ordered-set'))
+}
 
-# Ensure ttkwidgets assets directory is present
-$ttkAssets = py -3.12 -c "import ttkwidgets, os; print(os.path.join(ttkwidgets.__path__[0], 'assets'))"
-Copy-Item -Path $ttkAssets -Destination build\main.dist\ttkwidgets\assets -Recurse -Force
+# Build args (updated paths for new layout)
+$NuitkaArgs = @(
+  '-m','nuitka',
+  '--standalone',
+  '--enable-plugin=tk-inter',
+  '--include-data-dir=app\ui\style=style',
+  '--include-data-dir=tessdata=tessdata',
+  '--include-module=tkinterdnd2',
+  '--include-module=openpyxl',
+  '--include-module=pandas',
+  '--include-module=numpy',
+  '--include-module=pymupdf',
+  '--include-module=CTkToolTip',
+  '--include-module=psutil',
+  '--include-module=ttkwidgets',
+  '--include-package-data=customtkinter',
+  '--windows-icon-from-ico=app\ui\style\Xtractor-Logo.ico',
+  '--windows-console-mode=attach',
+  '--jobs=8',
+  '--lto=no',
+  '--output-dir=build',
+  'main.py'
+)
 
-# Ensure CustomTkinter assets and themes directories are present
-$ctkAssets = py -3.12 -c "import customtkinter, os; print(os.path.join(customtkinter.__path__[0], 'assets'))"
-Copy-Item -Path $ctkAssets -Destination build\main.dist\customtkinter\assets -Recurse -Force
-$ctkThemes = py -3.12 -c "import customtkinter, os; print(os.path.join(customtkinter.__path__[0], 'assets', 'themes'))"
-Copy-Item -Path $ctkThemes -Destination build\main.dist\customtkinter\assets\themes -Recurse -Force
+# Build
+& $PythonCmd @($PyArgs + $NuitkaArgs)
 
-# Launch the executable
-Start-Process -FilePath .\build\main.dist\main.exe
+$dist = 'build\main.dist'
+
+# Copy ttkwidgets assets (compute paths in PS to avoid quoting issues)
+try {
+  $ttkPkg = & $PythonCmd @($PyArgs + @('-c','import ttkwidgets, sys; sys.stdout.write(ttkwidgets.__path__[0])'))
+  if ($ttkPkg) {
+    $src = Join-Path $ttkPkg 'assets'
+    if (Test-Path $src) { Copy-Item -Path $src -Destination (Join-Path $dist 'ttkwidgets\assets') -Recurse -Force }
+  }
+} catch { Write-Warning "Could not copy ttkwidgets assets: $($_.Exception.Message)" }
+
+# Copy CustomTkinter assets (usually already included, but safe to mirror)
+try {
+  $ctkPkg = & $PythonCmd @($PyArgs + @('-c','import customtkinter, sys, os; sys.stdout.write(os.path.dirname(customtkinter.__file__))'))
+  if ($ctkPkg) {
+    $src = Join-Path $ctkPkg 'assets'
+    if (Test-Path $src) { Copy-Item -Path $src -Destination (Join-Path $dist 'customtkinter\assets') -Recurse -Force }
+  }
+} catch { Write-Warning "Could not copy CustomTkinter assets: $($_.Exception.Message)" }
+
+# Run
+Start-Process -FilePath (Join-Path $dist 'main.exe')

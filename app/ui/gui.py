@@ -1146,65 +1146,6 @@ class XtractorGUI:
                 except Exception:
                     pass
 
-    # def update_progress(self, progress_counter, total_files, extraction_process):
-    #     if total_files.value > 0:
-    #         processed = progress_counter.value
-    #         self.total_files_label.configure(text=f"Processed: {processed}/{total_files.value}")
-    #         self.progress_var.set(processed / max(total_files.value, 1))
-    #
-    #     if extraction_process.is_alive():
-    #         self.root.after(100, self.update_progress, progress_counter, total_files, extraction_process)
-    #         return
-    #
-    #     # process finished
-    #     status = (self.shared or {}).get("status", "done")
-    #     err = (self.shared or {}).get("error", "")
-    #     try:
-    #         self.progress_var.set(1)
-    #     except Exception:
-    #         pass
-    #     if getattr(self, "progress_window", None):
-    #         try:
-    #             self.progress_window.destroy()
-    #         except Exception:
-    #             pass
-    #         self.progress_window = None
-    #
-    #     try:
-    #         extraction_process.join(timeout=2)
-    #         extraction_process.close()
-    #     except Exception:
-    #         pass
-    #     self.extraction_process = None
-    #
-    #     # shutdown manager safely
-    #     try:
-    #         if getattr(self, "current_manager", None):
-    #             self.current_manager.shutdown()
-    #     except Exception:
-    #         pass
-    #     self.current_manager = None
-    #
-    #     final_output_file = (self.final_output_path.value or self.output_excel_path).strip()
-    #
-    #     if status == "cancelled":
-    #         logger.info("User cancelled; no dialog.")
-    #         return
-    #     if status == "error":
-    #         logger.error("Worker error: %s", err)
-    #         messagebox.showerror("Extraction failed", err or "An unknown error occurred. See logs for details.")
-    #         return
-    #
-    #     # success
-    #     elapsed = time.time() - self.start_time
-    #     formatted = time.strftime("%H:%M:%S", time.gmtime(elapsed))
-    #     if messagebox.askyesno("Extraction Complete", f"Completed in {formatted}.\nOpen the Excel file?"):
-    #         if final_output_file and os.path.exists(final_output_file):
-    #             try:
-    #                 os.startfile(final_output_file)
-    #             except Exception as e:
-    #                 messagebox.showerror("Error", f"Could not open the Excel file: {e}")
-
     def optionmenu_callback(self, choice):
         """Execute the corresponding function based on the selected option."""
         action = OPTION_ACTIONS.get(choice)
