@@ -743,13 +743,13 @@ class XtractorGUI:
 
         cards = [
             ("+IMAGE",
-             "NORMAL mode.\nAlso embeds the area image in Excel.",
+             "✓  Extracts text.\n\n✓  OCR if no text.\n\n✓  +image in Excel.",
              "Text1st+Image-beta"),
             ("NORMAL",
-             "Extracts embedded text.\nIf no text is found, OCR will run automatically.",
+             "✓  Extracts text.\n\n✓  OCR if no text.\n\n",
              "Default"),
             ("OCR",
-             "Always use OCR on all areas.",
+             "✘ Extracts text.\n\n✓  OCR will always run.",
              "OCR-All"),
         ]
 
@@ -778,8 +778,8 @@ class XtractorGUI:
             # ↑ add some bottom margin after the title
             title_lbl.grid(row=0, column=0, padx=20, pady=(24, 24), sticky="n")
 
-            desc_lbl = ctk.CTkLabel(card, text=desc, font=(BUTTON_FONT, 11),
-                                    wraplength=220, justify="center")
+            desc_lbl = ctk.CTkLabel(card, text=desc, font=(BUTTON_FONT, 10),
+                                    wraplength=220, justify="left")
             desc_lbl.grid(row=1, column=0, padx=12, sticky="n")
 
             for w in (card, title_lbl, desc_lbl):
