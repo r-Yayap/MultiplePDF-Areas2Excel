@@ -37,7 +37,7 @@ MIN_APP_H   = 520     # a sensible minimum app height
 CARD_BG_DEFAULT   = "#3a3a3a"  # unselected bg
 CARD_BG_SELECTED  = "#780C0C"  # selected bg (pick what you like)
 CARD_BORDER_DEFAULT  = "gray35"
-CARD_BORDER_SELECTED = "#470808"
+CARD_BORDER_SELECTED = "#7A7A7A"
 
 
 DPI_OPTIONS = {
