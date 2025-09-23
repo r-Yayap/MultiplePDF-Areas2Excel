@@ -28,6 +28,18 @@ CANVAS_EXTRA_MARGIN = 5
 
 BUTTON_FONT = "Verdana"
 
+
+CARD_MIN_W  = 200     # try 220–260 depending on how compact you want the cards
+CARD_GAP    = 16      # horizontal gap between cards (matches grid padx total)
+WRAPPER_PAD = 16      # inner left+right padding inside the overlay wrapper
+MIN_APP_H   = 520     # a sensible minimum app height
+
+CARD_BG_DEFAULT   = "#3a3a3a"  # unselected bg
+CARD_BG_SELECTED  = "#780C0C"  # selected bg (pick what you like)
+CARD_BORDER_DEFAULT  = "gray35"
+CARD_BORDER_SELECTED = "#470808"
+
+
 DPI_OPTIONS = {
     "50": 50,
     "75": 75,
@@ -38,30 +50,6 @@ DPI_OPTIONS = {
     "750": 750,
     "900": 900,
     "1200": 1200,
-}
-
-# ───────── Lazy-load tool actions to avoid heavy imports at import-time ─────────
-import importlib
-
-
-def _lazy(module: str, attr: str):
-    def _call(*args, **kwargs):
-        mod = importlib.import_module(module)
-        return getattr(mod, attr)(*args, **kwargs)
-
-    return _call
-
-
-launch_pdf_dwg_gui = _lazy("standalone.sc_pdf_dwg_list", "launch_pdf_dwg_gui")
-generate_file_list_and_excel = _lazy("standalone.sc_dir_list", "generate_file_list_and_excel")
-bulk_rename_gui = _lazy("standalone.sc_bulk_rename", "bulk_rename_gui")
-bim_checker_main = _lazy("standalone.sc_bim_file_checker", "main")
-
-OPTION_ACTIONS = {
-    "PDF/DWG List": launch_pdf_dwg_gui,
-    "Directory List": generate_file_list_and_excel,
-    "Bulk Renamer": bulk_rename_gui,
-    "BIM File Checker": bim_checker_main,
 }
 
 # Auto-scroll behavior for rectangle drawing (base DIP; scale in GUI if needed)
@@ -76,8 +64,31 @@ RESIZE_DELAY = 700  # ms
 # Tesseract OCR data folder (resolved at runtime)
 TESSDATA_FOLDER = None
 
+# ───────── Lazy-load tool actions to avoid heavy imports at import-time ─────────
+import importlib
+
+
+def _lazy(module: str, attr: str):
+    def _call(*args, **kwargs):
+        mod = importlib.import_module(module)
+        return getattr(mod, attr)(*args, **kwargs)
+
+    return _call
+
+launch_pdf_dwg_gui = _lazy("standalone.sc_pdf_dwg_list", "launch_pdf_dwg_gui")
+generate_file_list_and_excel = _lazy("standalone.sc_dir_list", "generate_file_list_and_excel")
+bulk_rename_gui = _lazy("standalone.sc_bulk_rename", "bulk_rename_gui")
+bim_checker_main = _lazy("standalone.sc_bim_file_checker", "main")
+
+OPTION_ACTIONS = {
+    "PDF/DWG List": launch_pdf_dwg_gui,
+    "Directory List": generate_file_list_and_excel,
+    "Bulk Renamer": bulk_rename_gui,
+    "BIM File Checker": bim_checker_main,
+}
+
 tool_definitions = {
-    "📐 PDF & DWG Checker": {
+    "PDF & DWG Checker": {
         "action": launch_pdf_dwg_gui,
         "instructions": """
 1. Select the folder containing PDF & DWG files.
@@ -90,7 +101,7 @@ tool_definitions = {
    • Duplicates will be shown on the last columns
    • Includes file sizes, modified dates, and relative folders."""
     },
-    "🧮 BIM File Checker": {
+    "BIM File Checker": {
         "action": bim_checker_main,
         "instructions": """
 The BIM File Checker scans a folder and visually shows in Excel:
@@ -111,7 +122,7 @@ How to use it?
    • Red        - Duplicate file names for the same type
 """
     },
-    "✏️ Bulk Rename Tool": {
+    "Bulk Rename Tool": {
         "action": bulk_rename_gui,
         "instructions": """
 1. Load a mapping file (.csv or Excel) with original and new filenames.
@@ -127,7 +138,7 @@ How to use it?
 
 • Errors (e.g. files not found or rename failed) will be listed and copied to your clipboard."""
     },
-    "📊 Folder File Exporter": {
+    "Folder File Exporter": {
         "action": generate_file_list_and_excel,
         "instructions": """
 1. Select a folder to scan.

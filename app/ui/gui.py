@@ -327,10 +327,20 @@ class XtractorGUI:
         self.close_pdf_button.bind("<Button-1>", lambda e: self.close_pdf())
 
         # Create each tab
-        tab_files = self.tab_view.add("📁 Files")
-        tab_rectangles = self.tab_view.add("🔲 Rectangles")
-        tab_extract = self.tab_view.add("🚀 Extract")
-        tab_tools = self.tab_view.add("🧰 Tools")
+        tab_files = self.tab_view.add("Files")
+        tab_rectangles = self.tab_view.add("Rectangles")
+        tab_extract = self.tab_view.add("Extract")
+        tab_tools = self.tab_view.add("Tools")
+
+        # --- Extract overlay (drawn in the main canvas area, where the PDF viewer sits) ---
+        self.extract_overlay = ctk.CTkFrame(self.root, fg_color="transparent", width=1, height=1)
+        self._build_extract_mode_cards(self.extract_overlay)
+
+        self.extract_overlay.place_forget()
+
+        # make the overlay content responsive
+        self.extract_overlay.bind("<Configure>", self._on_extract_overlay_configure)
+        self.extract_overlay.after_idle(self._on_extract_overlay_configure)
 
         # ======================= 📁 FILES TAB =======================
 
@@ -491,9 +501,11 @@ class XtractorGUI:
         # ─────────────── OCR Setting ───────────────
         ocr_row = ctk.CTkFrame(extract_frame, fg_color="transparent")
         ocr_row.pack(pady=(0, 5), fill="x")
+        ocr_row.pack_forget()  # hidden immediately
 
         ocr_label = ctk.CTkLabel(ocr_row, text="OCR Mode:", font=(BUTTON_FONT, 9), width=80, anchor="w")
         ocr_label.pack(side="left", padx=(0, 5))
+        ocr_label.pack_forget()  # hidden
 
         self.ocr_menu_var = StringVar(value="Default")
         self.ocr_menu = ctk.CTkOptionMenu(ocr_row,
@@ -503,6 +515,7 @@ class XtractorGUI:
                                           variable=self.ocr_menu_var,
                                           width=140, height=24)
         self.ocr_menu.pack(side="left", padx=(0, 5))
+        self.ocr_menu.pack_forget()  # hidden
 
         # Add help "?" button next to OCR dropdown
         self.ocr_help_button = ctk.CTkButton(
@@ -531,6 +544,8 @@ class XtractorGUI:
                                           variable=self.dpi_var,
                                           width=140, height=24)
         self.dpi_menu.pack(side="left")
+        # Now that the DPI control exists, safely select the default mode
+        self._select_mode("Default", initial=True)
 
         self.output_path_entry = ctk.CTkEntry(tab_extract, width=240, height=24, font=(BUTTON_FONT, 9),
                                               placeholder_text="Select Excel Output Path", border_width=1,
@@ -569,7 +584,7 @@ class XtractorGUI:
 
         for label, tool in tool_definitions.items():
             # Create the main tool button
-            if label == "📐 PDF & DWG Checker":
+            if label == "PDF & DWG Checker":
                 # Pass self.root explicitly when launching PDF/DWG Checker popup
                 btn = ctk.CTkButton(
                     tool_frame,
@@ -623,7 +638,303 @@ class XtractorGUI:
         self.version_label.pack(pady=(0, 15), anchor="center")  # ⬅️ anchor set to center
         self.version_label.bind("<Button-1>", self.display_version_info)
 
+        # Start watching tab selection to toggle PDF viewer vs. Extract panel
+        self._current_tab = self.tab_view.get()
+        self.root.after(100, self._watch_tab_selection)
+
+        # after building tabs/overlay and calling self.root.update_idletasks()
+        self._set_window_minsize_for_cards(min_cols=3)  # or 3 if you always want 3 side-by-side
+
+
+        # If the app opens with Extract selected, apply hiding immediately
+        if self._current_tab == "Extract":
+            self._on_tab_changed("Extract")
+
+
+
         self.root.after_idle(self.update_floating_controls)
+
+    def _ensure_min_geometry_for_cols(self, n: int = 3):
+        """Grow the window (if needed) so n cards can sit side-by-side, and set minsize."""
+        try:
+            self.root.update_idletasks()
+            sidebar_w = self.tab_view.winfo_width() + (SIDEBAR_PADDING * 2)
+
+            need_overlay = (n * CARD_MIN_W) + ((n - 1) * CARD_GAP) + (WRAPPER_PAD * 2)
+            need_w = max(400, sidebar_w + need_overlay)  # 400: safety floor
+
+            cur_w = max(1, self.root.winfo_width())
+            cur_h = max(1, self.root.winfo_height())
+
+            # set minsize first
+            self.root.minsize(need_w, MIN_APP_H)
+
+            # if current is narrower, actively grow it
+            if cur_w < need_w:
+                self.root.geometry(f"{need_w}x{cur_h}")
+        except Exception as e:
+            print(f"ensure_min_geometry error: {e}")
+
+    def _layout_extract_overlay(self):
+        try:
+            self.root.update_idletasks()
+            canvas_mapped = bool(self.pdf_viewer.canvas.winfo_ismapped())
+            if canvas_mapped:
+                x = self.pdf_viewer.canvas.winfo_x()
+                y = self.pdf_viewer.canvas.winfo_y()
+            else:
+                sidebar_right = self.tab_view.winfo_x() + self.tab_view.winfo_width()
+                x = max(sidebar_right + 8, CANVAS_LEFT_MARGIN)
+                y = CANVAS_TOP_MARGIN if "CANVAS_TOP_MARGIN" in globals() else 0
+
+            win_w = self.root.winfo_width()
+            win_h = self.root.winfo_height()
+            w = max(50, win_w - x - 4)
+            h = max(50, win_h - y - 4)
+
+            self.extract_overlay.place_configure(x=x, y=y)
+            self.extract_overlay.configure(width=w, height=h)
+            self.extract_overlay.lift()
+
+            # Ensure the very first draw wraps correctly
+            self.root.after_idle(self._on_extract_overlay_configure)
+        except Exception as e:
+            print(f"Overlay layout error: {e}")
+
+    def _set_window_minsize_for_cards(self, min_cols: int = 1):
+        """Ensure the window can't be resized narrower than the sidebar + cards."""
+        try:
+            self.root.update_idletasks()
+
+            # sidebar: actual rendered width + the padding you give it
+            sidebar_w = self.tab_view.winfo_width() + (SIDEBAR_PADDING * 2)
+
+            # minimum overlay width to fit `min_cols` cards
+            overlay_min_w = (
+                    (min_cols * CARD_MIN_W) +
+                    ((min_cols - 1) * CARD_GAP) +
+                    (WRAPPER_PAD * 2)
+            )
+
+            total_min_w = max(400, sidebar_w + overlay_min_w)  # 400 = absolute safety floor
+
+            # lock the app's minimum size
+            self.root.minsize(total_min_w, MIN_APP_H)
+        except Exception as e:
+            print(f"minsize calc error: {e}")
+
+    def _build_extract_mode_cards(self, parent):
+        """Create three selectable cards for OCR modes (truly responsive, no overflow)."""
+        # Container that fills the overlay
+        self.extract_cards = ctk.CTkFrame(parent, fg_color="transparent")
+        self.extract_cards.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.extract_cards.pack_propagate(False)
+
+        # Wrapper that fills the container and hosts the grid
+        wrapper = ctk.CTkFrame(self.extract_cards, fg_color="transparent")
+        wrapper.place(relx=0, rely=0, relwidth=1, relheight=1)  # <-- you were missing this
+        wrapper.grid_propagate(False)
+        self._cards_wrapper = wrapper
+
+        for c in range(3):
+            wrapper.grid_columnconfigure(c, weight=0)
+        wrapper.grid_rowconfigure(0, weight=1)
+
+        cards = [
+            ("+IMAGE",
+             "NORMAL mode.\nAlso embeds the area image in Excel.",
+             "Text1st+Image-beta"),
+            ("NORMAL",
+             "Extracts embedded text.\nIf no text is found, OCR will run automatically.",
+             "Default"),
+            ("OCR",
+             "Always use OCR on all areas.",
+             "OCR-All"),
+        ]
+
+        self._card_widgets = {}
+        self._card_desc_labels = {}
+        self._card_order = []
+
+        for col, (title, desc, key) in enumerate(cards):
+            card = ctk.CTkFrame(wrapper, corner_radius=12, border_width=2,
+                                border_color="gray35", fg_color="gray20")
+            card.grid(row=0, column=col, padx=8, pady=8, sticky="nsew")
+
+            CARD_TITLE_FONTS = {
+                "Text1st+Image-beta": (BUTTON_FONT, 24, "bold"),
+                "Default": (BUTTON_FONT, 24, "bold"),  # <- larger just for Default
+                "OCR-All": (BUTTON_FONT, 24, "bold"),
+            }
+            # make the card gridable (top-aligned content, with a flexible filler row)
+            card.grid_rowconfigure(0, weight=0)  # title
+            card.grid_rowconfigure(1, weight=0)  # description
+            card.grid_rowconfigure(2, weight=1)  # filler pushes content up a bit
+            card.grid_columnconfigure(0, weight=1)
+
+            title_lbl = ctk.CTkLabel(card, text=title,
+                                     font=CARD_TITLE_FONTS.get(key, (BUTTON_FONT, 12, "bold")))
+            # ↑ add some bottom margin after the title
+            title_lbl.grid(row=0, column=0, padx=20, pady=(24, 24), sticky="n")
+
+            desc_lbl = ctk.CTkLabel(card, text=desc, font=(BUTTON_FONT, 11),
+                                    wraplength=220, justify="center")
+            desc_lbl.grid(row=1, column=0, padx=12, sticky="n")
+
+            for w in (card, title_lbl, desc_lbl):
+                w.bind("<Button-1>", lambda e, _k=key: self._select_mode(_k))
+
+            self._card_widgets[key] = card
+            self._card_desc_labels[key] = desc_lbl
+            self._card_order.append((key, card))
+
+        try:
+            parent.bind_all("<Key-1>", lambda e: self._select_mode("Text1st+Image-beta"))
+            parent.bind_all("<Key-2>", lambda e: self._select_mode("Default"))
+            parent.bind_all("<Key-3>", lambda e: self._select_mode("OCR-All"))
+        except Exception:
+            pass
+
+    def _on_extract_overlay_configure(self, event=None):
+        try:
+            if not hasattr(self, "_cards_wrapper"):
+                return
+
+            w = self.extract_overlay.winfo_width()
+            h = self.extract_overlay.winfo_height()
+            if w <= 1 or h <= 1:
+                return
+
+            # available inner width for cards
+            # available inner width for cards
+            available = max(0, w - (WRAPPER_PAD * 2))
+
+            # how many columns can fit: floor((available + GAP) / (MIN + GAP))
+            cols = int((available + CARD_GAP) // (CARD_MIN_W + CARD_GAP))
+            cols = max(1, min(3, cols))
+            cols = 3 #force
+            for c in range(3):
+                self._cards_wrapper.grid_columnconfigure(c, weight=(1 if c < cols else 0))
+
+            # re-grid cards into rows/cols
+            for _, card in self._card_order:
+                card.grid_forget()
+            r = c = 0
+            for key, card in self._card_order:
+                card.grid(row=r, column=c, padx=8, pady=8, sticky="nsew")
+                c += 1
+                if c >= cols:
+                    c = 0
+                    r += 1
+            for row in range(r + 1):
+                self._cards_wrapper.grid_rowconfigure(row, weight=1)
+
+            # compute the actual column width we have and update wraplength
+            total_gaps = (cols - 1) * CARD_GAP
+            col_width = max(CARD_MIN_W, (available - total_gaps) // cols)
+
+            for key, _ in self._card_order:
+                # leave some inner padding for the card (borders/margins)
+                self._card_desc_labels[key].configure(wraplength=int(col_width - 32))
+
+            print("overlay:", self.extract_overlay.winfo_width(),
+                  "cards:", self.extract_cards.winfo_width(),
+                  "wrapper:", self._cards_wrapper.winfo_width())
+
+        except Exception as e:
+            print(f"overlay configure error: {e}")
+
+    def _select_mode(self, key: str, initial: bool = False):
+        for k, card in self._card_widgets.items():
+            if k == key:
+                card.configure(border_color=CARD_BORDER_SELECTED, fg_color=CARD_BG_SELECTED)
+            else:
+                card.configure(border_color=CARD_BORDER_DEFAULT, fg_color=CARD_BG_DEFAULT)
+
+        self.ocr_settings['enable_ocr'] = key
+        if not initial:
+            self.ocr_menu_callback(key)
+        try:
+            self.ocr_menu_var.set(key)
+        except Exception:
+            pass
+        if not initial:
+            print(f"[Mode] OCR mode selected: {key}")
+
+    def _toggle_floating_controls(self, show: bool):
+        """Show/hide zoom slider, recent↩, and close X."""
+        widgets = [self.recent_pdf_button, self.close_pdf_button, self.zoom_frame]
+        if show:
+            self.update_floating_controls()
+        else:
+            for w in widgets:
+                try:
+                    w.place_forget()
+                except Exception:
+                    pass
+
+    def _hide_viewer(self):
+        """Hide the PDF viewer canvas and (if present) its scrollbars."""
+        # Canvas (required)
+        try:
+            self.pdf_viewer.canvas.place_forget()
+        except Exception:
+            try:
+                self.pdf_viewer.canvas.pack_forget()
+            except Exception:
+                pass
+
+        # Common scrollbar attribute names—hide if they exist
+        for name in ("h_scrollbar", "v_scrollbar", "x_scrollbar", "y_scrollbar"):
+            sb = getattr(self.pdf_viewer, name, None)
+            if sb is not None:
+                try:
+                    sb.place_forget()
+                except Exception:
+                    try:
+                        sb.pack_forget()
+                    except Exception:
+                        pass
+
+    def _show_viewer(self):
+        """Restore the PDF viewer layout based on current window size."""
+        try:
+            self.pdf_viewer.resize_canvas(
+                self.root.winfo_width(),
+                self.root.winfo_height(),
+                x_offset=CANVAS_LEFT_MARGIN
+            )
+            self.pdf_viewer.update_rectangles()
+        except Exception as e:
+            print(f"Error showing viewer: {e}")
+
+    def _on_tab_changed(self, tab_name: str):
+        """Respond to tab changes: Extract hides viewer; others show it."""
+        if tab_name == "Extract":
+            self._hide_viewer()
+            self._toggle_floating_controls(False)
+            self._ensure_min_geometry_for_cols(3)  # <-- add this line
+            self._layout_extract_overlay()
+            self.extract_overlay.lift()
+            self.extract_overlay.update_idletasks()
+            self._on_extract_overlay_configure()
+
+        else:
+            self.extract_overlay.place_forget()  # <— hide overlay
+            self._show_viewer()
+            self._toggle_floating_controls(True)
+
+    def _watch_tab_selection(self):
+        """Poll the current tab since CTkTabview lacks a built-in change event."""
+        try:
+            current = self.tab_view.get()
+            if current != getattr(self, "_current_tab", None):
+                self._current_tab = current
+                self._on_tab_changed(current)
+        except Exception:
+            pass
+        # Poll about 5 times/second — responsive without being heavy
+        self.root.after(200, self._watch_tab_selection)
 
     def show_tool_instructions(self, text):
         window = ctk.CTkToplevel(self.root)
@@ -943,8 +1254,21 @@ class XtractorGUI:
 
         def enable_ocr_menu(enabled):
             color = "red4" if enabled else "gray29"
-            self.ocr_menu.configure(fg_color=color, button_color=color)
-            self.dpi_menu.configure(state="normal" if enabled else "disabled", fg_color=color, button_color=color)
+            # Both of these may not exist yet during early init — guard them
+            if hasattr(self, "ocr_menu"):
+                try:
+                    self.ocr_menu.configure(fg_color=color, button_color=color)
+                except Exception:
+                    pass
+            if hasattr(self, "dpi_menu"):
+                try:
+                    self.dpi_menu.configure(
+                        state="normal" if enabled else "disabled",
+                        fg_color=color,
+                        button_color=color
+                    )
+                except Exception:
+                    pass
 
         if choice in ("Default", "OCR-All", "Text1st+Image-beta"):
             found_tesseract_path = find_tessdata()
@@ -1170,14 +1494,24 @@ class XtractorGUI:
 
             sidebar_width = self.tab_view.winfo_width() + 20
 
-            self.pdf_viewer.resize_canvas(self.root.winfo_width(), self.root.winfo_height(),x_offset=CANVAS_LEFT_MARGIN)
-
-            self.pdf_viewer.update_rectangles()
+            if self.tab_view.get() != "Extract":
+                self.pdf_viewer.resize_canvas(
+                    self.root.winfo_width(), self.root.winfo_height(),
+                    x_offset=CANVAS_LEFT_MARGIN
+                )
+                self.pdf_viewer.update_rectangles()
 
             # Zoom and version controls
-            self.zoom_frame.place_configure(x=sidebar_width + 0, y=new_height - 57)
+            if self.tab_view.get() != "Extract":
+                # Only place floating controls when viewer is visible
+                self.zoom_frame.place_configure(x=sidebar_width + 0, y=new_height - 57)
+                self.update_floating_controls()
+            else:
+                # Make sure floats stay hidden while in Extract
+                self._toggle_floating_controls(False)
+                # Keep overlay covering the canvas area
+                self._layout_extract_overlay()
 
-            self.update_floating_controls()
 
         except Exception as e:
             print(f"Error resizing widgets: {e}")
