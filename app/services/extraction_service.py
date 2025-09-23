@@ -1,4 +1,4 @@
-#extraction_service.py
+# app/services/extraction_service.py
 from __future__ import annotations
 import csv, gc, json, os, secrets, shutil
 from dataclasses import asdict
@@ -117,7 +117,7 @@ def _write_temp_csv(csv_path: Path, ndjson_path: Optional[Path], rows: Iterable[
 def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: str) -> int:
     pdf = PdfAdapter()
     ocr = OcrAdapter(req["ocr_tess"])
-    parser = RevisionParser(req["rev_regex"])
+    parser = RevisionParser(req.get("rev_regex"))
 
     areas_rects: list[tuple] = list(req["areas_rects"])
     revision_rect: Optional[tuple] = req.get("rev_area_rect")
@@ -224,11 +224,10 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                         adj_rev = adjust_coordinates_for_rotation(revision_rect, rotation, ph2, pw2)
                         rclip = _sanitize_clip(adj_rev, pr2)
                         if rclip:
-                            wc = pdf.words_count(page, rclip)
-                            if wc < 0 or wc >= 6:
-                                rows = pdf.find_table_rows(page, rclip)
-                                if rows:
-                                    revisions = parser.parse_table_rows(rows)
+                            rows = pdf.find_table_rows(page, rclip)
+                            if rows:
+                                revisions = parser.parse_table_rows(rows)
+
                                 # free big locals
                                 try:
                                     del rows
@@ -328,10 +327,16 @@ class ExtractionService:
         areas_rects = [tuple(a.rect) for a in req.areas]
         rev_area_rect = tuple(req.revision_area.rect) if req.revision_area else None
 
+        # extract a plain pattern string or None
+        rev_pattern = None
+        if req.revision_regex:
+            rev_pattern = getattr(req.revision_regex, "pattern", None) \
+                          or (req.revision_regex if isinstance(req.revision_regex, str) else None)
+
         req_dict = {
             "areas_rects": areas_rects,
             "rev_area_rect": rev_area_rect,
-            "rev_regex": str(req.revision_regex),
+            "rev_regex": rev_pattern,  # <-- use clean pattern here
             "ocr_mode": req.ocr.mode,
             "ocr_dpi": req.ocr.dpi,
             "ocr_scale": req.ocr.scale,
