@@ -555,7 +555,7 @@ class XtractorGUI:
                                                 font=(BUTTON_FONT, 9), width=240, height=24)
         self.output_path_button.pack(pady=2)
 
-        self.extract_button = ctk.CTkButton(tab_extract, text="🚀 Extract Now", font=("Arial Black", 13),
+        self.extract_button = ctk.CTkButton(tab_extract, text="▶    START EXTRACTION   ", font=("Arial Black", 13),
                                             corner_radius=10, width=240, height=30, command=self.start_extraction)
         self.extract_button.pack(pady=35)
 
@@ -736,8 +736,9 @@ class XtractorGUI:
         wrapper.grid_propagate(False)
         self._cards_wrapper = wrapper
 
+        # make all 3 columns share the same width
         for c in range(3):
-            wrapper.grid_columnconfigure(c, weight=0)
+            wrapper.grid_columnconfigure(c, weight=1, uniform="cards")
         wrapper.grid_rowconfigure(0, weight=1)
 
         cards = [
@@ -832,6 +833,10 @@ class XtractorGUI:
             # compute the actual column width we have and update wraplength
             total_gaps = (cols - 1) * CARD_GAP
             col_width = max(CARD_MIN_W, (available - total_gaps) // cols)
+
+            # equalize column widths and keep them responsive
+            for c in range(3):
+                self._cards_wrapper.grid_columnconfigure(c, weight=1, uniform="cards", minsize=int(col_width))
 
             for key, _ in self._card_order:
                 # leave some inner padding for the card (borders/margins)
