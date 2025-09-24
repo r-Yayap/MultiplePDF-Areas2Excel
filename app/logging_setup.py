@@ -5,11 +5,23 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 APP_NAME = "xtractor"
+APP_NAME = "xtractor"
+
+def _app_dir() -> Path:
+    # When frozen (PyInstaller/Nuitka), write next to the executable;
+    # otherwise write in the project root (parent of the 'app' package).
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[1]
 
 def _log_dir() -> Path:
-    base = Path(os.getenv("XTRACTOR_LOG_DIR", Path.home() / f".{APP_NAME}" / "logs"))
+    # Allow optional override via env var, else use "<app>/logs"
+    base = Path(os.getenv("XTRACTOR_LOG_DIR") or (_app_dir() / "logs"))
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+def log_file_path() -> Path:
+    return _log_dir() / "app.log"
 
 def configure_logging(level: int | None = None) -> logging.Logger:
     # Resolve level from env or default
@@ -18,7 +30,7 @@ def configure_logging(level: int | None = None) -> logging.Logger:
     lvl = lvl or level or logging.INFO
 
     root = logging.getLogger()
-    # Idempotency: if we've already added our handler, bail
+    # Idempotent: if our file handler already exists, don’t add again
     if any(getattr(h, "name", "") == "xtractor_file" for h in root.handlers):
         return logging.getLogger(APP_NAME)
 
@@ -26,32 +38,12 @@ def configure_logging(level: int | None = None) -> logging.Logger:
         "%(asctime)s | %(levelname)s | %(processName)s | %(name)s:%(lineno)d | %(message)s"
     )
 
-    fh = RotatingFileHandler(
-        _log_dir() / "app.log",
-        maxBytes=1_000_000, backupCount=3, encoding="utf-8", delay=True
-    )
-    fh.set_name("xtractor_file")
+    fh = RotatingFileHandler(log_file_path(), maxBytes=2_000_000, backupCount=3, encoding="utf-8")
     fh.setFormatter(fmt)
-    fh.setLevel(lvl)
+    fh.name = "xtractor_file"
+
     root.addHandler(fh)
-
-    if os.environ.get("XTRACTOR_CONSOLE_LOG", "0") == "1":
-        ch = logging.StreamHandler()
-        ch.set_name("xtractor_console")
-        ch.setFormatter(fmt)
-        ch.setLevel(lvl)
-        root.addHandler(ch)
-
     root.setLevel(lvl)
-    logging.captureWarnings(True)
-
-    # Tame noisy libs
-    logging.getLogger("PIL").setLevel(logging.WARNING)
-    logging.getLogger("fitz").setLevel(logging.WARNING)
 
     return logging.getLogger(APP_NAME)
 
-def install_excepthook():
-    def _hook(exc_type, exc, tb):
-        logging.getLogger(APP_NAME).exception("Uncaught exception", exc_info=(exc_type, exc, tb))
-    sys.excepthook = _hook

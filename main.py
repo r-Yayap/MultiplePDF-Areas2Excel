@@ -6,7 +6,7 @@ import multiprocessing
 import threading
 import sys
 from pathlib import Path
-
+import os
 import customtkinter as ctk
 from app.ui.gui import CTkDnD, XtractorGUI   # CTkDnD ensures tkdnd is loaded
 from app.ui.constants import (
@@ -17,13 +17,14 @@ from app.ui.constants import (
 from app.ui.dpi_utils import init_windows_dpi_awareness, apply_scaling, install_dpi_watcher
 
 
-from app.logging_setup import configure_logging
+from app.logging_setup import configure_logging, log_file_path
 logger = configure_logging()
 logger.info("App starting…")
 
 # ────────────────────────────────────────────────────────────
 #  Helper: resource path (PyInstaller/Nuitka/Python-safe)
 # ────────────────────────────────────────────────────────────
+
 def resource_path(rel: str) -> str:
     if getattr(sys, "frozen", False):
         base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
@@ -31,13 +32,35 @@ def resource_path(rel: str) -> str:
         base_dir = Path(__file__).parent
     return str(base_dir / rel)
 
+def _ci_find(dir_path: Path, name: str) -> str | None:
+    """Case-insensitive file lookup in dir_path. Returns full path or None."""
+    if not dir_path.exists():
+        return None
+    low = name.lower()
+    for p in dir_path.iterdir():
+        if p.name.lower() == low:
+            return str(p)
+    return None
+
 def asset(rel_name: str) -> str:
-    """Return path to UI assets, working in dev and frozen builds."""
-    p = Path(resource_path(f"app/ui/style/{rel_name}"))
+    base = Path(resource_path(""))
+    # 1) Prefer Nuitka-mapped 'style/' dir
+    p = base / "style" / rel_name
     if p.exists():
         return str(p)
-    # fallback for dev layouts that still use /style at project root
-    return resource_path(f"style/{rel_name}")
+    hit = _ci_find(base / "style", rel_name)
+    if hit:
+        return hit
+    # 2) Fallback to dev path 'app/ui/style/'
+    p = base / "app" / "ui" / "style" / rel_name
+    if p.exists():
+        return str(p)
+    hit = _ci_find(base / "app" / "ui" / "style", rel_name)
+    if hit:
+        return hit
+    # 3) Last resort: return style path (will raise later with a clear path)
+    return str(base / "style" / rel_name)
+
 
 
 # ────────────────────────────────────────────────────────────
@@ -93,11 +116,22 @@ def create_splash(master):
 # ────────────────────────────────────────────────────────────
 #  Heavy imports in background (warm-up)
 # ────────────────────────────────────────────────────────────
-def warm_up(event):
-    import pymupdf as fitz     # noqa: F401
-    import openpyxl            # noqa: F401
-    import PIL.Image           # noqa: F401
-    event.set()
+def warm_up(event, errors):
+    try:
+        logger.debug("Warm-up: importing heavy dependencies")
+        try:
+            import pymupdf as fitz     # noqa: F401
+        except ModuleNotFoundError:
+            import fitz                # noqa: F401
+        import openpyxl                # noqa: F401
+        import PIL.Image               # noqa: F401
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        errors.append(exc)
+        logger.exception("Warm-up failed while importing libraries")
+    else:
+        logger.debug("Warm-up completed successfully")
+    finally:
+        event.set()
 
 
 # ────────────────────────────────────────────────────────────
@@ -157,10 +191,25 @@ def main():
 
     # F) Background warm-up
     ready = threading.Event()
-    threading.Thread(target=warm_up, args=(ready,), daemon=True).start()
+    warmup_errors = []
+    threading.Thread(target=warm_up, args=(ready, warmup_errors), daemon=True).start()
 
     # G) Switch from splash to main once warmed
     def finish():
+        if warmup_errors:
+            cancel_anim()
+            splash.destroy()
+            from tkinter import messagebox
+
+            log_file = log_file_path()
+            message = (
+                "Xtractor could not load required libraries and needs to close.\n\n"
+                f"Details: {warmup_errors[0]}\n\n"
+                f"Check the log file at:\n{log_file}"
+            )
+            messagebox.showerror("Xtractor startup error", message, parent=root)
+            root.destroy()
+            return
         _build_and_show(root, splash, cancel_anim)
 
     def check_ready():

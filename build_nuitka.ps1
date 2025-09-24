@@ -23,12 +23,15 @@ catch {
   & $PythonCmd @($PyArgs + @('-m','pip','install','-U','pip','setuptools','wheel','nuitka','zstandard','ordered-set'))
 }
 
+$jobs = [int]$env:NUMBER_OF_PROCESSORS            # or leave some headroom:
+# $jobs = [math]::Max(1, [int]($env:NUMBER_OF_PROCESSORS * 0.75))
+
 # Build args (updated paths for new layout)
 $NuitkaArgs = @(
   '-m','nuitka',
   '--standalone',
   '--enable-plugin=tk-inter',
-  '--include-data-dir=app\ui\style=style',
+  '--include-data-dir=app\ui\style=app\ui\style',
   '--include-data-dir=tessdata=tessdata',
   '--include-module=tkinterdnd2',
   '--include-module=openpyxl',
@@ -38,10 +41,11 @@ $NuitkaArgs = @(
   '--include-module=CTkToolTip',
   '--include-module=psutil',
   '--include-module=ttkwidgets',
+  '--include-package=standalone',
   '--include-package-data=customtkinter',
   '--windows-icon-from-ico=app\ui\style\Xtractor-Logo.ico',
   '--windows-console-mode=attach',
-  '--jobs=8',
+  "--jobs=$jobs",
   '--lto=no',
   '--output-dir=build',
   'main.py'

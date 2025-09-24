@@ -65,14 +65,22 @@ RESIZE_DELAY = 700  # ms
 TESSDATA_FOLDER = None
 
 # ───────── Lazy-load tool actions to avoid heavy imports at import-time ─────────
-import importlib
-
+import importlib, traceback
+from tkinter import messagebox
 
 def _lazy(module: str, attr: str):
     def _call(*args, **kwargs):
-        mod = importlib.import_module(module)
-        return getattr(mod, attr)(*args, **kwargs)
-
+        try:
+            mod = importlib.import_module(module)
+            fn = getattr(mod, attr)
+        except Exception as e:
+            tb = traceback.format_exc(limit=3)
+            messagebox.showerror(
+                "Tool failed to load",
+                f"Could not load {module}.{attr}\n\n{e}\n\n{tb}"
+            )
+            return
+        return fn(*args, **kwargs)
     return _call
 
 launch_pdf_dwg_gui = _lazy("standalone.sc_pdf_dwg_list", "launch_pdf_dwg_gui")
