@@ -341,6 +341,14 @@ class XtractorGUI:
         self.extract_overlay.bind("<Configure>", self._on_extract_overlay_configure)
         self.extract_overlay.after_idle(self._on_extract_overlay_configure)
 
+        # --- Tools overlay (occupies the PDF canvas area) ---
+        self.tools_overlay = ctk.CTkFrame(self.root, fg_color="transparent", width=1, height=1)
+        self._build_tools_cards(self.tools_overlay)
+        self.tools_overlay.place_forget()
+
+        # keep it responsive
+        self.tools_overlay.bind("<Configure>", lambda e: self._on_tools_overlay_configure())
+
         # ======================= 📁 FILES TAB =======================
 
         # PDF Folder Drop Zone
@@ -568,41 +576,6 @@ class XtractorGUI:
         tool_frame = ctk.CTkFrame(tab_tools)
         tool_frame.pack(pady=10, fill="both", expand=True)
 
-        for label, tool in tool_definitions.items():
-            # Create the main tool button
-            if label == "PDF & DWG Checker":
-                # Pass self.root explicitly when launching PDF/DWG Checker popup
-                btn = ctk.CTkButton(
-                    tool_frame,
-                    text=label,
-                    width=240,
-                    height=28,
-                    font=(BUTTON_FONT, 10),
-                    command=lambda root=self.root, func=tool["action"]: func(root)
-                )
-            else:
-                btn = ctk.CTkButton(
-                    tool_frame,
-                    text=label,
-                    width=240,
-                    height=28,
-                    font=(BUTTON_FONT, 10),
-                    command=tool["action"]
-                )
-            btn.pack(pady=(10, 2))
-
-            # Create the "How to use?" help button next to it, capturing tool text correctly
-            help_btn = ctk.CTkButton(
-                tool_frame,
-                text="How to use?",
-                width=240,
-                height=20,
-                font=(BUTTON_FONT, 9),
-                fg_color="gray20",
-                hover_color="gray30",
-                command=lambda t=tool: self.show_tool_instructions(t["instructions"])
-            )
-            help_btn.pack(pady=(0, 5))
 
         # Load PNG from style folder
         logo_image = Image.open(resource_path("style/xtractor-logo.png"))
@@ -636,9 +609,110 @@ class XtractorGUI:
         if self._current_tab == "Extract":
             self._on_tab_changed("Extract")
 
-
-
         self.root.after_idle(self.update_floating_controls)
+
+    def _layout_tools_overlay(self):
+        try:
+            self.root.update_idletasks()
+            canvas_mapped = bool(self.pdf_viewer.canvas.winfo_ismapped())
+            if canvas_mapped:
+                x = self.pdf_viewer.canvas.winfo_x()
+                y = self.pdf_viewer.canvas.winfo_y()
+            else:
+                sidebar_right = self.tab_view.winfo_x() + self.tab_view.winfo_width()
+                x = max(sidebar_right + 8, CANVAS_LEFT_MARGIN)
+                y = CANVAS_TOP_MARGIN if "CANVAS_TOP_MARGIN" in globals() else 0
+
+            win_w = self.root.winfo_width()
+            win_h = self.root.winfo_height()
+            w = max(50, win_w - x - 4)
+            h = max(50, win_h - y - 4)
+
+            self.tools_overlay.place_configure(x=x, y=y)
+            self.tools_overlay.configure(width=w, height=h)
+            self.tools_overlay.lift()
+        except Exception as e:
+            print(f"Tools overlay layout error: {e}")
+
+    def _on_tools_overlay_configure(self):
+        # optional: if you need to recompute wrapping etc. you can do it here.
+        pass
+
+    def _build_tools_cards(self, parent):
+        # header
+        header = ctk.CTkLabel(parent, text="TOOLS", font=(BUTTON_FONT, 28, "bold"))
+        header.place(relx=0.5, rely=0.04, anchor="n")
+
+        # grid wrapper below header
+        wrap = ctk.CTkFrame(parent, fg_color="transparent")
+        wrap.place(relx=0, rely=0.12, relwidth=1, relheight=0.80)  # 12% top room for header
+        wrap.grid_propagate(False)
+
+        # pick 3 columns (responsive optionality omitted for simplicity)
+        for c in range(2):
+            wrap.grid_columnconfigure(c, weight=1, uniform="tools")
+        # rows will expand as needed
+        row = col = 0
+
+        # build a compact “card” per tool
+        for label, tool in tool_definitions.items():
+            card = ctk.CTkFrame(wrap, corner_radius=12, border_width=1,
+                                border_color="gray35", fg_color="#2a2a2a")
+            card.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
+            card.grid_rowconfigure(0, weight=0)
+            card.grid_rowconfigure(1, weight=1)
+            card.grid_rowconfigure(2, weight=0)
+            card.grid_columnconfigure(0, weight=1)
+
+            title = ctk.CTkLabel(card, text=label, font=(BUTTON_FONT, 14, "bold"))
+            title.grid(row=0, column=0, padx=12, pady=(12, 6), sticky="w")
+
+            # short preview of instructions (first 2–3 lines)
+
+            blurb = tool.get("blurb")
+            if not blurb:
+                blurb = self._brief(tool.get("instructions") or "")
+
+            desc = ctk.CTkLabel(card, text=blurb, font=(BUTTON_FONT, 10), justify="left", text_color="gray80",
+                                wraplength=260)
+            desc.grid(row=1, column=0, padx=12, pady=(0, 8), sticky="nwe")
+
+            btn_row = ctk.CTkFrame(card, fg_color="transparent")
+            btn_row.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="we")
+            btn_row.grid_columnconfigure(0, weight=1)
+            btn_row.grid_columnconfigure(1, weight=1)
+
+            open_btn = ctk.CTkButton(
+                btn_row, text="Open", height=28,
+                command=(lambda f=tool["action"], needs=tool.get("needs_master", False):
+                         f(self.root) if needs else f())
+            )
+            open_btn.grid(row=0, column=0, padx=(0, 6), sticky="we")
+
+            help_btn = ctk.CTkButton(btn_row, text="How to use?", height=28,
+                                     fg_color="gray20", hover_color="gray30",
+                                     command=(lambda t=tool: self.show_tool_instructions(t["instructions"])))
+            help_btn.grid(row=0, column=1, padx=(6, 0), sticky="we")
+
+            # next cell
+            col += 1
+            if col >= 2:
+                col = 0
+                row += 1
+
+    def _brief(self, text: str, limit: int = 120) -> str:
+        # collapse whitespace
+        s = " ".join(text.split())
+        if not s:
+            return "—"
+        # try first sentence
+        import re
+        m = re.split(r'(?<=[.!?])\s+', s, maxsplit=1)
+        first = m[0] if m else s
+        # trim bullets/prefixes
+        first = first.lstrip("•-–1234567890. ").strip()
+        # limit length
+        return (first[:limit - 1] + "…") if len(first) > limit else first
 
     def _ensure_min_geometry_for_cols(self, n: int = 3):
         """Grow the window (if needed) so n cards can sit side-by-side, and set minsize."""
@@ -997,25 +1071,38 @@ class XtractorGUI:
             print(f"Error showing viewer: {e}")
 
     def _on_tab_changed(self, tab_name: str):
-        if tab_name == "Extract":
+        if tab_name in ("Extract", "Tools"):
             self._hide_viewer()
             self._toggle_floating_controls(False)
-            # disable the sidebar button while overlay CTA is shown
+
+            # disable any sidebar extract button if you were doing that
             try:
                 self.extract_button.configure(state="disabled")
             except Exception:
                 pass
 
             self._ensure_min_geometry_for_cols(3)
-            self._layout_extract_overlay()
-            self.extract_overlay.lift()
-            self.extract_overlay.update_idletasks()
-            self._on_extract_overlay_configure()
+
+            # show the correct overlay
+            if tab_name == "Extract":
+                self.tools_overlay.place_forget()
+                self._layout_extract_overlay()
+                self.extract_overlay.lift()
+                self.extract_overlay.update_idletasks()
+                self._on_extract_overlay_configure()
+            else:  # Tools
+                self.extract_overlay.place_forget()
+                self._layout_tools_overlay()
+                self.tools_overlay.lift()
+                self.tools_overlay.update_idletasks()
+                self._on_tools_overlay_configure()
+
         else:
+            # any other tab => show viewer again, hide overlays
             self.extract_overlay.place_forget()
+            self.tools_overlay.place_forget()
             self._show_viewer()
             self._toggle_floating_controls(True)
-            # re-enable the sidebar button when leaving overlay
             try:
                 self.extract_button.configure(state="normal")
             except Exception:
@@ -1591,28 +1678,23 @@ class XtractorGUI:
         self.prev_height = new_height
 
         try:
-            # Estimate the width of the left tabview panel
-
             sidebar_width = self.tab_view.winfo_width() + 20
+            current_tab = self.tab_view.get()
 
-            if self.tab_view.get() != "Extract":
+            if current_tab not in ("Extract", "Tools"):
                 self.pdf_viewer.resize_canvas(
                     self.root.winfo_width(), self.root.winfo_height(),
                     x_offset=CANVAS_LEFT_MARGIN
                 )
                 self.pdf_viewer.update_rectangles()
-
-            # Zoom and version controls
-            if self.tab_view.get() != "Extract":
-                # Only place floating controls when viewer is visible
                 self.zoom_frame.place_configure(x=sidebar_width + 0, y=new_height - 57)
                 self.update_floating_controls()
             else:
-                # Make sure floats stay hidden while in Extract
                 self._toggle_floating_controls(False)
-                # Keep overlay covering the canvas area
-                self._layout_extract_overlay()
-
+                if current_tab == "Extract":
+                    self._layout_extract_overlay()
+                else:  # Tools
+                    self._layout_tools_overlay()
 
         except Exception as e:
             print(f"Error resizing widgets: {e}")

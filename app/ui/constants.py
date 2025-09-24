@@ -90,6 +90,8 @@ OPTION_ACTIONS = {
 tool_definitions = {
     "PDF & DWG Checker": {
         "action": launch_pdf_dwg_gui,
+        "needs_master": True,
+        "blurb": "Compare PDFs and DWGs, spot missing or duplicate files, export to Excel.",
         "instructions": """
 1. Select the folder containing PDF & DWG files.
 
@@ -103,6 +105,7 @@ tool_definitions = {
     },
     "BIM File Checker": {
         "action": bim_checker_main,
+        "blurb": "Scan a folder for BIM file types and produce a status report in Excel.",
         "instructions": """
 The BIM File Checker scans a folder and visually shows in Excel:
     -Which file types are present (RVT, IFC, DWG, etc.)
@@ -124,6 +127,7 @@ How to use it?
     },
     "Bulk Rename Tool": {
         "action": bulk_rename_gui,
+        "blurb": "Batch-rename files using a CSV/Excel name map.",
         "instructions": """
 1. Load a mapping file (.csv or Excel) with original and new filenames.
     The csv or excel file should follow this:
@@ -140,6 +144,7 @@ How to use it?
     },
     "Folder File Exporter": {
         "action": generate_file_list_and_excel,
+        "blurb": "Export a full file inventory (with links) to Excel.",
         "instructions": """
 1. Select a folder to scan.
 
