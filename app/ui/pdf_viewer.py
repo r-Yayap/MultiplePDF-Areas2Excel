@@ -58,11 +58,14 @@ class PDFViewer:
 
         # Set Title submenu for title options
         self.set_title_menu = Menu(self.context_menu, tearoff=0)
-        self.set_title_menu.add_command(label="Drawing No", command=lambda: self.set_rectangle_title("Drawing No"))
-        self.set_title_menu.add_command(label="Drawing Title",
-                                        command=lambda: self.set_rectangle_title("Drawing Title"))
-        self.set_title_menu.add_command(label="Revision Description",
-                                        command=lambda: self.set_rectangle_title("Revision Description"))
+        self.set_title_menu.add_command(label="Drawing_No", command=lambda: self.set_rectangle_title("Drawing_No"))
+        self.set_title_menu.add_command(label="Drawing_Title", command=lambda: self.set_rectangle_title("Drawing_Title"))
+        self.set_title_menu.add_command(label="Revision", command=lambda: self.set_rectangle_title("Revision"))
+        self.set_title_menu.add_command(label="Revision_table", command=lambda: self.set_rectangle_title("Revision_table"))
+        self.set_title_menu.add_command(label="Revision_Description",command=lambda: self.set_rectangle_title("Revision_Description"))
+        self.set_title_menu.add_command(label="Revision_Date",command=lambda: self.set_rectangle_title("Revision_Date"))
+        self.set_title_menu.add_command(label="Project_No", command=lambda: self.set_rectangle_title("Project_No"))
+
         self.set_title_menu.add_command(label="Custom...", command=self.set_custom_title)
 
         # Add Set Title submenu to context menu

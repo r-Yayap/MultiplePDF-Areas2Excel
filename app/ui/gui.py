@@ -18,7 +18,7 @@ from app.domain.models import OcrSettings, ExtractionRequest
 from app.controllers.extract_controller import ExtractController
 from pathlib import Path
 
-from app.ui.ui_utils import create_tooltip, EditableTreeview
+from app.ui.ui_utils import create_tooltip, EditableTreeview, CTkOptionMenuNoArrow
 from app.common.ocr import find_tessdata
 from app.domain.revision_patterns import REVISION_PATTERNS
 
@@ -139,7 +139,6 @@ class XtractorGUI:
         self.output_excel_path = ''
         self.ocr_settings = {'enable_ocr': 'Default', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
-
 
         self.setup_widgets()
         self.ocr_menu_callback("Default")
@@ -529,38 +528,24 @@ class XtractorGUI:
         )
         self.ocr_help_button.pack(side="left", padx=(5, 0))
 
-        # ─────────────── DPI Setting ───────────────
-        dpi_row = ctk.CTkFrame(extract_frame, fg_color="transparent")
-        dpi_row.pack(pady=(0, 5), fill="x")
+        extract_frame.pack_forget()
+        # --- A single column container that uses GRID
+        extract_column = ctk.CTkFrame(tab_extract, fg_color="transparent")
+        extract_column.pack(fill="both", expand=True, pady=(0, 10))
 
-        dpi_label = ctk.CTkLabel(dpi_row, text="DPI:", font=(BUTTON_FONT, 9), width=80, anchor="w")
-        dpi_label.pack(side="left", padx=(0, 5))
+        extract_column.grid_columnconfigure(0, weight=1)
+        # Make the description row NOT grow, and let the controls row take the extra space
+        extract_column.grid_rowconfigure(0, weight=0)  # was 1
+        extract_column.grid_rowconfigure(1, weight=1)  # was 0
 
-        self.dpi_var = ctk.IntVar(value=150)
-        self.dpi_menu = ctk.CTkOptionMenu(dpi_row,
-                                          values=["50", "75", "150", "300", "450", "600"],
-                                          command=self.dpi_callback,
-                                          font=("Verdana Bold", 9),
-                                          variable=self.dpi_var,
-                                          width=140, height=24)
-        self.dpi_menu.pack(side="left")
-        # Now that the DPI control exists, safely select the default mode
-        self._select_mode("Default", initial=True)
-
-        self.output_path_entry = ctk.CTkEntry(tab_extract, width=240, height=24, font=(BUTTON_FONT, 9),
-                                              placeholder_text="Select Excel Output Path", border_width=1,
-                                              corner_radius=3)
-        self.output_path_entry.pack(pady=(15, 2))
-        self.output_path_button = ctk.CTkButton(tab_extract, text="📂 Browse Output Path", command=self.browse_output_path,
-                                                font=(BUTTON_FONT, 9), width=240, height=24)
-        self.output_path_button.pack(pady=2)
-
-        self.extract_button = ctk.CTkButton(tab_extract, text="▶    START EXTRACTION   ", font=("Arial Black", 13),
-                                            corner_radius=10, width=240, height=30, command=self.start_extraction)
-        self.extract_button.pack(pady=35)
-
-        self.extract_description_box = ctk.CTkTextbox(tab_extract, width=240, height=200, wrap="word",
-                                                      font=(BUTTON_FONT, 9))
+        # ---- TOP: description (fixed height, hugs the top) ----
+        self.extract_description_box = ctk.CTkTextbox(
+            extract_column,
+            wrap="word",
+            fg_color="#292929",
+            font=(BUTTON_FONT, 9),
+            height=480,
+        )
         self.extract_description_box.insert("end",
                                             "EXTRACTION SUMMARY\n\n"
                                             "Output Excel File (.xlsx):\n"
@@ -574,8 +559,9 @@ class XtractorGUI:
                                             "IF TEXT IS OCR-ed:\n"
                                             "  - Texts will be colored red\n"
                                             )
-        self.extract_description_box.configure(state="disabled")  # Make it read-only
-        self.extract_description_box.pack(pady=(0, 10))
+        self.extract_description_box.configure(state="disabled")
+        # stick to top + fill width (no vertical stretch)
+        self.extract_description_box.grid(row=0, column=0, sticky="new", padx=0, pady=(0, 10))
 
         # ======================= 🧰 TOOLS TAB =======================
         # Create a frame for all tools
@@ -730,26 +716,39 @@ class XtractorGUI:
         self.extract_cards.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.extract_cards.pack_propagate(False)
 
-        # Wrapper that fills the container and hosts the grid
+        # ===== Header =====
+        self._cards_header = ctk.CTkLabel(
+            self.extract_cards,
+            text="SELECT MODE",
+            font=(BUTTON_FONT, 32, "bold"),
+            text_color="white"
+        )
+        self._cards_header.place(relx=0.5, y=self._px(8), anchor="n")
+
+        # Use the SAME space for header and footer so the gap between cards and footer
+        # equals the header space (title area).
+        HEADER_H_FRAC = 0.12
+        FOOTER_H_FRAC = 0.12
+
+        # ===== Cards wrapper (grid) =====
         wrapper = ctk.CTkFrame(self.extract_cards, fg_color="transparent")
-        wrapper.place(relx=0, rely=0, relwidth=1, relheight=1)  # <-- you were missing this
+        wrapper.place(relx=0, rely=HEADER_H_FRAC, relwidth=1, relheight=(1 - HEADER_H_FRAC - FOOTER_H_FRAC))
         wrapper.grid_propagate(False)
         self._cards_wrapper = wrapper
 
-        # make all 3 columns share the same width
         for c in range(3):
             wrapper.grid_columnconfigure(c, weight=1, uniform="cards")
         wrapper.grid_rowconfigure(0, weight=1)
 
         cards = [
             ("+IMAGE",
-             "✓  Extracts text.\n\n✓  OCR if no text.\n\n✓  +image in Excel.",
+             "✓  Extracts embedded text.\n\n✓  OCR if no text.\n\n✓  +image in Excel.",
              "Text1st+Image-beta"),
             ("NORMAL",
-             "✓  Extracts text.\n\n✓  OCR if no text.\n\n",
+             "✓  Extracts embedded text.\n\n✓  OCR if no text.\n\n",
              "Default"),
             ("OCR",
-             "✘ Extracts text.\n\n✓  OCR will always run.",
+             "✘ Extracts embedded text.\n\n✓  OCR will always run.",
              "OCR-All"),
         ]
 
@@ -764,18 +763,17 @@ class XtractorGUI:
 
             CARD_TITLE_FONTS = {
                 "Text1st+Image-beta": (BUTTON_FONT, 24, "bold"),
-                "Default": (BUTTON_FONT, 24, "bold"),  # <- larger just for Default
+                "Default": (BUTTON_FONT, 24, "bold"),
                 "OCR-All": (BUTTON_FONT, 24, "bold"),
             }
-            # make the card gridable (top-aligned content, with a flexible filler row)
+
             card.grid_rowconfigure(0, weight=0)  # title
             card.grid_rowconfigure(1, weight=0)  # description
-            card.grid_rowconfigure(2, weight=1)  # filler pushes content up a bit
+            card.grid_rowconfigure(2, weight=1)  # filler
             card.grid_columnconfigure(0, weight=1)
 
             title_lbl = ctk.CTkLabel(card, text=title,
                                      font=CARD_TITLE_FONTS.get(key, (BUTTON_FONT, 12, "bold")))
-            # ↑ add some bottom margin after the title
             title_lbl.grid(row=0, column=0, padx=20, pady=(24, 24), sticky="n")
 
             desc_lbl = ctk.CTkLabel(card, text=desc, font=(BUTTON_FONT, 10),
@@ -789,12 +787,89 @@ class XtractorGUI:
             self._card_desc_labels[key] = desc_lbl
             self._card_order.append((key, card))
 
+        # quick keyboard toggles
         try:
             parent.bind_all("<Key-1>", lambda e: self._select_mode("Text1st+Image-beta"))
             parent.bind_all("<Key-2>", lambda e: self._select_mode("Default"))
             parent.bind_all("<Key-3>", lambda e: self._select_mode("OCR-All"))
+            parent.bind_all("<Return>", lambda e: self.start_extraction())  # Enter to start
         except Exception:
             pass
+
+        # ===== Footer row (Output path on left, DPI in middle, Start on right) =====
+        self._cards_footer = ctk.CTkFrame(self.extract_cards, fg_color="transparent")
+        self._cards_footer.place(relx=0, rely=(1 - FOOTER_H_FRAC), relwidth=1, relheight=FOOTER_H_FRAC)
+
+        # Grid: 2 rows (entry, browse), 3 cols (left stack, DPI tall, Start tall)
+        self._cards_footer.grid_columnconfigure(0, weight=1)  # left expands
+        self._cards_footer.grid_columnconfigure(1, weight=0)  # DPI
+        self._cards_footer.grid_columnconfigure(2, weight=0)  # Start
+
+        row_h = self._px(36)
+        self._cards_footer.grid_rowconfigure(0, weight=1, minsize=row_h)
+        self._cards_footer.grid_rowconfigure(1, weight=1, minsize=row_h)
+
+        # Left: output entry (row 0)
+        self.output_path_entry = ctk.CTkEntry(
+            self._cards_footer,
+            font=(BUTTON_FONT, 10),
+            placeholder_text="Select Excel Output Path",
+            border_width=1,
+            corner_radius=6
+        )
+        self.output_path_entry.grid(row=0, column=0, padx=(12, 10), pady=(6, 3), sticky="ew")
+
+        # Left: browse button (row 1)
+        self.output_path_button = ctk.CTkButton(
+            self._cards_footer,
+            text="📂 Browse Output Path",
+            font=(BUTTON_FONT, 10),
+            command=self.browse_output_path,
+            height=row_h
+        )
+        self.output_path_button.grid(row=1, column=0, padx=(12, 10), pady=(3, 10), sticky="ew")
+
+        # MIDDLE: DPI dropdown spanning both rows (same height as Start)
+        dpi_full_height = row_h * 2
+
+        self._dpi_width = self._px(50)  # <- pick your starting width
+
+        self.dpi_wrap = ctk.CTkFrame(self._cards_footer, width=self._dpi_width)
+        self.dpi_wrap.grid(row=0, column=1, rowspan=2,
+                           padx=(0, 4), pady=(6, 10), sticky="n")
+        self.dpi_wrap.pack_propagate(False)
+
+        # values with newlines
+        dpi_values = [f"{v}\nDPI" for v in ["50", "75", "150", "300", "450", "600"]]
+
+        self.dpi_var = ctk.StringVar(value="150\nDPI")
+
+        self.dpi_menu = CTkOptionMenuNoArrow(
+            self.dpi_wrap,
+            values=dpi_values,
+            variable=self.dpi_var,
+            command=self.dpi_callback,
+            font=(BUTTON_FONT, 10),
+            width=self._dpi_width,
+            height=self._px(44),  # a bit taller to fit 2 lines
+            item_height=self._px(36)  # taller menu rows
+        )
+        self.dpi_menu.pack(fill="both", expand=True)
+
+
+        # Right: tall Start Extraction (spans both rows)
+        self.start_button_overlay = ctk.CTkButton(
+            self._cards_footer,
+            text="▶    START EXTRACTION",
+            font=("Arial Black", 13),
+            corner_radius=10,
+            height=dpi_full_height,  # match DPI widget height
+            width=self._px(220),
+            command=self.start_extraction
+        )
+        self.start_button_overlay.grid(row=0, column=2, rowspan=2, padx=(10, 12), pady=(6, 10), sticky="nsew")
+        # ✅ Ensure "NORMAL" (Default) is visually selected on startup
+        self._select_mode("Default", initial=True)
 
     def _on_extract_overlay_configure(self, event=None):
         try:
@@ -848,6 +923,14 @@ class XtractorGUI:
 
         except Exception as e:
             print(f"overlay configure error: {e}")
+
+    def set_dpi_width(self, px: int):
+        # Don’t go below the content’s minimum, or it won’t shrink
+        self._dpi_width = max(px, self._px(120))  # adjust 120 to taste
+        self.dpi_wrap.configure(width=self._dpi_width)
+        self.dpi_menu.configure(width=self._dpi_width)
+        # Optional: lock the grid column to this width too
+        self._cards_footer.grid_columnconfigure(1, weight=0, minsize=self._dpi_width)
 
     def _select_mode(self, key: str, initial: bool = False):
         for k, card in self._card_widgets.items():
@@ -914,20 +997,29 @@ class XtractorGUI:
             print(f"Error showing viewer: {e}")
 
     def _on_tab_changed(self, tab_name: str):
-        """Respond to tab changes: Extract hides viewer; others show it."""
         if tab_name == "Extract":
             self._hide_viewer()
             self._toggle_floating_controls(False)
-            self._ensure_min_geometry_for_cols(3)  # <-- add this line
+            # disable the sidebar button while overlay CTA is shown
+            try:
+                self.extract_button.configure(state="disabled")
+            except Exception:
+                pass
+
+            self._ensure_min_geometry_for_cols(3)
             self._layout_extract_overlay()
             self.extract_overlay.lift()
             self.extract_overlay.update_idletasks()
             self._on_extract_overlay_configure()
-
         else:
-            self.extract_overlay.place_forget()  # <— hide overlay
+            self.extract_overlay.place_forget()
             self._show_viewer()
             self._toggle_floating_controls(True)
+            # re-enable the sidebar button when leaving overlay
+            try:
+                self.extract_button.configure(state="normal")
+            except Exception:
+                pass
 
     def _watch_tab_selection(self):
         """Poll the current tab since CTkTabview lacks a built-in change event."""
@@ -1034,8 +1126,8 @@ class XtractorGUI:
         y_top = self._px(23)
         y_zoom = win_h - self._px(57)
 
-        self.recent_pdf_button.place(x=canvas_x + gap, y=y_top)
-        self.close_pdf_button.place(x=canvas_x + gap + self._px(30), y=y_top)
+        self.recent_pdf_button.place(x=canvas_x + gap, y=y_top-4)
+        self.close_pdf_button.place(x=canvas_x + gap + self._px(30), y=y_top-4)
         self.zoom_frame.place(x=canvas_x + gap, y=y_zoom)
 
     def setup_bindings(self):
@@ -1048,7 +1140,6 @@ class XtractorGUI:
         create_tooltip(self.dpi_menu, "DPI resolution")
         create_tooltip(self.pdf_folder_entry, "Select the main folder containing PDF files")
         create_tooltip(self.output_path_entry, "Select folder for the Excel output")
-        create_tooltip(self.extract_button, "Start the extraction process")
         create_tooltip(self.import_button, "Import a saved template of selected areas")
         create_tooltip(self.export_button, "Export the selected areas as a template")
         create_tooltip(self.clear_areas_button, "Clear all selected areas")
@@ -1294,8 +1385,13 @@ class XtractorGUI:
         print("OCR mode:", self.ocr_settings['enable_ocr'])
 
     def dpi_callback(self, dpi_value):
-        self.ocr_settings['dpi_value'] = int(dpi_value)
-        print(f"DPI set to: {dpi_value}")
+        # Accept both plain numbers and labels like "150 DPI"
+        try:
+            num = int(str(dpi_value).split()[0])
+        except Exception:
+            num = 150
+        self.ocr_settings['dpi_value'] = num
+        print(f"DPI set to: {num}")
 
     def browse_pdf_folder(self):
         self.pdf_folder = filedialog.askdirectory()
