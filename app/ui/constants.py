@@ -32,7 +32,7 @@ BUTTON_FONT = "Verdana"
 CARD_MIN_W  = 200     # try 220–260 depending on how compact you want the cards
 CARD_GAP    = 16      # horizontal gap between cards (matches grid padx total)
 WRAPPER_PAD = 16      # inner left+right padding inside the overlay wrapper
-MIN_APP_H   = 520     # a sensible minimum app height
+MIN_APP_H   = 540     # a sensible minimum app height
 
 CARD_BG_DEFAULT   = "#3a3a3a"  # unselected bg
 CARD_BG_SELECTED  = "#780C0C"  # selected bg (pick what you like)

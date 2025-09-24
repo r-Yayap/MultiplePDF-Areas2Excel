@@ -215,7 +215,6 @@ class EditableTreeview(ttk.Treeview):
         # rebuild the tree to refresh the GUI's index mapping used elsewhere
         self.root_window.update_areas_treeview()
 
-import customtkinter as ctk
 
 class CTkOptionMenuNoArrow(ctk.CTkFrame):
     """Arrow-less dropdown that mirrors CTkOptionMenu's basic API."""
