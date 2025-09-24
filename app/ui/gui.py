@@ -53,7 +53,6 @@ def _rev_area_to_spec(a: Any):
         return None
     return _to_spec(a)
 
-# --- helpers to bridge GUI dicts <-> AreaSpec ---
 def _area_get_title_and_coords(area):
     """Return (title, (x0,y0,x1,y1)) from either a GUI dict or an AreaSpec"""
     try:
@@ -76,7 +75,6 @@ def _area_get_title_and_coords(area):
 
     raise TypeError(f"Unsupported area object: {area!r}")
 
-
 def _as_gui_area(area):
     """Always return a GUI-style dict {'title':..., 'coordinates':[...]}"""
     t, (x0, y0, x1, y1) = _area_get_title_and_coords(area)
@@ -98,7 +96,6 @@ class CTkDnD(ctk.CTk, *( (TkinterDnD.DnDWrapper,) if DND_ENABLED else tuple() ))
         if DND_ENABLED:
             self.TkdndVersion = TkinterDnD._require(self)
 
-
 def resource_path(rel: str) -> str:
     """
     Return an absolute path to a bundled resource that works for:
@@ -115,8 +112,6 @@ def resource_path(rel: str) -> str:
         base_dir = Path(__file__).parent
 
     return str(base_dir / rel)
-
-
 
 class XtractorGUI:
     def __init__(self, root):
@@ -1183,7 +1178,6 @@ class XtractorGUI:
         self.pdf_viewer.set_gui_revision_area(None)
         print("Cleared only revision table area.")
 
-
     def show_revision_help(self):
         window = ctk.CTkToplevel(self.root)
         window.title("Revision Table Area and Pattern Explanation")
@@ -1431,7 +1425,6 @@ class XtractorGUI:
             print(f"Error scanning {folder_path}: {e}")
         return False
 
-    #not needed
     def ocr_menu_callback(self, choice):
         print("OCR menu dropdown clicked:", choice)
 
@@ -1657,14 +1650,6 @@ class XtractorGUI:
                     self.progress_label.configure(text="Cancelling…")
                 except Exception:
                     pass
-
-    def optionmenu_callback(self, choice):
-        """Execute the corresponding function based on the selected option."""
-        action = OPTION_ACTIONS.get(choice)
-        if action:
-            action()  # Call the function
-        else:
-            messagebox.showerror("Error", f"No action found for {choice}")
 
     def on_window_resize(self, event=None):
         new_width = self.root.winfo_width()
