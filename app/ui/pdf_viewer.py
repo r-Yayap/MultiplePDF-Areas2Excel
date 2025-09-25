@@ -24,10 +24,6 @@ class PDFViewer:
         # per-viewer scroll throttle (avoid mutable global)
         self._scroll_counter = 0
 
-        # Add placeholder text
-        self.placeholder_text_id = None
-        self.show_placeholder()
-
         self.v_scrollbar = ctk.CTkScrollbar(master, orientation="vertical", command=self.canvas.yview,
                                             height=CANVAS_HEIGHT)
 
@@ -35,6 +31,46 @@ class PDFViewer:
         self.h_scrollbar = ctk.CTkScrollbar(master, orientation="horizontal", command=self.canvas.xview,
                                             width=CANVAS_WIDTH)
 
+        # --- Empty-state overlay (sits above the canvas) ---
+        self.empty_overlay = ctk.CTkFrame(master, fg_color="transparent", width=1, height=1)
+        self.empty_overlay.pack_propagate(False)
+
+        # NEW: a centered wrapper that stays in the middle of the overlay
+        self.empty_center = ctk.CTkFrame(self.empty_overlay, fg_color="transparent")
+        self.empty_center.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Put the labels inside the centered wrapper (reparented)
+        self.empty_title = ctk.CTkLabel(
+            self.empty_center,
+            text="",
+            font=("Arial Black", int(self._px(26)))
+        )
+        self.empty_title.pack(pady=(self._px(6), self._px(2)))
+
+        self.empty_subtitle = ctk.CTkLabel(
+            self.empty_center,
+            text="Drag and drop a PDF here to view title block\nor an Excel to import saved areas",
+            font=(BUTTON_FONT, 11),
+            text_color="gray70",
+            wraplength=self._px(560),
+            justify="center",
+        )
+        self.empty_subtitle.pack(padx=self._px(16), pady=(0, self._px(6)))
+
+        try:
+            from tkinterdnd2 import DND_ALL
+            self.empty_overlay.drop_target_register(DND_ALL)
+            self.empty_overlay.dnd_bind('<<Drop>>', self.handle_pdf_drop)
+        except Exception:
+            pass
+
+        # (Optional to keep, harmless)
+        self.placeholder_text_id = None
+        # Now it’s safe to show the overlay
+        self.show_placeholder()
+
+        # Show overlay at startup (no PDF yet)
+        self._set_empty_state_visible(True)
 
         self.pdf_document = None
         self.page = None
@@ -111,9 +147,44 @@ class PDFViewer:
         except Exception as e:
             print("Drag & Drop disabled (tkdnd not available):", e)
 
-    # --- public UI API (small, explicit) ---
+    def _set_empty_state_visible(self, show: bool):
+        """Show/hide the empty overlay positioned exactly over the canvas."""
+        if show:
+            # Position/size to match the canvas
+            x = self.canvas.winfo_x()
+            y = self.canvas.winfo_y()
+            w = self.canvas.winfo_width()
+            h = self.canvas.winfo_height()
 
-    # --- public micro-API for GUI <-> viewer ---
+            # Fallback if geometry not realized yet
+            if w <= 1 or h <= 1:
+                try:
+                    w = int(self.canvas.cget("width"))
+                    h = int(self.canvas.cget("height"))
+                except Exception:
+                    w = CANVAS_WIDTH
+                    h = CANVAS_HEIGHT
+
+            # In CustomTkinter: place for position only; set size via configure()
+            self.empty_overlay.place_configure(x=x, y=y)
+            self.empty_overlay.configure(width=w, height=h)
+
+            try:
+                self.empty_subtitle.configure(wraplength=max(200, w - self._px(40)))
+            except Exception:
+                pass
+
+            self.empty_overlay.lift()
+        else:
+            try:
+                self.empty_overlay.place_forget()
+            except Exception:
+                pass
+
+    def _refresh_empty_state_geometry(self):
+        """Keep overlay glued to the canvas during resizes."""
+        if str(self.empty_overlay.place_info()) != "{}":
+            self._set_empty_state_visible(True)
 
     def get_gui_areas(self) -> list[dict]:
         """Return areas as GUI dicts."""
@@ -183,26 +254,8 @@ class PDFViewer:
         return default
 
     def show_placeholder(self):
-        """Displays the drag & drop hint centered in the canvas."""
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        # Fallback if size is not yet available (initial state)
-        if canvas_width <= 1 or canvas_height <= 1:
-            canvas_width = CANVAS_WIDTH - self._px(200)  # was 200
-            canvas_height = CANVAS_HEIGHT
-
-        if self.placeholder_text_id:
-            self.canvas.delete(self.placeholder_text_id)
-
-        self.placeholder_text_id = self.canvas.create_text(
-            canvas_width // 2,
-            canvas_height // 2,
-            text="  DRAG & DROP\nSample PDF here\nand/or areas",
-            fill="gray70",
-            font=("Arial", self._px(20), "italic"),
-            anchor="center"
-        )
+        # Keep a shim for existing calls; now it just shows the overlay
+        self._set_empty_state_visible(True)
 
     def handle_pdf_drop(self, event):
         path = event.data.strip().replace("{", "").replace("}", "")
@@ -249,66 +302,53 @@ class PDFViewer:
         self.update_display()
 
     def close_pdf(self):
-        """Closes the displayed PDF and clears the canvas."""
-        # Remove any displayed image from the canvas
         self.canvas.delete("pdf_image")
-
-        # Close the PDF document if it is open
         if self.pdf_document:
             self.pdf_document.close()
             print("PDF document closed.")
-
-        # Reset the pdf_document attribute to None to indicate no PDF is open
         self.pdf_document = None
-        # Restore placeholder
-        self.show_placeholder()
+        self._set_empty_state_visible(True)  # ← show overlay when closed
 
     def display_pdf(self, pdf_path):
-        """Loads and displays the first page of a PDF document."""
         self.pdf_document = fitz.open(pdf_path)
         if self.pdf_document.page_count > 0:
-            self.page = self.pdf_document[0]  # Display the first page by default
-            # Remove placeholder if present
-            if self.placeholder_text_id:
-                self.canvas.delete(self.placeholder_text_id)
-                self.placeholder_text_id = None
-
+            self.page = self.pdf_document[0]
+            # remove any old canvas text approach if it existed
+            self._set_empty_state_visible(False)  # ← hide overlay when a PDF is visible
             self.pdf_width = int(self.page.rect.width)
             self.pdf_height = int(self.page.rect.height)
-            # Update the display
             self.update_display()
-            # Set the initial view to the top-left corner of the PDF
-            self.canvas.xview_moveto(1)  # Horizontal scroll to start
-            self.canvas.yview_moveto(1)  # Vertical scroll to start
+            self.canvas.xview_moveto(1)
+            self.canvas.yview_moveto(1)
         else:
             self.pdf_document = None
             print("Error: PDF has no pages.")
+            self._set_empty_state_visible(True)  # ← show overlay if nothing to display
 
     def update_display(self):
         if not self.page:
             print("Error updating display: No valid page loaded.")
+            self._set_empty_state_visible(True)
             return
-        try:
-            self.canvas.delete("all")
-            # ensure we’re using current widget size
-            self.canvas.config(width=self.canvas.winfo_width(), height=self.canvas.winfo_height())
 
-            pix = self.page.get_pixmap(matrix=fitz.Matrix(self.current_zoom, self.current_zoom))
-            img = pix.tobytes("ppm")
-            img_tk = tk.PhotoImage(data=img)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
-            self.canvas_image = img_tk
+        self.canvas.delete("all")
+        self.canvas.config(width=self.canvas.winfo_width(), height=self.canvas.winfo_height())
 
-            zoomed_width = int(self.pdf_width * self.current_zoom)
-            zoomed_height = int(self.pdf_height * self.current_zoom)
-            pad = self._px(SCROLLBAR_THICKNESS)  # from constants; your _px handles DPI
-            self.canvas.config(yscrollcommand=self.v_scrollbar.set,
-                               xscrollcommand=self.h_scrollbar.set,
-                               scrollregion=(0, 0, zoomed_width + pad, zoomed_height + pad)
-                               )
+        pix = self.page.get_pixmap(matrix=fitz.Matrix(self.current_zoom, self.current_zoom))
+        img = pix.tobytes("ppm")
+        img_tk = tk.PhotoImage(data=img)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=img_tk, tags="pdf_image")
+        self.canvas_image = img_tk
 
-        except ValueError as e:
-            print(f"Error updating display: {e}")
+        zoomed_width = int(self.pdf_width * self.current_zoom)
+        zoomed_height = int(self.pdf_height * self.current_zoom)
+        pad = self._px(SCROLLBAR_THICKNESS)
+        self.canvas.config(yscrollcommand=self.v_scrollbar.set,
+                           xscrollcommand=self.h_scrollbar.set,
+                           scrollregion=(0, 0, zoomed_width + pad, zoomed_height + pad))
+
+        # PDF is present → keep overlay hidden
+        self._set_empty_state_visible(False)
 
         self.update_rectangles()
 
@@ -468,6 +508,10 @@ class PDFViewer:
         # horizontal scrollbar: sits just below the canvas, stops at the vertical scrollbar
         self.h_scrollbar.place_configure(x=x_off, y=top + canvas_height)
         self.h_scrollbar.configure(width=canvas_width)
+
+        self._refresh_empty_state_geometry()
+        if self.pdf_document is None:
+            self._set_empty_state_visible(True)
 
         # bottom-right corner filler (prevents any visual overlap seam)
         if not hasattr(self, "_corner"):
