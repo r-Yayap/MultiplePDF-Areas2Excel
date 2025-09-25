@@ -807,6 +807,37 @@ class XtractorGUI:
         except Exception as e:
             print(f"minsize calc error: {e}")
 
+    def _apply_card_style(self, key: str, state: str = "default"):
+        """state: 'default' | 'hover' | 'selected'."""
+        card = self._card_widgets.get(key)
+        if not card:
+            return
+
+        # if selected, always show selected style
+        if getattr(self, "_selected_mode_key", None) == key:
+            card.configure(border_color=CARD_BORDER_SELECTED, fg_color=CARD_BG_SELECTED)
+            return
+
+        if state == "hover":
+            card.configure(border_color=CARD_BORDER_HOVER, fg_color=CARD_BG_HOVER)
+        else:  # default
+            card.configure(border_color=CARD_BORDER_DEFAULT, fg_color=CARD_BG_DEFAULT)
+
+    def _on_card_enter(self, key: str):
+        self._apply_card_style(key, "hover")
+        # optional: cursor feedback on whole card
+        try:
+            self._card_widgets[key].configure(cursor="hand2")
+        except Exception:
+            pass
+
+    def _on_card_leave(self, key: str):
+        self._apply_card_style(key, "default")
+        try:
+            self._card_widgets[key].configure(cursor="")
+        except Exception:
+            pass
+
     def _build_extract_mode_cards(self, parent):
         """Create three selectable cards for OCR modes (truly responsive, no overflow)."""
         # Container that fills the overlay
@@ -890,7 +921,11 @@ class XtractorGUI:
             desc_lbl.grid(row=1, column=0, padx=12, sticky="n")
 
             for w in (card, title_lbl, desc_lbl):
+                # click (already in your code)
                 w.bind("<Button-1>", lambda e, _k=key: self._select_mode(_k))
+                # hover
+                w.bind("<Enter>", lambda e, _k=key: self._on_card_enter(_k))
+                w.bind("<Leave>", lambda e, _k=key: self._on_card_leave(_k))
 
             self._card_widgets[key] = card
             self._card_desc_labels[key] = desc_lbl
@@ -991,6 +1026,8 @@ class XtractorGUI:
 
         # ✅ Ensure "NORMAL" (Default) is visually selected on startup
         self._select_mode("Default", initial=True)
+
+
 
     def _on_extract_overlay_configure(self, event=None):
         try:
@@ -1098,12 +1135,18 @@ class XtractorGUI:
         self._cards_footer.grid_columnconfigure(1, weight=0, minsize=self._dpi_width)
 
     def _select_mode(self, key: str, initial: bool = False):
-        for k, card in self._card_widgets.items():
-            if k == key:
-                card.configure(border_color=CARD_BORDER_SELECTED, fg_color=CARD_BG_SELECTED)
-            else:
-                card.configure(border_color=CARD_BORDER_DEFAULT, fg_color=CARD_BG_DEFAULT)
+        # remember selection
+        self._selected_mode_key = key
 
+        # restyle all cards in one go
+        for k in self._card_widgets.keys():
+            if k == key:
+                # force selected style
+                self._card_widgets[k].configure(border_color=CARD_BORDER_SELECTED, fg_color=CARD_BG_SELECTED)
+            else:
+                self._apply_card_style(k, "default")
+
+        # keep your existing logic
         self.ocr_settings['enable_ocr'] = key
         if not initial:
             self.ocr_menu_callback(key)

@@ -38,7 +38,8 @@ CARD_BG_DEFAULT   = "#3a3a3a"  # unselected bg
 CARD_BG_SELECTED  = "#910206"  # selected bg (pick what you like)
 CARD_BORDER_DEFAULT  = "gray35"
 CARD_BORDER_SELECTED = "#C10206"
-
+CARD_BORDER_HOVER = "#8a8a8a"
+CARD_BG_HOVER     = "#2f2f2f"
 
 DPI_OPTIONS = {
     "50": 50,
