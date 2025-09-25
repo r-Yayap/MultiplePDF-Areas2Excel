@@ -14,7 +14,10 @@ from tkinter.simpledialog import askstring  # For custom title input
 class PDFViewer:
     def __init__(self, parent, master):
         self.parent = parent  # `parent` is the XtractorGUI instance
-        self.canvas = ctk.CTkCanvas(master, width=CANVAS_WIDTH, height=CANVAS_HEIGHT)
+        self.canvas = ctk.CTkCanvas(master, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, highlightthickness=0)
+
+        # darker idle bg so “empty” isn’t white
+        self.canvas.configure(bg="#1e1e1e")  # darker background when empty
 
         # UI scaling factor from Tk (works with your main.py DPI setup)
         self._ui_scale = float(self.canvas.tk.call('tk', 'scaling')) / (96 / 72)  # == 1.0 at 96 DPI
@@ -32,26 +35,18 @@ class PDFViewer:
                                             width=CANVAS_WIDTH)
 
         # --- Empty-state overlay (sits above the canvas) ---
-        self.empty_overlay = ctk.CTkFrame(master, fg_color="transparent", width=1, height=1)
-        self.empty_overlay.pack_propagate(False)
+        self.empty_overlay = ctk.CTkFrame(master, fg_color="transparent")
 
         # NEW: a centered wrapper that stays in the middle of the overlay
-        self.empty_center = ctk.CTkFrame(self.empty_overlay, fg_color="transparent")
+        self.empty_center = ctk.CTkFrame(self.empty_overlay, fg_color="transparent", bg_color="#1e1e1e")
         self.empty_center.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Put the labels inside the centered wrapper (reparented)
-        self.empty_title = ctk.CTkLabel(
-            self.empty_center,
-            text="",
-            font=("Arial Black", int(self._px(26)))
-        )
-        self.empty_title.pack(pady=(self._px(6), self._px(2)))
 
         self.empty_subtitle = ctk.CTkLabel(
             self.empty_center,
             text="Drag and drop a PDF here to view title block\nor an Excel to import saved areas",
             font=(BUTTON_FONT, 11),
-            text_color="gray70",
+            text_color="gray30", fg_color="#1e1e1e",
             wraplength=self._px(560),
             justify="center",
         )
@@ -148,33 +143,29 @@ class PDFViewer:
             print("Drag & Drop disabled (tkdnd not available):", e)
 
     def _set_empty_state_visible(self, show: bool):
-        """Show/hide the empty overlay positioned exactly over the canvas."""
+        """Show/hide small, centered empty-state label above the canvas."""
         if show:
-            # Position/size to match the canvas
-            x = self.canvas.winfo_x()
-            y = self.canvas.winfo_y()
-            w = self.canvas.winfo_width()
-            h = self.canvas.winfo_height()
+            # make sure sizes are up-to-date
+            self.canvas.update_idletasks()
+            self.empty_center.update_idletasks()
 
-            # Fallback if geometry not realized yet
-            if w <= 1 or h <= 1:
-                try:
-                    w = int(self.canvas.cget("width"))
-                    h = int(self.canvas.cget("height"))
-                except Exception:
-                    w = CANVAS_WIDTH
-                    h = CANVAS_HEIGHT
+            cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
+            cx, cy = self.canvas.winfo_x(), self.canvas.winfo_y()
 
-            # In CustomTkinter: place for position only; set size via configure()
+            # requested (natural) size of the content
+            ow, oh = self.empty_center.winfo_reqwidth(), self.empty_center.winfo_reqheight()
+            if ow <= 1 or oh <= 1:
+                ow, oh = 320, 80  # safe fallback
+
+            # size the overlay to the content (place doesn't propagate size)
+            self.empty_overlay.configure(width=ow, height=oh)
+
+            # center the overlay over the canvas
+            x = cx + (cw - ow) // 2
+            y = cy + (ch - oh) // 2
             self.empty_overlay.place_configure(x=x, y=y)
-            self.empty_overlay.configure(width=w, height=h)
 
-            try:
-                self.empty_subtitle.configure(wraplength=max(200, w - self._px(40)))
-            except Exception:
-                pass
-
-            self.empty_overlay.lift()
+            self.empty_overlay.lift()  # ensure it's above the canvas
         else:
             try:
                 self.empty_overlay.place_forget()
@@ -182,7 +173,6 @@ class PDFViewer:
                 pass
 
     def _refresh_empty_state_geometry(self):
-        """Keep overlay glued to the canvas during resizes."""
         if str(self.empty_overlay.place_info()) != "{}":
             self._set_empty_state_visible(True)
 
@@ -307,7 +297,12 @@ class PDFViewer:
             self.pdf_document.close()
             print("PDF document closed.")
         self.pdf_document = None
-        self._set_empty_state_visible(True)  # ← show overlay when closed
+        self._set_empty_state_visible(True)
+        # NEW: re-pin buttons relative to the canvas
+        try:
+            self.parent.update_floating_controls()
+        except Exception:
+            pass
 
     def display_pdf(self, pdf_path):
         self.pdf_document = fitz.open(pdf_path)

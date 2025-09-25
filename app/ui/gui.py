@@ -351,7 +351,7 @@ class XtractorGUI:
         self.pdf_folder_card = ctk.CTkFrame(
             tab_files, fg_color="transparent",
             border_width=2, border_color="#C10206",
-            corner_radius=8, width=240, height=140
+            corner_radius=8, width=240, height=120
         )
         self.pdf_folder_card.pack_propagate(False)
         self.pdf_folder_card.pack(pady=(10, 5))
@@ -362,15 +362,15 @@ class XtractorGUI:
 
         # Big title (centered)
         self.pdf_folder_title = ctk.CTkLabel(
-            self._drop_wrap, text="DRAG & DROP",
-            font=("Arial Black", 20), justify="center"
+            self._drop_wrap, text="DRAG & DROP", text_color="#B5B5B5",
+            font=("Arial Black", 18), justify="center"
         )
         self.pdf_folder_title.pack(anchor="center")
 
         # Small subtitle (centered)
         self.pdf_folder_sub = ctk.CTkLabel(
-            self._drop_wrap, text="Drop Folder or Click to Browse",
-            font=(BUTTON_FONT, 11), text_color="gray80",
+            self._drop_wrap, text="Drop Folder with PDFs\nor Click to Browse",
+            font=(BUTTON_FONT, 10), text_color="#B5B5B5",
             justify="center", wraplength=200
         )
         self.pdf_folder_sub.pack(anchor="center", pady=(2, 0))
@@ -1126,25 +1126,21 @@ class XtractorGUI:
                 except Exception:
                     pass
 
+    # gui.py
     def _hide_viewer(self):
-        """Hide the PDF viewer canvas and (if present) its scrollbars."""
-        # Canvas (required)
+        """Leave the canvas visible so top-right controls still have an anchor.
+           Only hide the scrollbars; overlays will be lifted above the canvas."""
         try:
-            self.pdf_viewer.canvas.place_forget()
-        except Exception:
-            try:
-                self.pdf_viewer.canvas.pack_forget()
-            except Exception:
-                pass
-
-        # NEW: hide empty overlay if present
-        try:
-            self.pdf_viewer.empty_overlay.place_forget()
+            # keep overlay state correct when no PDF is loaded
+            self.pdf_viewer._set_empty_state_visible(not self.pdf_viewer.pdf_document)
+            # a subtle dim isn't needed now that the canvas has a dark bg,
+            # but you can still ensure it here if you like:
+            self.pdf_viewer.canvas.configure(bg="#1e1e1e")
         except Exception:
             pass
 
-        # Common scrollbar attribute names—hide if they exist
-        for name in ("h_scrollbar", "v_scrollbar", "x_scrollbar", "y_scrollbar"):
+        # hide scrollbars so they don't show under overlays
+        for name in ("h_scrollbar", "v_scrollbar"):
             sb = getattr(self.pdf_viewer, name, None)
             if sb is not None:
                 try:
