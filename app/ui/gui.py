@@ -788,8 +788,8 @@ class XtractorGUI:
         # ===== Header =====
         self._cards_header = ctk.CTkLabel(
             self.extract_cards,
-            text="SELECT MODE",
-            font=(BUTTON_FONT, 32, "bold"),
+            text="MODE",
+            font=(BUTTON_FONT, 36, "bold"),
             text_color="white"
         )
         self._cards_header.place(relx=0.5, y=self._px(8), anchor="n")
@@ -798,10 +798,21 @@ class XtractorGUI:
         # equals the header space (title area).
         HEADER_H_FRAC = 0.12
         FOOTER_H_FRAC = 0.12
+        BOTTOM_MARGIN_FRAC = 0.04  # ← add this (adjust 0.02–0.08 to taste)
+
+        self._HEADER_H_FRAC = HEADER_H_FRAC
+        self._FOOTER_H_FRAC = FOOTER_H_FRAC
+        self._BOTTOM_MARGIN_FRAC = BOTTOM_MARGIN_FRAC
+
+        self._WRAPPER_FOOTER_GAP = self._px(70)
+
+        row_h = self._px(36)
+        self._FOOTER_MIN_PX = (row_h * 2) + self._px(16)
 
         # ===== Cards wrapper (grid) =====
         wrapper = ctk.CTkFrame(self.extract_cards, fg_color="transparent")
-        wrapper.place(relx=0, rely=HEADER_H_FRAC, relwidth=1, relheight=(1 - HEADER_H_FRAC - FOOTER_H_FRAC))
+        wrapper.place(relx=0, rely=HEADER_H_FRAC, relwidth=1,
+                      relheight=(1 - HEADER_H_FRAC - FOOTER_H_FRAC - BOTTOM_MARGIN_FRAC))
         wrapper.grid_propagate(False)
         self._cards_wrapper = wrapper
 
@@ -838,7 +849,7 @@ class XtractorGUI:
 
             card.grid_rowconfigure(0, weight=0)  # title
             card.grid_rowconfigure(1, weight=0)  # description
-            card.grid_rowconfigure(2, weight=1)  # filler
+            card.grid_rowconfigure(2, weight=1)  # filler (absorbs extra vertical space)
             card.grid_columnconfigure(0, weight=1)
 
             title_lbl = ctk.CTkLabel(card, text=title,
@@ -866,17 +877,29 @@ class XtractorGUI:
             pass
 
         # ===== Footer row (Output path on left, DPI in middle, Start on right) =====
-        self._cards_footer = ctk.CTkFrame(self.extract_cards, fg_color="transparent")
-        self._cards_footer.place(relx=0, rely=(1 - FOOTER_H_FRAC), relwidth=1, relheight=FOOTER_H_FRAC)
+        self._cards_footer = ctk.CTkFrame(
+            self.extract_cards,
+            fg_color="transparent",
+            height=self._FOOTER_MIN_PX  # start with the min; we'll resize in the configure handler
+        )
+        self._cards_footer.place(
+            relx=0, rely=1, anchor="sw",  # stick to bottom-left
+            y=-int(self._BOTTOM_MARGIN_FRAC * self.extract_cards.winfo_height()),  # temp; real y set later
+            relwidth=1  # width follows parent
+        )
+
+        # Prevent children from auto-stretching with the footer's relheight
+        self._cards_footer.grid_propagate(False)
 
         # Grid: 2 rows (entry, browse), 3 cols (left stack, DPI tall, Start tall)
-        self._cards_footer.grid_columnconfigure(0, weight=1)  # left expands
+        self._cards_footer.grid_columnconfigure(0, weight=1)  # left expands horizontally
         self._cards_footer.grid_columnconfigure(1, weight=0)  # DPI
         self._cards_footer.grid_columnconfigure(2, weight=0)  # Start
 
-        row_h = self._px(36)
-        self._cards_footer.grid_rowconfigure(0, weight=1, minsize=row_h)
-        self._cards_footer.grid_rowconfigure(1, weight=1, minsize=row_h)
+
+        # Footer rows: DO NOT stretch vertically
+        self._cards_footer.grid_rowconfigure(0, weight=0, minsize=row_h)
+        self._cards_footer.grid_rowconfigure(1, weight=0, minsize=row_h)
 
         # Left: output entry (row 0)
         self.output_path_entry = ctk.CTkEntry(
@@ -900,17 +923,15 @@ class XtractorGUI:
 
         # MIDDLE: DPI dropdown spanning both rows (same height as Start)
         dpi_full_height = row_h * 2
+        self._dpi_width = self._px(50)
 
-        self._dpi_width = self._px(50)  # <- pick your starting width
-
-        self.dpi_wrap = ctk.CTkFrame(self._cards_footer, width=self._dpi_width)
-        self.dpi_wrap.grid(row=0, column=1, rowspan=2,
-                           padx=(0, 4), pady=(6, 10), sticky="n")
-        self.dpi_wrap.pack_propagate(False)
+        # fixed-height wrapper; use grid_propagate(False) (we're using grid, not pack)
+        self.dpi_wrap = ctk.CTkFrame(self._cards_footer, width=self._dpi_width, height=dpi_full_height)
+        self.dpi_wrap.grid(row=0, column=1, rowspan=2, padx=(0, 4), pady=(6, 10), sticky="n")
+        self.dpi_wrap.grid_propagate(False)
 
         # values with newlines
         dpi_values = [f"{v}\nDPI" for v in ["50", "75", "150", "300", "450", "600"]]
-
         self.dpi_var = ctk.StringVar(value="150\nDPI")
 
         self.dpi_menu = CTkOptionMenuNoArrow(
@@ -920,23 +941,25 @@ class XtractorGUI:
             command=self.dpi_callback,
             font=(BUTTON_FONT, 10),
             width=self._dpi_width,
-            height=self._px(44),  # a bit taller to fit 2 lines
+            height=self._px(44),  # tall enough for two lines
             item_height=self._px(36)  # taller menu rows
         )
         self.dpi_menu.pack(fill="both", expand=True)
 
-
-        # Right: tall Start Extraction (spans both rows)
+        # Right: Start Extraction (spans both rows) — keep fixed height, don't stretch
         self.start_button_overlay = ctk.CTkButton(
             self._cards_footer,
             text="▶    START EXTRACTION",
             font=("Arial Black", 13),
             corner_radius=10,
-            height=dpi_full_height,  # match DPI widget height
+            height=dpi_full_height,  # fixed height
             width=self._px(220),
             command=self.start_extraction
         )
-        self.start_button_overlay.grid(row=0, column=2, rowspan=2, padx=(10, 12), pady=(6, 10), sticky="nsew")
+        self.start_button_overlay.grid(row=0, column=2, rowspan=2,
+                                       padx=(10, 12), pady=(6, 10),
+                                       sticky="n")  # was "nsew" → no vertical fill
+
         # ✅ Ensure "NORMAL" (Default) is visually selected on startup
         self._select_mode("Default", initial=True)
 
@@ -950,45 +973,89 @@ class XtractorGUI:
             if w <= 1 or h <= 1:
                 return
 
-            # available inner width for cards
-            # available inner width for cards
+            # Fractions and minimums saved in _build_extract_mode_cards
+            header_frac = getattr(self, "_HEADER_H_FRAC", 0.12)
+            footer_frac = getattr(self, "_FOOTER_H_FRAC", 0.12)
+            bottom_margin_frac = getattr(self, "_BOTTOM_MARGIN_FRAC", 0.04)
+            footer_min_px = getattr(self, "_FOOTER_MIN_PX", self._px(36) * 2 + self._px(16))
+
+            header_px = int(h * header_frac)
+            footer_px = max(int(h * footer_frac), footer_min_px)
+            bottom_margin_px = int(h * bottom_margin_frac)
+
+            # --- place footer with a guaranteed pixel height, lifted by bottom margin
+            # CTk rule: set size via configure(); only position with place_configure()
+            self._cards_footer.configure(height=footer_px)
+            self._cards_footer.place_configure(
+                relx=0, rely=1, anchor="sw",  # anchored to bottom-left
+                y=-bottom_margin_px,  # lift it up by the bottom margin
+                relwidth=1
+            )
+            footer_y = h - footer_px - bottom_margin_px  # recompute for wrapper sizing
+
+            # --- size the cards wrapper to exactly the space above the footer
+            gap_px = getattr(self, "_WRAPPER_FOOTER_GAP", self._px(6))
+            middle_h = max(50, footer_y - header_px - gap_px)  # leave a sliver above footer
+            self._cards_wrapper.configure(height=middle_h)
+            self._cards_wrapper.place_configure(relx=0, rely=0, y=header_px)
+
+            # ===== Responsive cards layout (unchanged except we keep it neat) =====
             available = max(0, w - (WRAPPER_PAD * 2))
 
             # how many columns can fit: floor((available + GAP) / (MIN + GAP))
             cols = int((available + CARD_GAP) // (CARD_MIN_W + CARD_GAP))
             cols = max(1, min(3, cols))
-            cols = 3 #force
+            cols = 3  # keep your "force 3" rule
+
             for c in range(3):
                 self._cards_wrapper.grid_columnconfigure(c, weight=(1 if c < cols else 0))
 
-            # re-grid cards into rows/cols
+            # re-grid cards into rows/cols (less gap above footer)
             for _, card in self._card_order:
                 card.grid_forget()
-            r = c = 0
-            for key, card in self._card_order:
-                card.grid(row=r, column=c, padx=8, pady=8, sticky="nsew")
-                c += 1
-                if c >= cols:
-                    c = 0
-                    r += 1
-            for row in range(r + 1):
+
+            # --- re-grid cards (cards still stretch; spacer row provides the gap) ---
+            for _, card in self._card_order:
+                card.grid_forget()
+
+            # also forget an old spacer if it exists
+            if hasattr(self, "_wrapper_gap_spacer"):
+                try:
+                    self._wrapper_gap_spacer.grid_forget()
+                except Exception:
+                    pass
+
+            rows_needed = (len(self._card_order) + cols - 1) // cols
+
+            for idx, (key, card) in enumerate(self._card_order):
+                r = idx // cols
+                c = idx % cols
+                card.grid(row=r, column=c, padx=8, pady=(8, 8), sticky="nsew")
+
+            # make the rows with cards expand
+            for row in range(rows_needed):
                 self._cards_wrapper.grid_rowconfigure(row, weight=1)
 
-            # compute the actual column width we have and update wraplength
+            # ---- spacer row just below the cards ----
+            gap_px = getattr(self, "_WRAPPER_FOOTER_GAP", self._px(40))
+            if not hasattr(self, "_wrapper_gap_spacer"):
+                self._wrapper_gap_spacer = ctk.CTkFrame(self._cards_wrapper, fg_color="transparent", height=gap_px)
+            else:
+                self._wrapper_gap_spacer.configure(height=gap_px)
+
+            # one row spanning all columns; no weight (fixed height)
+            self._wrapper_gap_spacer.grid(row=rows_needed, column=0, columnspan=cols, sticky="we")
+            self._cards_wrapper.grid_rowconfigure(rows_needed, weight=0, minsize=gap_px)
+
+            # compute actual column width and update wraplength
             total_gaps = (cols - 1) * CARD_GAP
             col_width = max(CARD_MIN_W, (available - total_gaps) // cols)
 
-            # equalize column widths and keep them responsive
             for c in range(3):
                 self._cards_wrapper.grid_columnconfigure(c, weight=1, uniform="cards", minsize=int(col_width))
 
             for key, _ in self._card_order:
-                # leave some inner padding for the card (borders/margins)
                 self._card_desc_labels[key].configure(wraplength=int(col_width - 32))
-
-            print("overlay:", self.extract_overlay.winfo_width(),
-                  "cards:", self.extract_cards.winfo_width(),
-                  "wrapper:", self._cards_wrapper.winfo_width())
 
         except Exception as e:
             print(f"overlay configure error: {e}")

@@ -35,9 +35,9 @@ WRAPPER_PAD = 16      # inner left+right padding inside the overlay wrapper
 MIN_APP_H   = 540     # a sensible minimum app height
 
 CARD_BG_DEFAULT   = "#3a3a3a"  # unselected bg
-CARD_BG_SELECTED  = "#780C0C"  # selected bg (pick what you like)
+CARD_BG_SELECTED  = "#910206"  # selected bg (pick what you like)
 CARD_BORDER_DEFAULT  = "gray35"
-CARD_BORDER_SELECTED = "#7A7A7A"
+CARD_BORDER_SELECTED = "#C10206"
 
 
 DPI_OPTIONS = {
