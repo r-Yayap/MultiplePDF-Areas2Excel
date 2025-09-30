@@ -7,8 +7,11 @@ from app.domain.revision_rules import DATE_REGEX, DESC_KEYWORDS, REVISION_REGEX_
 WORD_REV = re.compile(r"\brev(?:ision)?\b", re.IGNORECASE)
 
 class RevisionParser:
-    def __init__(self, revision_regex: str | None):
+    def __init__(self, revision_regex: str | None, certainty_lock: bool = True, fill_missing: bool = True):
         self.rev_re = re.compile(revision_regex, re.IGNORECASE) if revision_regex else REVISION_REGEX_FALLBACK
+        self.certainty_lock = certainty_lock
+        self.fill_missing = fill_missing
+
 
     # ---------- helpers ----------
     @staticmethod
@@ -23,26 +26,39 @@ class RevisionParser:
 
     def _extract_rev_token(self, text: str) -> Optional[str]:
         """
-        Pull a revision token from within a messy cell.
-        Examples that should match: 'Rev A', 'A – IFC', 'REVISED TO C03', '(P02) Issued for Construction'
-        Strategy: scan all word-ish tokens and also look at bigrams around 'rev' headers.
+        Extract a plausible revision token, prioritizing tokens that start with a letter.
+        Avoid numeric-only tokens when the same cell looks like a date, unless the
+        cell explicitly contains 'rev'/'revision'.
         """
         if not text:
             return None
         t = self._norm(text)
 
-        # try all tokens & dash/paren-stripped chunks
-        # e.g., 'A-IFC' -> check 'A', 'IFC'; '(C03)' -> 'C03'
-        candidates = []
-        # split on non-alnum to get tokens
-        candidates.extend([c for c in re.split(r"[^A-Za-z0-9]+", t) if c])
+        # tokenization
+        tokens = [c for c in re.split(r"[^A-Za-z0-9]+", t) if c]
+        if not tokens:
+            return None
 
-        # also look for sequences like "rev A", "rev: A01"
+        # explicit "rev: X" capture gets highest priority
         m = re.search(r"\brev(?:ision)?\s*[:\-]?\s*([A-Za-z0-9]{1,4})", t, re.IGNORECASE)
-        if m:
-            candidates.insert(0, m.group(1))
+        explicit = [m.group(1)] if m else []
 
-        # scan candidates against the chosen rev regex
+        # prioritize tokens that begin with a letter (A, B2, C03, P01...)
+        letter_first = [tok for tok in tokens if tok[0].isalpha()]
+
+        # other alphanumerics that contain letters but don’t start with one
+        alnum_with_letters = [tok for tok in tokens
+                              if any(ch.isalpha() for ch in tok) and not tok[0].isalpha()]
+
+        # numeric-only tokens – only allow if the cell is NOT a date,
+        # or if the cell explicitly mentions "rev"
+        looks_like_date = bool(DATE_REGEX.search(t))
+        has_rev_word = bool(WORD_REV.search(t))
+        numeric_only = [tok for tok in tokens if tok.isdigit()]
+        numeric_ok = numeric_only if (not looks_like_date or has_rev_word) else []
+
+        # build priority list and test against the chosen rev regex
+        candidates = explicit + letter_first + alnum_with_letters + numeric_ok
         for cand in candidates:
             if self.rev_re.fullmatch(cand.upper()):
                 return cand.upper()
@@ -65,50 +81,127 @@ class RevisionParser:
 
     # ---------- detection ----------
     def detect_column_indices(self, rows: List[List[str]], max_rows: int = 4) -> Tuple[Optional[int], Optional[int], Optional[int]]:
-        scores = {}  # idx -> dict(rev=, date=, desc=)
+        scores: dict[int, dict[str, int]] = {}  # idx -> {'rev': int, 'date': int, 'desc': int}
 
         def bump(i, k, v=1):
             scores.setdefault(i, {"rev": 0, "date": 0, "desc": 0})
             scores[i][k] += v
 
+        # ----- SCORING PASS -----
         for row in rows[:max_rows]:
             for idx, raw in enumerate(row):
                 txt = self._norm(raw)
                 if not txt:
                     continue
 
-                # revision signal (heaviest)
-                if self._extract_rev_token(txt):
-                    bump(idx, "rev", 3)
-                if WORD_REV.search(txt):
-                    bump(idx, "rev", 1)   # header-like hint
+                has_date = bool(DATE_REGEX.search(txt))
+                has_rev_word = bool(WORD_REV.search(txt))
+                rev_tok = self._extract_rev_token(txt)
 
-                # date signal
-                if DATE_REGEX.search(txt):
+                # REV signal (heavy) – don't count from date-looking cells unless labeled “rev”
+                if rev_tok and (not has_date or has_rev_word):
+                    bump(idx, "rev", 3)
+
+                # header-like 'rev' word gives a small hint
+                if has_rev_word:
+                    bump(idx, "rev", 1)
+
+                # DATE signal
+                if has_date:
                     bump(idx, "date", 2)
 
-                # description signal
+                # DESC signal
                 if self._looks_like_desc(txt):
                     bump(idx, "desc", 1)
 
-        def pick(metric: str) -> Optional[int]:
-            if not scores:
-                return None
-            best_idx, best_val = None, -1
+        if not scores:
+            return (None, None, None)
+
+        # keep an immutable copy for fallbacks
+        scores_all = {i: sc.copy() for i, sc in scores.items()}
+
+        # ----- OPTIONAL CERTAINTY LOCK (before picking) -----
+        if getattr(self, "certainty_lock", False):
+            DATE_STRONG = 4  # (e.g., 2 rows * weight 2)
+            REV_STRONG = 6  # (e.g., 2 rows * weight 3)
             for i, sc in scores.items():
+                # strong date column should not be considered rev unless it also had strong rev
+                if sc["date"] >= DATE_STRONG and sc["rev"] <= 1:
+                    sc["rev"] = -999
+                # strong rev column (with no date hints) should not be considered date
+                if sc["rev"] >= REV_STRONG and sc["date"] == 0:
+                    sc["date"] = -999
+
+        # ----- PRIMARY EXCLUSIVE PICKS -----
+        # Work on a mutable copy so we can pop selected columns
+        work = {i: sc.copy() for i, sc in scores.items()}
+
+        def pick_exclusive(metric: str) -> Optional[int]:
+            if not work:
+                return None
+            best_idx, best_val = None, -1_000_000
+            for i, sc in work.items():
                 v = sc[metric]
                 if v > best_val:
                     best_idx, best_val = i, v
-            # require at least one hit for that metric
             if best_val <= 0:
                 return None
-            # remove picked column to avoid reusing it for other roles
-            scores.pop(best_idx, None)
+            work.pop(best_idx, None)
             return best_idx
 
-        r_idx = pick("rev")
-        d_idx = pick("desc")
-        dt_idx = pick("date")
+        r_idx = pick_exclusive("rev")
+        d_idx = pick_exclusive("desc")
+        dt_idx = pick_exclusive("date")
+
+        # ----- FALLBACK FILL (avoid blanks if possible) -----
+        if getattr(self, "fill_missing", False):
+            used = {i for i in (r_idx, d_idx, dt_idx) if i is not None}
+
+            DATE_STRONG = 4
+            REV_STRONG = 6
+
+            def fallback(metric: str, current_idx: Optional[int]) -> Optional[int]:
+                if current_idx is not None:
+                    return current_idx
+                # candidates = remaining columns not used yet
+                candidates = [i for i in scores_all.keys() if i not in used]
+                if not candidates:
+                    return None
+
+                # Filter out strongly conflicting columns for the requested metric
+                pruned: list[int] = []
+                for i in candidates:
+                    sc = scores_all[i]
+                    if metric == "rev":
+                        # avoid columns that are strongly date
+                        if sc["date"] >= DATE_STRONG and sc["rev"] <= 1:
+                            continue
+                    elif metric == "date":
+                        # avoid columns that are strongly rev
+                        if sc["rev"] >= REV_STRONG and sc["date"] == 0:
+                            continue
+                    else:  # desc
+                        # avoid columns that are both strongly rev or strongly date (acts as a weak filter)
+                        if sc["rev"] >= REV_STRONG or sc["date"] >= DATE_STRONG:
+                            # still allow if it also has good desc evidence
+                            if sc["desc"] <= 1:
+                                continue
+                    pruned.append(i)
+
+                pool = pruned or candidates  # if pruning removed all, fall back to all
+                # choose the one with the highest score for that metric
+                best_idx = max(pool, key=lambda i: scores_all[i][metric])
+                if scores_all[best_idx][metric] > 0:
+                    used.add(best_idx)
+                    return best_idx
+
+                # if truly no signal for this metric, leave it None (too risky to force)
+                return None
+
+            r_idx = fallback("rev", r_idx)
+            d_idx = fallback("desc", d_idx)
+            dt_idx = fallback("date", dt_idx)
+
         return (r_idx, d_idx, dt_idx)
 
     # ---------- row filtering ----------
