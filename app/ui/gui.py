@@ -1169,15 +1169,13 @@ class XtractorGUI:
                 except Exception:
                     pass
 
-    # gui.py
     def _hide_viewer(self):
-        """Leave the canvas visible so top-right controls still have an anchor.
-           Only hide the scrollbars; overlays will be lifted above the canvas."""
         try:
-            # keep overlay state correct when no PDF is loaded
-            self.pdf_viewer._set_empty_state_visible(not self.pdf_viewer.pdf_document)
-            # a subtle dim isn't needed now that the canvas has a dark bg,
-            # but you can still ensure it here if you like:
+            # always hide empty-state while an overlay (Extract/Tools) is up
+            if hasattr(self.pdf_viewer, "_set_empty_state_visible"):
+                self.pdf_viewer._set_empty_state_visible(False)
+
+            # keep the canvas dimmed; we’re hiding scrollbars below anyway
             self.pdf_viewer.canvas.configure(bg="#1e1e1e")
         except Exception:
             pass
@@ -1202,9 +1200,10 @@ class XtractorGUI:
                 x_offset=CANVAS_LEFT_MARGIN
             )
             self.pdf_viewer.update_rectangles()
-            # NEW: if no PDF loaded, show the overlay again
-            if not self.pdf_viewer.pdf_document:
-                self.pdf_viewer._set_empty_state_visible(True)
+
+            # overlays are hidden now; if no PDF, show empty-state again
+            if hasattr(self.pdf_viewer, "_set_empty_state_visible"):
+                self.pdf_viewer._set_empty_state_visible(not self.pdf_viewer.pdf_document)
         except Exception as e:
             print(f"Error showing viewer: {e}")
 
@@ -1682,6 +1681,12 @@ class XtractorGUI:
 
         # close viewer to release any file locks
         self.pdf_viewer.close_pdf()
+
+        # ensure the overlay stays on top during extraction
+        self._hide_viewer()
+        self._layout_extract_overlay()
+        self.extract_overlay.lift()
+        self.root.update_idletasks()
 
         # progress UI
         self.start_time = time.time()
