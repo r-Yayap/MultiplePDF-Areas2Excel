@@ -59,29 +59,32 @@ def create_excel_file(file_list, output_excel_path):
     print(f"Excel file with hyperlinks created at {output_excel_path}")
 
 
-def select_input_folder():
-    root = Tk(); root.withdraw()
-    return filedialog.askdirectory(title="Select Input Folder")
+from tkinter import filedialog  # already imported at top
+def select_input_folder(parent=None):
+    return filedialog.askdirectory(title="Select Input Folder", parent=parent)
 
 
-def generate_file_list_and_excel():
-    input_folder = select_input_folder()
+
+def generate_file_list_and_excel(parent=None):
+    input_folder = select_input_folder(parent=parent)
     if not input_folder:
         return
-    files = list_files_in_directory(input_folder)
 
-    output_file, _ = filedialog.asksaveasfilename(
+    output_file = filedialog.asksaveasfilename(
         title="Save As", defaultextension=".xlsx",
         filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
-    ), None
+        , parent=parent
+    )
     if not output_file:
         return
     if not output_file.lower().endswith('.xlsx'):
         output_file += '.xlsx'
 
+    files = list_files_in_directory(input_folder)
     create_excel_file(files, output_file)
     print(f"Excel file created at {output_file}")
 
 
 if __name__ == '__main__':
     generate_file_list_and_excel()
+

@@ -65,42 +65,19 @@ RESIZE_DELAY = 700  # ms
 # Tesseract OCR data folder (resolved at runtime)
 TESSDATA_FOLDER = None
 
-# ───────── Lazy-load tool actions to avoid heavy imports at import-time ─────────
-import importlib, traceback
-from tkinter import messagebox
+# ───────── Tools: import directly from standalone so PyInstaller bundles them
+from standalone.sc_pdf_dwg_list import open_window as pdf_dwg_list_open
+from standalone.sc_dir_list import generate_file_list_and_excel as dir_list_open
+from standalone.sc_bulk_rename import open_window as bulk_rename_open
+from standalone.sc_bim_file_checker import open_window as bim_checker_open
 
-def _lazy(module: str, attr: str):
-    def _call(*args, **kwargs):
-        try:
-            mod = importlib.import_module(module)
-            fn = getattr(mod, attr)
-        except Exception as e:
-            tb = traceback.format_exc(limit=3)
-            messagebox.showerror(
-                "Tool failed to load",
-                f"Could not load {module}.{attr}\n\n{e}\n\n{tb}"
-            )
-            return
-        return fn(*args, **kwargs)
-    return _call
 
-launch_pdf_dwg_gui = _lazy("standalone.sc_pdf_dwg_list", "launch_pdf_dwg_gui")
-generate_file_list_and_excel = _lazy("standalone.sc_dir_list", "generate_file_list_and_excel")
-bulk_rename_gui = _lazy("standalone.sc_bulk_rename", "bulk_rename_gui")
-bim_checker_main = _lazy("standalone.sc_bim_file_checker", "main")
-
-OPTION_ACTIONS = {
-    "PDF/DWG List": launch_pdf_dwg_gui,
-    "Directory List": generate_file_list_and_excel,
-    "Bulk Renamer": bulk_rename_gui,
-    "BIM File Checker": bim_checker_main,
-}
 
 tool_definitions = {
     "PDF & DWG Checker": {
-        "action": launch_pdf_dwg_gui,
-        "needs_master": True,
-        "blurb": "Compare PDFs and DWGs, spot missing or duplicate files, export to Excel.",
+        "action": pdf_dwg_list_open,
+        "needs_master": True,   # opens a CTkToplevel(master)
+        "blurb": "Compare PDFs and DWGs, spot missing/duplicates, export to Excel.",
         "instructions": """
 1. Select the folder containing PDF & DWG files.
 
@@ -113,8 +90,9 @@ tool_definitions = {
    • Includes file sizes, modified dates, and relative folders."""
     },
     "BIM File Checker": {
-        "action": bim_checker_main,
-        "blurb": "Scan a folder for BIM file types and produce a status report in Excel.",
+        "action": bim_checker_open,
+        "needs_master": True,   # we’ll make it use dialogs parented to master
+        "blurb": "Scan BIM types (RVT, IFC, NWC/NWD, DWG, etc.) and mark present/dup/missing.",
         "instructions": """
 The BIM File Checker scans a folder and visually shows in Excel:
     -Which file types are present (RVT, IFC, DWG, etc.)
@@ -135,7 +113,8 @@ How to use it?
 """
     },
     "Bulk Rename Tool": {
-        "action": bulk_rename_gui,
+        "action": bulk_rename_open,
+        "needs_master": True,   # we’ll make it use CTkToplevel(master)
         "blurb": "Batch-rename files using a CSV/Excel name map.",
         "instructions": """
 1. Load a mapping file (.csv or Excel) with original and new filenames.
@@ -152,8 +131,9 @@ How to use it?
 • Errors (e.g. files not found or rename failed) will be listed and copied to your clipboard."""
     },
     "Folder File Exporter": {
-        "action": generate_file_list_and_excel,
-        "blurb": "Export a full file inventory (with links) to Excel.",
+        "action": dir_list_open,
+        "needs_master": False,  # uses file dialogs only
+        "blurb": "Export a folder’s file inventory (with hyperlinks) to Excel.",
         "instructions": """
 1. Select a folder to scan.
 

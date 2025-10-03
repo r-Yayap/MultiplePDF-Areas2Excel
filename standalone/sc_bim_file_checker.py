@@ -10,24 +10,16 @@ from datetime import datetime
 EXTS = ["rvt", "ifc", "nwc", "dwfx", "nwd", "xml", "dwg"]
 
 
-def choose_directory(title="Select Directory"):
-    root = Tk()
-    root.withdraw()
-    path = filedialog.askdirectory(title=title)
-    root.destroy()
-    return path
+def choose_directory(title="Select Directory", parent=None):
+    return filedialog.askdirectory(title=title, parent=parent)
 
-
-def choose_file_save_location(title="Save Excel File As"):
-    root = Tk()
-    root.withdraw()
-    path = filedialog.asksaveasfilename(
+def choose_file_save_location(title="Save Excel File As", parent=None):
+    return filedialog.asksaveasfilename(
         defaultextension=".xlsx",
         filetypes=[("Excel files", "*.xlsx")],
-        title=title
+        title=title,
+        parent=parent
     )
-    root.destroy()
-    return path
 
 
 def list_files(start_path):
@@ -151,24 +143,25 @@ def save_to_excel(df, excel_file, file_dict):
     print(f"Directory listing exported to {excel_file}")
 
 
-def main():
-    folder = choose_directory()
+def main(parent=None):
+    folder = choose_directory(parent=parent)
     if not folder:
-        print("No directory selected.")
         return
 
     file_dict = list_files(folder)
-    save_path = choose_file_save_location()
+    save_path = choose_file_save_location(parent=parent)
     if not save_path:
-        print("No file location selected.")
         return
 
     df = prepare_data_for_export(file_dict, folder)
     save_to_excel(df, save_path, file_dict)
 
-    if messagebox.askyesno("Open Excel File", "Do you want to open the Excel file now?"):
+    if messagebox.askyesno("Open Excel File", "Do you want to open the Excel file now?", parent=parent):
         os.startfile(save_path)
 
+def open_window(master=None):
+    # Runs as a dialog flow; no extra mainloop, no second Tk root.
+    return main(parent=master)
 
 if __name__ == "__main__":
-    main()
+    main()  # standalone usage still works

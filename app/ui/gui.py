@@ -149,6 +149,22 @@ class XtractorGUI:
             pass
         self.root.destroy()
 
+    # inside class XtractorGUI
+    # inside class XtractorGUI
+
+    def _launch_tool(self, label: str, tool: dict):
+        try:
+            fn = tool["action"]
+            if tool.get("needs_master", False):
+                fn(self.root)
+            else:
+                fn()
+        except Exception as e:
+            logger.exception("Failed to open tool: %s", label)
+            messagebox.showerror("Tool failed", f"{label}\n\n{e}")
+
+
+
     def export_rectangles(self):
         export_file_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -708,8 +724,7 @@ class XtractorGUI:
 
             open_btn = ctk.CTkButton(
                 btn_row, text="Open", height=28,
-                command=(lambda f=tool["action"], needs=tool.get("needs_master", False):
-                         f(self.root) if needs else f())
+                command=(lambda lbl=label, t=tool: self._launch_tool(lbl, t))
             )
             open_btn.grid(row=0, column=0, padx=(0, 6), sticky="we")
 

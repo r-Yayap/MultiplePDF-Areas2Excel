@@ -310,6 +310,10 @@ def launch_pdf_dwg_gui(master):
     PDFDWGCheckerApp(master)
 
 
+def open_window(master=None):
+    return launch_pdf_dwg_gui(master)
+
+
 if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     from tkinterdnd2 import TkinterDnD

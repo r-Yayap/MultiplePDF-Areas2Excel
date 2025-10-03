@@ -5,8 +5,9 @@ import pandas as pd
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
-from datetime import datetime
 
+
+# ──────────────────────────── Editable Treeview ────────────────────────────
 class EditableTreeview(ttk.Treeview):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -56,8 +57,10 @@ class EditableTreeview(ttk.Treeview):
         popup.geometry(f"+{self.winfo_rootx()+x}+{self.winfo_rooty()+y+height}")
 
         var = tk.StringVar(value=old_value)
-        entry = ctk.CTkEntry(popup, textvariable=var, width=150,
-                             font=("Verdana", 9), border_width=1, corner_radius=3)
+        entry = ctk.CTkEntry(
+            popup, textvariable=var, width=150,
+            font=("Verdana", 9), border_width=1, corner_radius=3
+        )
         entry.pack(padx=5, pady=5)
         entry.focus_set()
 
@@ -70,7 +73,7 @@ class EditableTreeview(ttk.Treeview):
             popup.destroy()
 
         btn = ctk.CTkButton(popup, text="OK", command=on_ok)
-        btn.pack(pady=(0,5))
+        btn.pack(pady=(0, 5))
 
         popup.grab_set()
         popup.wait_window()
@@ -82,12 +85,13 @@ class EditableTreeview(ttk.Treeview):
             self._col = None
 
 
+# ─────────────────────────────── Logic helpers ───────────────────────────────
 def load_mapping(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".xls", ".xlsx"):
-        return pd.read_excel(path, header=None, usecols=[0,1], dtype=str)
+        return pd.read_excel(path, header=None, usecols=[0, 1], dtype=str)
     else:
-        return pd.read_csv(path, header=None, usecols=[0,1], dtype=str)
+        return pd.read_csv(path, header=None, usecols=[0, 1], dtype=str)
 
 
 def bulk_rename_files(mapping_path, root_folder):
@@ -124,9 +128,83 @@ def display_mapping_in_treeview(treeview, mapping_path):
         treeview.insert("", "end", values=(row.iloc[0], row.iloc[1]))
 
 
-def bulk_rename_gui():
+# ─────────────────────────────── UI / dialogs ───────────────────────────────
+def browse_mapping(entry_widget, treeview):
+    parent = entry_widget.winfo_toplevel()
+    path = filedialog.askopenfilename(
+        filetypes=[
+            ("All supported", "*.csv;*.xlsx;*.xls"),
+            ("CSV files", "*.csv"),
+            ("Excel files", "*.xlsx;*.xls"),
+        ],
+        parent=parent,
+    )
+    if path:
+        entry_widget.delete(0, tk.END)
+        entry_widget.insert(0, path)
+        display_mapping_in_treeview(treeview, path)
+
+
+def browse_folder(entry_widget):
+    parent = entry_widget.winfo_toplevel()
+    path = filedialog.askdirectory(parent=parent)
+    if path:
+        entry_widget.delete(0, tk.END)
+        entry_widget.insert(0, path)
+
+
+def start_rename(mapping_path, folder_path, parent=None):
+    if not os.path.isfile(mapping_path):
+        messagebox.showerror("Error", "Please select a valid CSV or Excel file.", parent=parent)
+        return
+    if not os.path.isdir(folder_path):
+        messagebox.showerror("Error", "Please select a valid root folder.", parent=parent)
+        return
+
+    errors = bulk_rename_files(mapping_path, folder_path)
+    if not errors:
+        messagebox.showinfo("Success", "All files were renamed successfully.", parent=parent)
+    else:
+        # Compile error message
+        msg = "Some renames failed or files were not found:\n\n" + "\n".join(errors)
+        # Copy to clipboard without stealing z-order
+        tmp = tk.Toplevel(parent)
+        tmp.withdraw()
+        tmp.clipboard_clear()
+        tmp.clipboard_append(msg)
+        tmp.update()
+        tmp.destroy()
+        # Show warning
+        messagebox.showwarning("Partial Success", msg, parent=parent)
+
+
+# ──────────────────────────────── Main window ────────────────────────────────
+def bulk_rename_gui(master=None):
     ctk.set_appearance_mode("dark")
-    root = ctk.CTk()
+    owned_root = False
+
+    if master is None:
+        root = ctk.CTk()
+        owned_root = True
+    else:
+        root = ctk.CTkToplevel(master)
+        # Ensure it opens in front of the parent window
+        try:
+            root.transient(master)     # keep above parent in z-order
+        except Exception:
+            pass
+        root.lift()                    # raise now
+        root.focus_force()             # take focus
+        root.attributes("-topmost", True)   # brief topmost nudge
+        root.after(300, lambda: root.attributes("-topmost", False))
+        # place near parent if possible
+        try:
+            x = master.winfo_rootx() + 60
+            y = master.winfo_rooty() + 60
+            root.geometry(f"+{x}+{y}")
+        except Exception:
+            pass
+
     root.title("Bulk File Rename")
 
     font = ("Helvetica", 12)
@@ -134,7 +212,7 @@ def bulk_rename_gui():
     # Mapping file chooser
     lbl_map = ctk.CTkLabel(root, text="Mapping (CSV/Excel):", font=font)
     lbl_map.grid(row=0, column=0, padx=10, pady=5, sticky="e")
-    mapping_entry = ctk.CTkEntry(root, width=300, placeholder_text="Select CSV or Excel file...", font=(font[0],9))
+    mapping_entry = ctk.CTkEntry(root, width=300, placeholder_text="Select CSV or Excel file...", font=(font[0], 9))
     mapping_entry.grid(row=0, column=1, padx=10, pady=5)
     btn_map = ctk.CTkButton(root, text="Browse", width=80, command=lambda: browse_mapping(mapping_entry, tree))
     btn_map.grid(row=0, column=2, padx=10, pady=5)
@@ -142,7 +220,7 @@ def bulk_rename_gui():
     # Root folder chooser
     lbl_folder = ctk.CTkLabel(root, text="Root Folder:", font=font)
     lbl_folder.grid(row=1, column=0, padx=10, pady=5, sticky="e")
-    folder_entry = ctk.CTkEntry(root, width=300, placeholder_text="Select root folder...", font=(font[0],9))
+    folder_entry = ctk.CTkEntry(root, width=300, placeholder_text="Select root folder...", font=(font[0], 9))
     folder_entry.grid(row=1, column=1, padx=10, pady=5)
     btn_folder = ctk.CTkButton(root, text="Browse", width=80, command=lambda: browse_folder(folder_entry))
     btn_folder.grid(row=1, column=2, padx=10, pady=5)
@@ -156,7 +234,7 @@ def bulk_rename_gui():
     # Start Rename button
     btn_start = ctk.CTkButton(
         root, text="Start Rename", font=font,
-        command=lambda: start_rename(mapping_entry.get(), folder_entry.get())
+        command=lambda: start_rename(mapping_entry.get(), folder_entry.get(), parent=root)
     )
     btn_start.grid(row=3, column=1, pady=10)
 
@@ -164,53 +242,13 @@ def bulk_rename_gui():
     root.grid_columnconfigure(1, weight=1)
     root.grid_rowconfigure(2, weight=1)
 
-    root.mainloop()
+    if owned_root:
+        root.mainloop()
 
 
-def browse_mapping(entry_widget, treeview):
-    path = filedialog.askopenfilename(
-        filetypes=[
-            ("All supported", "*.csv;*.xlsx;*.xls"),
-            ("CSV files", "*.csv"),
-            ("Excel files", "*.xlsx;*.xls")
-        ]
-    )
-    if path:
-        entry_widget.delete(0, tk.END)
-        entry_widget.insert(0, path)
-        display_mapping_in_treeview(treeview, path)
+def open_window(master=None):
+    return bulk_rename_gui(master)
 
-
-def browse_folder(entry_widget):
-    path = filedialog.askdirectory()
-    if path:
-        entry_widget.delete(0, tk.END)
-        entry_widget.insert(0, path)
-
-
-def start_rename(mapping_path, folder_path):
-    if not os.path.isfile(mapping_path):
-        messagebox.showerror("Error", "Please select a valid CSV or Excel file.")
-        return
-    if not os.path.isdir(folder_path):
-        messagebox.showerror("Error", "Please select a valid root folder.")
-        return
-
-    errors = bulk_rename_files(mapping_path, folder_path)
-    if not errors:
-        messagebox.showinfo("Success", "All files were renamed successfully.")
-    else:
-        # Compile error message
-        msg = "Some renames failed or files were not found:\n\n" + "\n".join(errors)
-        # Copy to clipboard
-        temp = tk.Tk()
-        temp.withdraw()
-        temp.clipboard_clear()
-        temp.clipboard_append(msg)
-        temp.update()
-        temp.destroy()
-        # Show warning
-        messagebox.showwarning("Partial Success", msg)
 
 if __name__ == "__main__":
     bulk_rename_gui()
