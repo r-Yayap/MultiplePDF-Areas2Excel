@@ -70,6 +70,18 @@ def _rel_folder(pdf_path: Path, root: Path) -> str:
     except Exception:
         return str(pdf_path.parent)
 
+def _infer_pdf_root(pdf_paths: Iterable[Path]) -> Path:
+    parents = [Path(p).parent for p in pdf_paths]
+    if not parents:
+        return Path.cwd()
+
+    try:
+        common = os.path.commonpath([str(p) for p in parents])
+    except Exception:
+        return parents[0]
+
+    return Path(common)
+
 def _clean_text(text: str) -> str:
     if not text:
         return ""
@@ -310,8 +322,9 @@ class ExtractionService:
         temp_dir.mkdir(exist_ok=True, parents=True)
 
         # compute pdf_root
-        pdf_paths = list(req.pdf_paths)
-        pdf_root = req.pdf_root or (pdf_paths[0].parent if pdf_paths else Path.cwd())
+        pdf_paths = [Path(p) for p in req.pdf_paths]
+        explicit_root = Path(req.pdf_root) if req.pdf_root else None
+        pdf_root = explicit_root or _infer_pdf_root(pdf_paths)
 
         # headers for areas (used later in Excel writer)
         _, unique_headers = _prepare_headers(req.areas)
@@ -341,8 +354,7 @@ class ExtractionService:
             "ocr_dpi": req.ocr.dpi,
             "ocr_scale": req.ocr.scale,
             "ocr_tess": str(req.ocr.tessdata_dir) if req.ocr.tessdata_dir else None,
-            "pdf_root": Path(req.pdf_root) if req.pdf_root else (
-                req.pdf_paths[0].parent if req.pdf_paths else Path.cwd()),
+            "pdf_root": str(pdf_root),
         }
 
         import multiprocessing as mp
