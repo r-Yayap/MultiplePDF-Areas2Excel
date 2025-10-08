@@ -149,6 +149,10 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
             for page_no in range(page_count):
                 page = doc[page_no]
 
+                # remove rotation - temporary fix
+                if getattr(page, "rotation", 0) != 0:
+                    page.remove_rotation()
+
                 # ---- metadata (size / modtime) ----
                 try:
                     st = pdf_path.stat()

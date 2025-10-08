@@ -1,6 +1,6 @@
 # constants.py
 
-VERSION_TEXT = "1.3.251006"
+VERSION_TEXT = "1.3.251008"
 
 # ───────── Geometry (base DIP values @ 96 DPI) ─────────
 INITIAL_WIDTH = 965
