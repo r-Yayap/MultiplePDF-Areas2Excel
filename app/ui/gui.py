@@ -1712,15 +1712,27 @@ class XtractorGUI:
         self.progress_window.grab_set()
         self.progress_window.attributes('-topmost', True)
 
-        self.progress_label = ctk.CTkLabel(self.progress_window, text="Processing PDFs...")
+        self.progress_label = ctk.CTkLabel(
+            self.progress_window,
+            text="Preparing files… (waiting for remote PDFs if needed)",
+        )
         self.progress_label.pack(pady=(10, 2))
-        self.total_files_label = ctk.CTkLabel(self.progress_window, text="Total: 0")
+        self.total_files_label = ctk.CTkLabel(
+            self.progress_window,
+            text="Initializing…",
+        )
         self.total_files_label.pack(pady=2)
 
         self.progress_var = ctk.DoubleVar(value=0)
         self.progress_bar = ctk.CTkProgressBar(self.progress_window, variable=self.progress_var,
                                                orientation="horizontal", width=260)
         self.progress_bar.pack(pady=8)
+        try:
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start()
+        except Exception:
+            pass
+        self._progress_is_indeterminate = True
         cancel_btn = ctk.CTkButton(self.progress_window, text="Cancel", width=80, command=self.on_cancel_extraction)
         cancel_btn.pack(pady=(2, 8))
         self.progress_window.protocol("WM_DELETE_WINDOW", self.on_cancel_extraction)
@@ -1771,12 +1783,35 @@ class XtractorGUI:
             if polled is not None:
                 processed, total = polled
                 if total > 0:
+                    if getattr(self, "_progress_is_indeterminate", False):
+                        try:
+                            self.progress_bar.stop()
+                            self.progress_bar.configure(mode="determinate")
+                        except Exception:
+                            pass
+                        self._progress_is_indeterminate = False
+                        try:
+                            self.progress_label.configure(text="Processing PDFs…")
+                        except Exception:
+                            pass
                     self.total_files_label.configure(text=f"Processed pages: {processed}/{total}")
                     self.progress_var.set(processed / max(total, 1))
+                else:
+                    try:
+                        self.total_files_label.configure(text="Preparing files…")
+                    except Exception:
+                        pass
                 self.root.after(100, _tick)
             else:
                 # finished (or cancelled / error)
                 try:
+                    if getattr(self, "_progress_is_indeterminate", False):
+                        try:
+                            self.progress_bar.stop()
+                            self.progress_bar.configure(mode="determinate")
+                        except Exception:
+                            pass
+                        self._progress_is_indeterminate = False
                     self.progress_var.set(1)
                 except Exception:
                     pass
@@ -1810,6 +1845,13 @@ class XtractorGUI:
             if messagebox.askyesno("Cancel extraction", "Stop the extraction now?"):
                 self.extractor.cancel(self._job)
                 try:
+                    if getattr(self, "_progress_is_indeterminate", False):
+                        try:
+                            self.progress_bar.stop()
+                            self.progress_bar.configure(mode="determinate")
+                        except Exception:
+                            pass
+                        self._progress_is_indeterminate = False
                     self.progress_label.configure(text="Cancelling…")
                 except Exception:
                     pass
