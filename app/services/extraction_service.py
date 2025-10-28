@@ -149,10 +149,6 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
             for page_no in range(page_count):
                 page = doc[page_no]
 
-                # remove rotation - temporary fix
-                if getattr(page, "rotation", 0) != 0:
-                    page.remove_rotation()
-
                 # ---- metadata (size / modtime) ----
                 try:
                     st = pdf_path.stat()
@@ -172,14 +168,14 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                     adj = adjust_coordinates_for_rotation(raw, rotation, ph, pw)
 
                     pr = tuple(pdf.page_rect(page))
-                    clip_text = _sanitize_clip(adj, pr)  # for get_text
                     clip_img = _sanitize_clip(raw, pr)  # for pixmap & OCR (raw like legacy)
 
                     text_area = ""
                     try:
                         if ocr_mode == "Default":
-                            if clip_text:
-                                text_area = pdf.get_text(page, clip_text)
+
+                            text_area = pdf.get_text(page, adj)
+
                             if (not text_area.strip()) and clip_img:
                                 # OCR on the image crop (raw coords)
                                 text_area = ocr.ocr_clip_to_text(page, clip_img, dpi, scale)
@@ -192,8 +188,8 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
 
                         elif ocr_mode == "Text1st+Image-beta":
                             # 1) text first with adjusted rect
-                            if clip_text:
-                                text_area = pdf.get_text(page, clip_text)
+
+                            text_area = pdf.get_text(page, adj)
 
                             # 2) always save image using the raw rect (visual orientation)
                             if clip_img:
@@ -223,8 +219,8 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
 
                         else:
                             # Fallback mode: plain text with adjusted rect
-                            if clip_text:
-                                text_area = pdf.get_text(page, clip_text)
+                            text_area = pdf.get_text(page, adj)
+
                     except Exception:
                         text_area = ""
 
