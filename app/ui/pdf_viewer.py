@@ -68,6 +68,7 @@ class PDFViewer:
         self._set_empty_state_visible(True)
 
         self.pdf_document = None
+        self.current_pdf_path = None
         self.page = None
         self.current_zoom = CURRENT_ZOOM
         self.areas = []
@@ -217,6 +218,10 @@ class PDFViewer:
             self.revision_area = {"title": title, "coordinates": [float(c) for c in coords]}
 
         self.update_rectangles()
+        try:
+            self.parent.on_revision_area_changed()
+        except Exception:
+            pass
 
     def _area_coords(self, a):
         # Accept AreaSpec or GUI dict
@@ -297,15 +302,21 @@ class PDFViewer:
             self.pdf_document.close()
             print("PDF document closed.")
         self.pdf_document = None
+        self.current_pdf_path = None
         self._set_empty_state_visible(True)
         # NEW: re-pin buttons relative to the canvas
         try:
             self.parent.update_floating_controls()
         except Exception:
             pass
+        try:
+            self.parent.on_pdf_closed()
+        except Exception:
+            pass
 
     def display_pdf(self, pdf_path):
         self.pdf_document = fitz.open(pdf_path)
+        self.current_pdf_path = pdf_path
         if self.pdf_document.page_count > 0:
             self.page = self.pdf_document[0]
             # remove any old canvas text approach if it existed
@@ -315,10 +326,19 @@ class PDFViewer:
             self.update_display()
             self.canvas.xview_moveto(1)
             self.canvas.yview_moveto(1)
+            try:
+                self.parent.on_pdf_loaded(pdf_path)
+            except Exception:
+                pass
         else:
             self.pdf_document = None
+            self.current_pdf_path = None
             print("Error: PDF has no pages.")
             self._set_empty_state_visible(True)  # ← show overlay if nothing to display
+            try:
+                self.parent.on_pdf_closed()
+            except Exception:
+                pass
 
     def update_display(self):
         if not self.page:
@@ -404,6 +424,10 @@ class PDFViewer:
                     self.canvas.delete(self.revision_rectangle_id)
                 self.revision_area = {"coordinates": adjusted_coordinates, "title": "Revision Table"}
                 self.revision_rectangle_id = self.current_rectangle
+                try:
+                    self.parent.on_revision_area_changed()
+                except Exception:
+                    pass
 
         self.current_rectangle = None
 

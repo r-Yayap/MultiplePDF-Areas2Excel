@@ -5,6 +5,7 @@ import time
 import customtkinter as ctk
 import sys
 from tkinter import filedialog, messagebox, StringVar
+import re
 from openpyxl import load_workbook
 from app.ui.constants import *
 from customtkinter import CTkImage
@@ -16,11 +17,13 @@ from PIL import Image  # Make sure this is at the top
 from app.ui.pdf_viewer import PDFViewer
 from app.domain.models import OcrSettings, ExtractionRequest
 from app.controllers.extract_controller import ExtractController
+from app.infra.pdf_adapter import PdfAdapter
 from pathlib import Path
 
 from app.ui.ui_utils import create_tooltip, EditableTreeview, CTkOptionMenuNoArrow
 from app.common.ocr import find_tessdata
 from app.domain.revision_patterns import REVISION_PATTERNS
+from app.services.revision_parser import RevisionParser
 
 
 from app.logging_setup import configure_logging
@@ -134,11 +137,13 @@ class XtractorGUI:
         self.output_excel_path = ''
         self.ocr_settings = {'enable_ocr': 'Default', 'dpi_value': 150, 'tessdata_folder': TESSDATA_FOLDER}
         self.recent_pdf_path = None
+        self.revision_column_selection = {"rev": None, "desc": None, "date": None}
 
         self.setup_widgets()
         self.ocr_menu_callback("Default")
         self.setup_bindings()
         self.setup_tooltips()
+        self.update_revision_pattern_controls()
         self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
     def _on_app_close(self):
@@ -242,6 +247,7 @@ class XtractorGUI:
         """Clears all areas and updates the display."""
         self.pdf_viewer.clear_areas()
         self.pdf_viewer.set_gui_revision_area(None)  # also clears the green rectangle
+        self.revision_column_selection = {"rev": None, "desc": None, "date": None}
         # Tree refresh is triggered by update_rectangles() inside clear/set,
         # but keeping the Treeview wipe is harmless:
         self.areas_tree.delete(*self.areas_tree.get_children())
@@ -255,12 +261,293 @@ class XtractorGUI:
             item_id = self.areas_tree.insert("", "end", values=(title, x0, y0, x1, y1))
             self.treeview_item_ids[item_id] = index
 
+    def _prompt_revision_columns(self, rows):
+        if not rows:
+            print("[DetectPattern] _prompt_revision_columns called with no rows.")
+            return None
+
+        column_count = max((len(r) for r in rows if r), default=0)
+        if column_count == 0:
+            print("[DetectPattern] No columns found in detected table rows.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return None
+
+        parser = RevisionParser(None)
+        suggested_rev, suggested_desc, suggested_date = parser.detect_column_indices(rows)
+        print(
+            "[DetectPattern] Suggested column indices from parser:",
+            f"rev={suggested_rev}, desc={suggested_desc}, date={suggested_date}"
+        )
+
+        prev_rev = self.revision_column_selection.get("rev") if self.revision_column_selection else None
+        prev_desc = self.revision_column_selection.get("desc") if self.revision_column_selection else None
+        prev_date = self.revision_column_selection.get("date") if self.revision_column_selection else None
+
+        default_rev_idx = prev_rev if isinstance(prev_rev, int) and 0 <= prev_rev < column_count else None
+        if column_count <= 0:
+            default_rev_idx = 0
+        elif default_rev_idx is None:
+            default_rev_idx = 0
+        else:
+            default_rev_idx = min(max(default_rev_idx, 0), column_count - 1)
+
+        default_desc_idx = prev_desc if isinstance(prev_desc, int) and 0 <= prev_desc < column_count else suggested_desc
+        if default_desc_idx is not None and not (0 <= default_desc_idx < column_count):
+            default_desc_idx = None
+
+        default_date_idx = prev_date if isinstance(prev_date, int) and 0 <= prev_date < column_count else suggested_date
+        if default_date_idx is not None and not (0 <= default_date_idx < column_count):
+            default_date_idx = None
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Verify Revision Columns")
+        dialog.geometry("560x380")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        info = ctk.CTkLabel(
+            dialog,
+            text="Verify the detected table columns and confirm which index holds each value.",
+            wraplength=520,
+            justify="left"
+        )
+        info.pack(padx=15, pady=(12, 6), anchor="w")
+
+        tree = ttk.Treeview(dialog, columns=[str(i) for i in range(column_count)], show="headings", height=min(len(rows), 8))
+        for idx in range(column_count):
+            col_name = f"Column {idx}"
+            tree.heading(str(idx), text=col_name)
+            tree.column(str(idx), width=160, anchor="w")
+
+        preview_rows = rows[:8]
+        for row in preview_rows:
+            values = [str(row[i]).strip() if i < len(row) else "" for i in range(column_count)]
+            tree.insert("", "end", values=values)
+
+        tree.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+        option_values = [str(i) for i in range(column_count)]
+        option_with_none = option_values + ["None"]
+
+        rev_var = StringVar(value=str(default_rev_idx))
+        desc_var = StringVar(value=str(default_desc_idx) if default_desc_idx is not None else "None")
+        date_var = StringVar(value=str(default_date_idx) if default_date_idx is not None else "None")
+
+        options_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        options_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+        def build_option(row_label, variable, values):
+            row_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+            row_frame.pack(fill="x", pady=4)
+            label = ctk.CTkLabel(row_frame, text=row_label, width=140, anchor="w")
+            label.pack(side="left")
+            menu = ctk.CTkOptionMenu(row_frame, values=values, variable=variable, width=120)
+            menu.pack(side="left", padx=(10, 0))
+            return menu
+
+        build_option("Revision column", rev_var, option_values)
+        build_option("Description column", desc_var, option_with_none)
+        build_option("Date column", date_var, option_with_none)
+
+        result = {"selection": None}
+
+        def on_confirm():
+            rev_choice = rev_var.get()
+            if rev_choice not in option_values:
+                print("[DetectPattern] Revision column not selected during confirmation dialog.")
+                messagebox.showinfo("Detect Pattern", "Select a revision column before continuing.")
+                return
+            try:
+                rev_idx = int(rev_choice)
+                desc_choice = desc_var.get()
+                date_choice = date_var.get()
+                desc_idx = None if desc_choice == "None" else int(desc_choice)
+                date_idx = None if date_choice == "None" else int(date_choice)
+            except ValueError:
+                print("[DetectPattern] Failed to parse selected column indices.")
+                messagebox.showinfo("Detect Pattern", "Column selections are invalid.")
+                return
+
+            result["selection"] = (rev_idx, desc_idx, date_idx)
+            print(
+                "[DetectPattern] User confirmed column indices:",
+                f"rev={rev_idx}, desc={desc_idx}, date={date_idx}"
+            )
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=(0, 12))
+
+        confirm_btn = ctk.CTkButton(button_frame, text="Confirm", command=on_confirm, width=100)
+        confirm_btn.pack(side="left", padx=6)
+        cancel_btn = ctk.CTkButton(button_frame, text="Cancel", command=on_cancel, width=100)
+        cancel_btn.pack(side="left", padx=6)
+
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+        self.root.wait_window(dialog)
+
+        return result.get("selection")
+
+    def detect_revision_pattern(self):
+        rev_area = self.pdf_viewer.revision_area
+        pdf_path = getattr(self.pdf_viewer, "current_pdf_path", None) or self.recent_pdf_path
+
+        if not rev_area or not pdf_path:
+            print(
+                "[DetectPattern] Cannot run detection –",
+                f"rev_area={'present' if rev_area else 'missing'}, pdf_path={pdf_path}"
+            )
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        coords = rev_area.get("coordinates") if isinstance(rev_area, dict) else None
+        if not coords or len(coords) != 4:
+            print(f"[DetectPattern] Invalid revision area coordinates: {coords}")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        adapter = PdfAdapter()
+        try:
+            with adapter.open(pdf_path) as doc:
+                if doc.page_count == 0:
+                    print("[DetectPattern] PDF appears to have no pages.")
+                    raise ValueError("PDF has no pages")
+                page_number = getattr(getattr(self.pdf_viewer, "page", None), "number", 0) or 0
+                page_number = min(max(page_number, 0), doc.page_count - 1)
+                print(
+                    f"[DetectPattern] Analysing PDF '{pdf_path}' page {page_number + 1}/{doc.page_count}"
+                )
+                page = doc.load_page(page_number)
+                rows = adapter.find_table_rows(page, tuple(coords))
+                print(
+                    "[DetectPattern] PdfAdapter returned",
+                    f"{len(rows) if rows else 0} rows"
+                )
+        except Exception as exc:
+            print(f"[DetectPattern] Exception during table detection: {exc}")
+            messagebox.showerror("Detect Pattern", f"Failed to analyse revision table: {exc}")
+            return
+
+        if not rows:
+            print("[DetectPattern] No rows extracted from detected table region.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        selection = self._prompt_revision_columns(rows)
+        if selection is None:
+            print("[DetectPattern] User cancelled or dialog failed to return column selection.")
+            return
+
+        rev_idx, desc_idx, date_idx = selection
+        self.revision_column_selection = {"rev": rev_idx, "desc": desc_idx, "date": date_idx}
+
+        first_column = []
+        for row in rows:
+            if not row:
+                continue
+            cell = ""
+            if isinstance(rev_idx, int) and 0 <= rev_idx < len(row):
+                cell = str(row[rev_idx]).strip()
+            elif row:
+                cell = str(row[0]).strip()
+            if not cell:
+                continue
+            first_column.append(cell)
+
+        if not first_column:
+            print("[DetectPattern] Extracted rows had no usable revision values.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        data_values = [c for c in first_column if not re.search(r"\brev(ision)?", c, re.IGNORECASE)]
+        if not data_values:
+            data_values = first_column
+
+        normalized_values = []
+        for value in data_values:
+            cleaned = re.sub(r"\s+", "", value)
+            if cleaned:
+                normalized_values.append(cleaned)
+
+        if not normalized_values:
+            print("[DetectPattern] No normalized revision values available for pattern matching.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        total = len(normalized_values)
+        best_key = None
+        best_ratio = 0.0
+        best_matches = 0
+
+        for key, info in REVISION_PATTERNS.items():
+            try:
+                regex = re.compile(info["pattern"], re.IGNORECASE)
+            except re.error:
+                continue
+            matches = sum(1 for value in normalized_values if regex.fullmatch(value))
+            if not matches:
+                continue
+            ratio = matches / total if total else 0
+            if (ratio > best_ratio) or (abs(ratio - best_ratio) < 1e-9 and matches > best_matches):
+                best_key = key
+                best_ratio = ratio
+                best_matches = matches
+
+        if best_key is None:
+            print("[DetectPattern] Pattern matching found no candidates.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        required_ratio = 1.0 if total <= 2 else 0.6
+        if best_ratio < required_ratio:
+            print(
+                "[DetectPattern] Best match ratio",
+                f"{best_ratio:.2f} below threshold {required_ratio:.2f}"
+            )
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        display_value = self.revision_key_to_display.get(best_key)
+        if not display_value:
+            print(f"[DetectPattern] No dropdown display value mapped for key '{best_key}'.")
+            messagebox.showinfo("Detect Pattern", "Revision pattern could not be identified.")
+            return
+
+        self.revision_pattern_var.set(display_value)
+        self.revision_pattern_menu.set(display_value)
+        print(f"Detected revision pattern '{best_key}' using {best_matches}/{total} samples.")
+
+    def update_revision_pattern_controls(self):
+        if not hasattr(self, "detect_revision_pattern_button"):
+            return
+
+        has_revision_area = bool(self.pdf_viewer.revision_area)
+        pdf_available = bool(getattr(self.pdf_viewer, "current_pdf_path", None) or self.recent_pdf_path)
+        state = "normal" if (has_revision_area and pdf_available) else "disabled"
+        self.detect_revision_pattern_button.configure(state=state)
+
+    def on_revision_area_changed(self):
+        if not self.pdf_viewer.revision_area:
+            self.revision_column_selection = {"rev": None, "desc": None, "date": None}
+        self.update_revision_pattern_controls()
+
+    def on_pdf_loaded(self, path: str):
+        self.recent_pdf_path = path
+        self.update_revision_pattern_controls()
+
+    def on_pdf_closed(self):
+        self.update_revision_pattern_controls()
+
     def open_sample_pdf(self):
         # Opens a file dialog to select a PDF file, then displays it in the PDFViewer
         pdf_path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
         if pdf_path:
             self.pdf_viewer.display_pdf(pdf_path)
             self.recent_pdf_path = pdf_path  # Store the recent PDF path
+            self.update_revision_pattern_controls()
             print(f"Opened sample PDF: {pdf_path}")
 
     def open_recent_pdf(self):
@@ -462,14 +749,36 @@ class XtractorGUI:
         #revision pattern
         pattern_options = [f"{k} — {', '.join(v['examples'])}" for k, v in REVISION_PATTERNS.items()]
         self.revision_dropdown_map = {f"{k} — {', '.join(v['examples'])}": k for k, v in REVISION_PATTERNS.items()}
+        self.revision_key_to_display = {v: k for k, v in self.revision_dropdown_map.items()}
         self.revision_pattern_var = StringVar(value=pattern_options[-1])
-        self.revision_pattern_menu = ctk.CTkOptionMenu(tab_rectangles,
-                                                       font=("Verdana", 9),
-                                                       values=pattern_options,
-                                                       variable=self.revision_pattern_var,
-                                                       width=240, height=24,
-                                                       fg_color="red4", button_color="red4", text_color="white")
-        self.revision_pattern_menu.pack(pady=(5, 5))
+
+        revision_pattern_frame = ctk.CTkFrame(tab_rectangles, fg_color="transparent")
+        revision_pattern_frame.pack(pady=(5, 5), fill="x")
+
+        self.revision_pattern_menu = ctk.CTkOptionMenu(
+            revision_pattern_frame,
+            font=("Verdana", 9),
+            values=pattern_options,
+            variable=self.revision_pattern_var,
+            width=160,
+            height=24,
+            fg_color="red4",
+            button_color="red4",
+            text_color="white"
+        )
+        self.revision_pattern_menu.pack(side="left", fill="x", expand=True)
+
+        self.detect_revision_pattern_button = ctk.CTkButton(
+            revision_pattern_frame,
+            text="Detect",
+            command=self.detect_revision_pattern,
+            font=(BUTTON_FONT, 9),
+            width=90,
+            height=24,
+            fg_color="gray35"
+        )
+        self.detect_revision_pattern_button.pack(side="left", padx=(5, 0))
+        self.detect_revision_pattern_button.configure(state="disabled")
 
         # 🛈 How to Use Button (Revision Table)
         self.revision_help_button = ctk.CTkButton(
@@ -1333,6 +1642,7 @@ class XtractorGUI:
     def clear_revision_area(self):
         """Clears only the revision area, leaving extraction areas untouched."""
         self.pdf_viewer.set_gui_revision_area(None)
+        self.revision_column_selection = {"rev": None, "desc": None, "date": None}
         print("Cleared only revision table area.")
 
     def show_revision_help(self):
@@ -1524,6 +1834,7 @@ class XtractorGUI:
         if not self.pdf_viewer.pdf_document:
             self.pdf_viewer.display_pdf(all_pdfs[0])
             self.recent_pdf_path = all_pdfs[0]
+            self.update_revision_pattern_controls()
             print(f"Loaded first PDF from dropped items: {all_pdfs[0]}")
 
     def drop_sample_pdf(self, event):
@@ -1531,6 +1842,7 @@ class XtractorGUI:
         if os.path.isfile(path) and path.lower().endswith(".pdf"):
             self.pdf_viewer.display_pdf(path)
             self.recent_pdf_path = path
+            self.update_revision_pattern_controls()
             print(f"Dropped Sample PDF: {path}")
         else:
             messagebox.showerror("Invalid Drop", "Please drop a valid PDF file.")
@@ -1772,7 +2084,10 @@ class XtractorGUI:
                 dpi=int(self.ocr_settings['dpi_value']),
                 tessdata_dir=Path(self.ocr_settings['tessdata_folder']) if self.ocr_settings.get(
                     'tessdata_folder') else None
-            )
+            ),
+            revision_column_index=self.revision_column_selection.get("rev"),
+            revision_description_index=self.revision_column_selection.get("desc"),
+            revision_date_index=self.revision_column_selection.get("date"),
         )
 
         # start job via controller

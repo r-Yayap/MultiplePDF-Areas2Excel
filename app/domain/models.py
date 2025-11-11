@@ -25,3 +25,6 @@ class ExtractionRequest:
     revision_regex: str
     ocr: OcrSettings
     pdf_root: Optional[Path] = None  # used for relative folder column (defaults to first file's parent)
+    revision_column_index: Optional[int] = None
+    revision_description_index: Optional[int] = None
+    revision_date_index: Optional[int] = None

@@ -81,6 +81,7 @@ class RevisionParser:
 
     # ---------- detection ----------
     def detect_column_indices(self, rows: List[List[str]], max_rows: int = 4) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+        print(f"[DetectPattern] RevisionParser.detect_column_indices on {len(rows)} rows (max_rows={max_rows}).")
         scores: dict[int, dict[str, int]] = {}  # idx -> {'rev': int, 'date': int, 'desc': int}
 
         def bump(i, k, v=1):
@@ -115,10 +116,12 @@ class RevisionParser:
                     bump(idx, "desc", 1)
 
         if not scores:
+            print("[DetectPattern] RevisionParser: no scoring signals detected in provided rows.")
             return (None, None, None)
 
         # keep an immutable copy for fallbacks
         scores_all = {i: sc.copy() for i, sc in scores.items()}
+        print(f"[DetectPattern] RevisionParser: initial scores {scores_all}.")
 
         # ----- OPTIONAL CERTAINTY LOCK (before picking) -----
         if getattr(self, "certainty_lock", False):
@@ -131,6 +134,7 @@ class RevisionParser:
                 # strong rev column (with no date hints) should not be considered date
                 if sc["rev"] >= REV_STRONG and sc["date"] == 0:
                     sc["date"] = -999
+        print(f"[DetectPattern] RevisionParser: adjusted scores {scores}.")
 
         # ----- PRIMARY EXCLUSIVE PICKS -----
         # Work on a mutable copy so we can pop selected columns
@@ -152,6 +156,10 @@ class RevisionParser:
         r_idx = pick_exclusive("rev")
         d_idx = pick_exclusive("desc")
         dt_idx = pick_exclusive("date")
+        print(
+            "[DetectPattern] RevisionParser: exclusive picks",
+            f"rev={r_idx}, desc={d_idx}, date={dt_idx}"
+        )
 
         # ----- FALLBACK FILL (avoid blanks if possible) -----
         if getattr(self, "fill_missing", False):
@@ -201,7 +209,15 @@ class RevisionParser:
             r_idx = fallback("rev", r_idx)
             d_idx = fallback("desc", d_idx)
             dt_idx = fallback("date", dt_idx)
+            print(
+                "[DetectPattern] RevisionParser: after fallback",
+                f"rev={r_idx}, desc={d_idx}, date={dt_idx}"
+            )
 
+        print(
+            "[DetectPattern] RevisionParser: final column indices",
+            f"rev={r_idx}, desc={d_idx}, date={dt_idx}"
+        )
         return (r_idx, d_idx, dt_idx)
 
     # ---------- row filtering ----------
@@ -269,19 +285,68 @@ class RevisionParser:
         return rev, desc, date
 
     # ---------- table API ----------
-    def parse_table_rows(self, rows: List[List[str]]) -> List[dict]:
+    def parse_table_rows(
+        self,
+        rows: List[List[str]],
+        manual_rev_idx: Optional[int] = None,
+        manual_desc_idx: Optional[int] = None,
+        manual_date_idx: Optional[int] = None,
+    ) -> List[dict]:
         if not rows:
             return []
+
+        def _normalize(idx: Optional[int], column_count: int) -> Optional[int]:
+            if idx is None:
+                return None
+            try:
+                idx_int = int(idx)
+            except (TypeError, ValueError):
+                return None
+            if idx_int < 0 or idx_int >= column_count:
+                return None
+            return idx_int
+
+        max_columns = max(len(r) for r in rows if r) if any(rows) else 0
+        manual_rev_idx = _normalize(manual_rev_idx, max_columns) if max_columns else None
+        manual_desc_idx = _normalize(manual_desc_idx, max_columns) if max_columns else None
+        manual_date_idx = _normalize(manual_date_idx, max_columns) if max_columns else None
 
         # work bottom-up (latest last)
         rows_rev = rows[::-1]
 
-        # first pass: ignore obvious headers/footers
-        tmp_r_idx, tmp_d_idx, tmp_dt_idx = self.detect_column_indices(rows_rev)
+        # ----- identify working indices for filtering -----
+        det_r = det_d = det_dt = None
+        if manual_rev_idx is None or manual_desc_idx is None or manual_date_idx is None:
+            det_r, det_d, det_dt = self.detect_column_indices(rows_rev)
+
+        tmp_r_idx = manual_rev_idx if manual_rev_idx is not None else det_r
+        tmp_d_idx = manual_desc_idx if manual_desc_idx is not None else det_d
+        tmp_dt_idx = manual_date_idx if manual_date_idx is not None else det_dt
+        print(
+            "[DetectPattern] RevisionParser: using preliminary indices for filtering:",
+            f"rev={tmp_r_idx}, desc={tmp_d_idx}, date={tmp_dt_idx}"
+        )
+
         filtered = [r for r in rows_rev if not self.is_footer_or_header_row(r, tmp_r_idx)]
 
-        # re-detect using filtered sample
-        r_idx, d_idx, dt_idx = self.detect_column_indices(filtered)
+        # ----- determine final indices -----
+        r_idx = manual_rev_idx
+        d_idx = manual_desc_idx
+        dt_idx = manual_date_idx
+
+        if r_idx is None or d_idx is None or dt_idx is None:
+            det2_r, det2_d, det2_dt = self.detect_column_indices(filtered)
+            if r_idx is None:
+                r_idx = det2_r
+            if d_idx is None:
+                d_idx = det2_d
+            if dt_idx is None:
+                dt_idx = det2_dt
+
+        print(
+            "[DetectPattern] RevisionParser: final indices after manual overrides:",
+            f"rev={r_idx}, desc={d_idx}, date={dt_idx}"
+        )
 
         out: List[dict] = []
         for row in filtered:

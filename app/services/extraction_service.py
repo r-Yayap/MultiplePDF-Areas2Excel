@@ -130,6 +130,9 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
     pdf = PdfAdapter()
     ocr = OcrAdapter(req["ocr_tess"])
     parser = RevisionParser(req.get("rev_regex"))
+    manual_rev_idx = req.get("rev_column_index")
+    manual_desc_idx = req.get("rev_description_index")
+    manual_date_idx = req.get("rev_date_index")
 
     areas_rects: list[tuple] = list(req["areas_rects"])
     revision_rect: Optional[tuple] = req.get("rev_area_rect")
@@ -230,15 +233,22 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                 if revision_rect:
                     try:
                         # do NOT call page.remove_rotation(); rotate the rect instead
-                        pr2 = tuple(pdf.page_rect(page))
-                        pw2, ph2 = (pr2[2] - pr2[0], pr2[3] - pr2[1])
-                        rotation = getattr(page, "rotation", 0)
-                        adj_rev = adjust_coordinates_for_rotation(revision_rect, rotation, ph2, pw2)
-                        rclip = _sanitize_clip(adj_rev, pr2)
+                        # pr2 = tuple(pdf.page_rect(page))
+                        # pw2, ph2 = (pr2[2] - pr2[0], pr2[3] - pr2[1])
+                        # rotation = getattr(page, "rotation", 0)
+                        # adj_rev = adjust_coordinates_for_rotation(revision_rect, rotation, ph2, pw2)
+                        # rclip = _sanitize_clip(adj_rev, pr2)
+
+                        rclip = tuple(revision_rect)
                         if rclip:
                             rows = pdf.find_table_rows(page, rclip)
                             if rows:
-                                revisions = parser.parse_table_rows(rows)
+                                revisions = parser.parse_table_rows(
+                                    rows,
+                                    manual_rev_idx=manual_rev_idx,
+                                    manual_desc_idx=manual_desc_idx,
+                                    manual_date_idx=manual_date_idx,
+                                )
 
                                 # free big locals
                                 try:
@@ -355,6 +365,9 @@ class ExtractionService:
             "ocr_scale": req.ocr.scale,
             "ocr_tess": str(req.ocr.tessdata_dir) if req.ocr.tessdata_dir else None,
             "pdf_root": str(pdf_root),
+            "rev_column_index": req.revision_column_index,
+            "rev_description_index": req.revision_description_index,
+            "rev_date_index": req.revision_date_index,
         }
 
         import multiprocessing as mp

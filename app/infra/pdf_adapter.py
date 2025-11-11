@@ -77,6 +77,7 @@ class PdfAdapter:
         """
         r = _safe_clip(page, clip)
         if r is None:
+            print(f"[DetectPattern] PdfAdapter: clip {clip} produced no valid rectangle.")
             return None
 
         # quick heuristics
@@ -84,10 +85,18 @@ class PdfAdapter:
             wc = len(page.get_text("words", clip=r))
         except Exception:
             wc = -1
+        print(f"[DetectPattern] PdfAdapter: word count in clip {wc}.")
         if 0 <= wc < 6:
-            return None
+            print(
+                "[DetectPattern] PdfAdapter: word count very small; continuing with table"
+                " detection attempt."
+            )
         MAX_WORDS = int(os.getenv("REV_MAX_WORDS", "1500"))
         if wc > MAX_WORDS:
+            print(
+                f"[DetectPattern] PdfAdapter: word count {wc} exceeds max {MAX_WORDS},"
+                " aborting table detection."
+            )
             return None
 
         # 1) fast path: on original page
@@ -96,6 +105,10 @@ class PdfAdapter:
             if tabs and getattr(tabs, "tables", None):
                 data = tabs.tables[0].extract()
                 if data and len(data) >= 2:
+                    print(
+                        "[DetectPattern] PdfAdapter: table detected on page without rotation,",
+                        f"rows={len(data)}"
+                    )
                     return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
                              for c in row] for row in data]
         except Exception:
@@ -108,6 +121,7 @@ class PdfAdapter:
             rotation = 0
 
         if rotation in (90, 270):
+            print(f"[DetectPattern] PdfAdapter: page rotation {rotation} detected, attempting fallback.")
             tmp = None
             try:
                 # swap width/height for 90/270 to avoid clipping after rotate
@@ -128,6 +142,10 @@ class PdfAdapter:
                     if tabs and getattr(tabs, "tables", None):
                         data = tabs.tables[0].extract()
                         if data and len(data) >= 2:
+                            print(
+                                "[DetectPattern] PdfAdapter: rotation fallback produced table,",
+                                f"rows={len(data)}"
+                            )
                             return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
                                      for c in row] for row in data]
                 except Exception:
