@@ -1,6 +1,7 @@
 # app/services/extraction_service.py
 from __future__ import annotations
 import csv, gc, json, os, secrets, shutil
+from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Tuple
@@ -146,22 +147,24 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
     pages_written = 0
 
     try:
+        try:
+            st = pdf_path.stat()
+            size = st.st_size
+            last_mod = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            size, last_mod = 0, ""
+
+        folder = _rel_folder(pdf_path, pdf_root)
+        filename = pdf_path.name
+
         with pdf.open(pdf_path) as doc:
             page_count = doc.page_count
 
             for page_no in range(page_count):
                 page = doc[page_no]
 
-                # ---- metadata (size / modtime) ----
-                try:
-                    st = pdf_path.stat()
-                    size = st.st_size
-                    last_mod = __import__("datetime").datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    size, last_mod = 0, ""
-
-                pr = tuple(pdf.page_rect(page))  # (x0,y0,x1,y1)
-                pw, ph = (pr[2]-pr[0], pr[3]-pr[1])
+                page_rect = tuple(pdf.page_rect(page))  # (x0,y0,x1,y1)
+                pw, ph = (page_rect[2] - page_rect[0], page_rect[3] - page_rect[1])
                 rotation = getattr(page, "rotation", 0)
 
                 # ---- areas ----
@@ -170,8 +173,7 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                     # Text should use rotation-adjusted rect
                     adj = adjust_coordinates_for_rotation(raw, rotation, ph, pw)
 
-                    pr = tuple(pdf.page_rect(page))
-                    clip_img = _sanitize_clip(raw, pr)  # for pixmap & OCR (raw like legacy)
+                    clip_img = _sanitize_clip(raw, page_rect)  # for pixmap & OCR (raw like legacy)
 
                     text_area = ""
                     try:
@@ -259,10 +261,7 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                         revisions = []
 
                 # ---- final row (write immediately) ----
-                folder = _rel_folder(pdf_path, pdf_root)
-                filename = pdf_path.name
-                pr_final = tuple(pdf.page_rect(page))
-                page_size_str = f"{pr_final[2]-pr_final[0]:.1f} x {pr_final[3]-pr_final[1]:.1f}"
+                page_size_str = f"{pw:.1f} x {ph:.1f}"
 
                 latest_rev = latest_desc = latest_date = ""
                 if isinstance(revisions, list) and revisions:

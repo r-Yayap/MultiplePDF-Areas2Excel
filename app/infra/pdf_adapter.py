@@ -3,10 +3,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
+import logging
 import os
 import pymupdf as fitz
 
 RectT = tuple[float, float, float, float]
+
+logger = logging.getLogger(__name__)
 
 def _safe_clip(page: "fitz.Page", clip: RectT) -> Optional[fitz.Rect]:
     r = fitz.Rect(clip).normalize() & page.rect
@@ -53,12 +56,6 @@ class PdfAdapter:
         except Exception:
             return -1
 
-    def render_pixmap(self, page: "fitz.Page", clip: RectT, dpi: int = 150, scale: Optional[float] = None):
-        if scale is not None:
-            mat = fitz.Matrix(scale, scale)
-            return page.get_pixmap(matrix=mat, clip=fitz.Rect(clip))
-        return page.get_pixmap(clip=fitz.Rect(clip), dpi=dpi)
-
     def remove_rotation(self, page: "fitz.Page"):
         try:
             page.remove_rotation()
@@ -77,7 +74,7 @@ class PdfAdapter:
         """
         r = _safe_clip(page, clip)
         if r is None:
-            print(f"[DetectPattern] PdfAdapter: clip {clip} produced no valid rectangle.")
+            logger.debug("[DetectPattern] PdfAdapter: clip %s produced no valid rectangle.", clip)
             return None
 
         # quick heuristics
@@ -85,17 +82,17 @@ class PdfAdapter:
             wc = len(page.get_text("words", clip=r))
         except Exception:
             wc = -1
-        print(f"[DetectPattern] PdfAdapter: word count in clip {wc}.")
+        logger.debug("[DetectPattern] PdfAdapter: word count in clip %s.", wc)
         if 0 <= wc < 6:
-            print(
-                "[DetectPattern] PdfAdapter: word count very small; continuing with table"
-                " detection attempt."
+            logger.debug(
+                "[DetectPattern] PdfAdapter: word count very small; continuing with table detection attempt."
             )
         MAX_WORDS = int(os.getenv("REV_MAX_WORDS", "1500"))
         if wc > MAX_WORDS:
-            print(
-                f"[DetectPattern] PdfAdapter: word count {wc} exceeds max {MAX_WORDS},"
-                " aborting table detection."
+            logger.debug(
+                "[DetectPattern] PdfAdapter: word count %s exceeds max %s, aborting table detection.",
+                wc,
+                MAX_WORDS,
             )
             return None
 
@@ -105,9 +102,9 @@ class PdfAdapter:
             if tabs and getattr(tabs, "tables", None):
                 data = tabs.tables[0].extract()
                 if data and len(data) >= 2:
-                    print(
-                        "[DetectPattern] PdfAdapter: table detected on page without rotation,",
-                        f"rows={len(data)}"
+                    logger.debug(
+                        "[DetectPattern] PdfAdapter: table detected on page without rotation, rows=%s",
+                        len(data),
                     )
                     return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
                              for c in row] for row in data]
@@ -121,7 +118,10 @@ class PdfAdapter:
             rotation = 0
 
         if rotation in (90, 270):
-            print(f"[DetectPattern] PdfAdapter: page rotation {rotation} detected, attempting fallback.")
+            logger.debug(
+                "[DetectPattern] PdfAdapter: page rotation %s detected, attempting fallback.",
+                rotation,
+            )
             tmp = None
             try:
                 # swap width/height for 90/270 to avoid clipping after rotate
@@ -142,9 +142,9 @@ class PdfAdapter:
                     if tabs and getattr(tabs, "tables", None):
                         data = tabs.tables[0].extract()
                         if data and len(data) >= 2:
-                            print(
-                                "[DetectPattern] PdfAdapter: rotation fallback produced table,",
-                                f"rows={len(data)}"
+                            logger.debug(
+                                "[DetectPattern] PdfAdapter: rotation fallback produced table, rows=%s",
+                                len(data),
                             )
                             return [[(c if isinstance(c, str) else ("" if c is None else str(c))).strip()
                                      for c in row] for row in data]
