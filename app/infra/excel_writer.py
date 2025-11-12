@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import csv
-import json
 import os
-import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
@@ -23,21 +22,11 @@ OUTPUT_BASE_ORDER = [
     "Size (Bytes)", "Date Last Modified", "Page No", "Page Size", "Folder", "Filename"
 ]
 
-
-def _max_revisions(csv_path: Path) -> int:
-    """Scan the combined CSV to determine the maximum number of revision entries."""
-    m = 0
-    with open(csv_path, "r", encoding="utf-8") as f:
-        r = csv.reader(f)
-        next(r, None)  # skip header
-        for row in r:
-            rev_str = row[-1] if row else "[]"
-            try:
-                revs = json.loads(rev_str) if rev_str.strip().startswith("[") else []
-            except json.JSONDecodeError:
-                revs = []
-            m = max(m, len(revs))
-    return m
+def _clean_cell_value(val):
+    """Strip characters Excel refuses to accept."""
+    if isinstance(val, str):
+        return ILLEGAL_CHARACTERS_RE.sub("", val)
+    return val
 
 
 def write_from_csv(
@@ -47,6 +36,7 @@ def write_from_csv(
     unique_headers_mapping: Dict[int, str],
     needs_images: bool,
     pdf_root: Path,
+    max_revisions: int,
 ) -> Path:
     """
     Stream the combined CSV into a final Excel workbook with optional embedded area images.
@@ -55,7 +45,6 @@ def write_from_csv(
     # Area + extra + dynamic revision headers
     area_headers = [unique_headers_mapping[i] for i in range(len(unique_headers_mapping))]
     extra_headers = ["Latest Revision", "Latest Description", "Latest Date"]
-    max_revisions = _max_revisions(combined_csv)
     revision_headers = [f"Rev{i+1}" for i in range(max_revisions)]
 
     # Incoming base order fixed by the pipeline/combiner
@@ -98,7 +87,7 @@ def write_from_csv(
         next(reader, None)  # skip CSV header from combiner
         for row in reader:
             # row layout from combiner:
-            # [UNID, Size, DateMod, Folder, Filename, PageNo, PageSize, <areas...>, LatestRev, LatestDesc, LatestDate, __revisions__]
+            # [UNID, Size, DateMod, Folder, Filename, PageNo, PageSize, <areas...>, LatestRev, LatestDesc, LatestDate, Rev1, ..., RevN]
             unid = row[0]
             incoming_base = row[1:7]  # fixed order IN_BASE_ORDER
 
@@ -116,28 +105,22 @@ def write_from_csv(
             latest_desc = row[base_index + 1] if len(row) > base_index + 1 else ""
             latest_date = row[base_index + 2] if len(row) > base_index + 2 else ""
 
-            # Revisions JSON (last col)
-            try:
-                revisions = json.loads(row[-1]) if row and row[-1].strip().startswith("[") else []
-            except json.JSONDecodeError:
-                revisions = []
-
-            # Flatten each revision entry into "rev | desc | date"
-            flat = []
-            for it in revisions:
-                if isinstance(it, dict):
-                    r = (it.get("rev") or "").strip()
-                    d = (it.get("desc") or "").strip()
-                    dt = (it.get("date") or "").strip()
-                    flat.append(" | ".join(x for x in (r, d, dt) if x))
+            # Revision columns follow the latest fields
+            revision_start = base_index + 3
+            if max_revisions:
+                padded = row[revision_start : revision_start + max_revisions]
+                if len(padded) < max_revisions:
+                    padded = list(padded) + [""] * (max_revisions - len(padded))
                 else:
-                    flat.append("" if it is None else str(it))
-
-            # Pad to max_revisions so each row has the same number of revision columns
-            padded = flat[:max_revisions] + [""] * max(0, max_revisions - len(flat))
+                    padded = list(padded)
+            else:
+                padded = []
 
             # Build final row (same order as headers)
-            row_values = [unid] + reordered_base + areas + [latest_rev, latest_desc, latest_date] + padded
+            row_values = [
+                _clean_cell_value(v)
+                for v in ([unid] + reordered_base + areas + [latest_rev, latest_desc, latest_date] + padded)
+            ]
 
             if needs_images:
                 # Normal mode: we can style cells and embed images
@@ -184,14 +167,15 @@ def write_from_csv(
                 )
 
                 for idx0, val in enumerate(row_values):
-                    c = WriteOnlyCell(ws, value=val)
+                    clean_val = _clean_cell_value(val)
+                    c = WriteOnlyCell(ws, value=clean_val)
                     # Hyperlink on Filename
                     if idx0 == filename_col_idx0 and abs_path:
                         c.font = Font(color="0000FF", underline="single")
                         c.hyperlink = abs_path
                     # OCR marking for area cells
-                    if idx0 in area_col_idxs0 and isinstance(val, str) and "_OCR_" in val:
-                        c.value = val.replace("_OCR_", "").strip()
+                    if idx0 in area_col_idxs0 and isinstance(clean_val, str) and "_OCR_" in clean_val:
+                        c.value = clean_val.replace("_OCR_", "").strip()
                         c.font = ocr_font
                     row_cells.append(c)
                 ws.append(row_cells)
@@ -206,12 +190,3 @@ def write_from_csv(
     wb.save(str(final_out))
     return final_out
 
-
-def copy_ndjson(temp_stream_path: Path, excel_out: Path) -> None:
-    """Copy the streamed NDJSON file (if present) alongside the Excel output."""
-    ndjson_out = excel_out.with_name(excel_out.stem + "_revisions.ndjson")
-    try:
-        if temp_stream_path.exists():
-            shutil.copy(str(temp_stream_path), str(ndjson_out))
-    except Exception as e:
-        print(f"❌ Failed to copy NDJSON: {e}")

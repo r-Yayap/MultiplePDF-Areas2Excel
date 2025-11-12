@@ -1,8 +1,7 @@
 # app/services/extraction_service.py
 from __future__ import annotations
-import csv, gc, json, os, secrets, shutil
+import csv, gc, os, secrets, shutil
 from datetime import datetime
-from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Tuple
 
@@ -10,7 +9,7 @@ from app.domain.models import ExtractionRequest, AreaSpec
 from app.infra.pdf_adapter import PdfAdapter
 from app.infra.ocr_adapter import OcrAdapter
 from app.services.revision_parser import RevisionParser
-from app.infra.excel_writer import write_from_csv, copy_ndjson
+from app.infra.excel_writer import write_from_csv
 
 from app.common.geometry import adjust_coordinates_for_rotation
 
@@ -19,13 +18,12 @@ import pymupdf as fitz
 
 # ===== Helpers (kept top-level for Windows pickling) =====
 
-def _open_temp_writers(temp_dir: Path, unid_prefix: str, with_revisions: bool):
+def _open_temp_writers(temp_dir: Path, unid_prefix: str):
     csv_path = temp_dir / f"temp_{unid_prefix}.csv"
     csv_f = open(csv_path, "w", newline="", encoding="utf-8")
     csv_w = csv.writer(csv_f)
     # line-buffered text file (buffering=1) so it flushes per newline
-    ndjson_f = open(temp_dir / f"temp_{unid_prefix}.ndjson", "w", encoding="utf-8", buffering=1) if with_revisions else None
-    return csv_w, csv_f, ndjson_f
+    return csv_w, csv_f
 
 def _process_single_pdf_star(args):
     """
@@ -108,25 +106,6 @@ def _prepare_headers(areas: Iterable[AreaSpec]) -> Tuple[list[str], dict]:
         unique[i] = u
     return headers, unique
 
-def _write_temp_csv(csv_path: Path, ndjson_path: Optional[Path], rows: Iterable[list], write_revisions: bool):
-    with open(csv_path, "w", newline="", encoding="utf-8") as cf:
-        w = csv.writer(cf)
-        # header row for combined step (matches extractor.py combine)
-        # UNID + BASE + each area header are appended later; here we just stream data rows
-        # The combine step will prepend headers; rows here are final data rows.
-        for r in rows:
-            w.writerow(r)
-    if write_revisions and ndjson_path:
-        with open(ndjson_path, "w", encoding="utf-8") as jf:
-            for r in rows:
-                unid = r[0]
-                rev_json = r[-1] if r else "[]"
-                try:
-                    revs = json.loads(rev_json) if rev_json.strip().startswith("[") else []
-                except Exception:
-                    revs = []
-                jf.write(json.dumps({"unid": unid, "revisions": revs}, ensure_ascii=False) + "\n")
-
 def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: str) -> int:
     pdf = PdfAdapter()
     ocr = OcrAdapter(req["ocr_tess"])
@@ -143,8 +122,9 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
     pdf_root = Path(req["pdf_root"])
 
     # open temp writers once, write per page
-    csv_w, csv_f, ndjson_f = _open_temp_writers(temp_dir, unid_prefix, with_revisions=bool(revision_rect))
+    csv_w, csv_f = _open_temp_writers(temp_dir, unid_prefix)
     pages_written = 0
+    image_gc_counter = 0
 
     try:
         try:
@@ -205,9 +185,14 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                                 finally:
                                     try:
                                         del pix
-                                    except:
+                                    except Exception:
                                         pass
-                                    gc.collect()
+                                    image_gc_counter += 1
+                                    if image_gc_counter % 20 == 0:
+                                        try:
+                                            gc.collect()
+                                        except Exception:
+                                            pass
                                 # 30MB guard
                                 try:
                                     if out_img.stat().st_size > 30 * 1024 * 1024:
@@ -271,12 +256,19 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                     latest_date = last.get("date", "")
 
                 unid = f"{unid_prefix}-{page_no+1}"
-                row = [unid, size, last_mod, folder, filename, page_no+1, page_size_str] \
-                      + area_texts + [latest_rev, latest_desc, latest_date, json.dumps(revisions, ensure_ascii=False)]
-                csv_w.writerow(row)
+                flat_revisions: list[str] = []
+                if isinstance(revisions, list):
+                    for it in revisions:
+                        if isinstance(it, dict):
+                            r = (it.get("rev") or "").strip()
+                            d = (it.get("desc") or "").strip()
+                            dt = (it.get("date") or "").strip()
+                            flat_revisions.append(" | ".join(x for x in (r, d, dt) if x))
+                        else:
+                            flat_revisions.append("" if it is None else str(it))
 
-                if ndjson_f is not None:
-                    ndjson_f.write(json.dumps({"unid": unid, "revisions": revisions}, ensure_ascii=False) + "\n")
+                row = [unid, size, last_mod, folder, filename, page_no+1, page_size_str] + area_texts + [latest_rev, latest_desc, latest_date] + flat_revisions
+                csv_w.writerow(row)
 
                 pages_written += 1
 
@@ -284,7 +276,6 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
                 if (page_no + 1) % 10 == 0:
                     try:
                         csv_f.flush()
-                        if ndjson_f: ndjson_f.flush()
                     except Exception:
                         pass
                     import gc as _gc
@@ -301,11 +292,6 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
             csv_f.close()
         except Exception:
             pass
-        if ndjson_f:
-            try:
-                ndjson_f.close()
-            except Exception:
-                pass
 
 
 
@@ -315,7 +301,7 @@ def _process_single_pdf(pdf_path: Path, req: dict, temp_dir: Path, unid_prefix: 
 
 class ExtractionService:
     """
-    Orchestrates multi-file extraction using temp CSV/NDJSON then streams to Excel.
+    Orchestrates multi-file extraction using temp CSV files then streams to Excel.
     Mirrors original behavior, but separated into adapters.
     """
     def __init__(self):
@@ -397,54 +383,57 @@ class ExtractionService:
         cancelled = False
 
         # ---- run batches ----
-        for bidx, batch in enumerate(_chunked(jobs, batch_size), 1):
-            if cancelled:
-                break
+        pool = ctx.Pool(processes=procs, maxtasksperchild=maxtasks)
+        try:
+            for bidx, batch in enumerate(_chunked(jobs, batch_size), 1):
+                if cancelled:
+                    break
 
-            with ctx.Pool(processes=procs, maxtasksperchild=maxtasks) as pool:
+                for res in pool.imap_unordered(_process_single_pdf_star, batch, chunksize=1):
+                    if should_cancel and should_cancel():
+                        cancelled = True
+                        break
+
+                    if not res.get("ok"):
+                        errors.append(res.get("error", "Unknown worker error"))
+                        continue
+
+                    processed += res["pages"]
+                    if on_progress:
+                        on_progress(processed, total_pages)
+
+                if cancelled:
+                    break
+
+                # Hard memory reset between batches
                 try:
-                    for res in pool.imap_unordered(_process_single_pdf_star, batch, chunksize=1):
-                        if should_cancel and should_cancel():
-                            cancelled = True
-                            pool.terminate()
-                            break
-
-                        if not res.get("ok"):
-                            errors.append(res.get("error", "Unknown worker error"))
-                            continue
-
-                        processed += res["pages"]
-                        if on_progress:
-                            on_progress(processed, total_pages)
-                finally:
-                    try:
-                        pool.close()
-                    except Exception:
-                        pass
-                    try:
-                        pool.join()
-                    except Exception:
-                        pass
-
-            # Hard memory reset between batches
+                    fitz.TOOLS.store_shrink(100)  # trim MuPDF global store
+                except Exception:
+                    pass
+                try:
+                    gc.collect()  # free Python objects
+                except Exception:
+                    pass
+        finally:
             try:
-                fitz.TOOLS.store_shrink(100)  # trim MuPDF global store
-            except Exception:
-                pass
-            try:
-                gc.collect()  # free Python objects
-            except Exception:
-                pass
+                if cancelled:
+                    pool.terminate()
+                else:
+                    pool.close()
+            finally:
+                try:
+                    pool.join()
+                except Exception:
+                    pass
 
-        # combine temp CSVs (and NDJSON)
+        # combine temp CSVs
         combined_csv = temp_dir / "streamed_output.csv"
-        combined_ndjson = temp_dir / "streamed_revisions.ndjson"
-        self._combine_temp_files(temp_dir, combined_csv, combined_ndjson, unique_headers)
+        max_revisions = self._combine_temp_files(temp_dir, combined_csv, unique_headers)
 
         # write final Excel (streamed)
         needs_images = (req.ocr.mode == "Text1st+Image-beta")
         excel_out = write_from_csv(
-            combined_csv, req.output_excel, temp_dir, unique_headers, needs_images, pdf_root
+            combined_csv, req.output_excel, temp_dir, unique_headers, needs_images, pdf_root, max_revisions
         )
 
         if errors:
@@ -454,10 +443,6 @@ class ExtractionService:
             except Exception:
                 pass
 
-        # place NDJSON copy near Excel (if revisions were enabled)
-        if req.revision_area:
-            copy_ndjson(combined_ndjson, excel_out)
-
         # cleanup temp dir
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -466,30 +451,54 @@ class ExtractionService:
 
         return excel_out
 
-    def _combine_temp_files(self, temp_dir: Path, combined_csv: Path, combined_ndjson: Path, unique_headers: dict):
-        # CSVs
+    def _combine_temp_files(self, temp_dir: Path, combined_csv: Path, unique_headers: dict) -> int:
         import glob
+
         temp_csvs = sorted(Path(p) for p in glob.glob(str(temp_dir / "temp_*.csv")))
-        with open(combined_csv, "w", newline="", encoding="utf-8") as outf:
-            w = csv.writer(outf)
-            w.writerow(["UNID", "Size (Bytes)", "Date Last Modified", "Folder", "Filename", "Page No", "Page Size"]
-                       + [unique_headers[i] for i in range(len(unique_headers))]
-                       + ["Latest Revision", "Latest Description", "Latest Date", "__revisions__"])
+        area_headers = [unique_headers[i] for i in range(len(unique_headers))]
+        base_fixed = 1 + 6 + len(area_headers) + 3  # UNID + base + areas + latest trio
+
+        body_path = temp_dir / "combined_body.csv"
+        max_revisions = 0
+
+        with open(body_path, "w", newline="", encoding="utf-8") as body_file:
+            writer = csv.writer(body_file)
             for f in temp_csvs:
                 with open(f, "r", encoding="utf-8") as inf:
-                    r = csv.reader(inf)
-                    for row in r:
-                        w.writerow(row)
-                try: f.unlink()
-                except Exception: pass
+                    reader = csv.reader(inf)
+                    for row in reader:
+                        writer.writerow(row)
+                        rev_cols = max(0, len(row) - base_fixed)
+                        if rev_cols > max_revisions:
+                            max_revisions = rev_cols
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
 
-        # NDJSON
-        import glob
-        temp_ndjsons = sorted(Path(p) for p in glob.glob(str(temp_dir / "temp_*.ndjson")))
-        if temp_ndjsons:
-            with open(combined_ndjson, "w", encoding="utf-8") as outj:
-                for f in temp_ndjsons:
-                    with open(f, "r", encoding="utf-8") as inj:
-                        shutil.copyfileobj(inj, outj)
-                    try: f.unlink()
-                    except Exception: pass
+        revision_headers = [f"Rev{i+1}" for i in range(max_revisions)]
+        with open(combined_csv, "w", newline="", encoding="utf-8") as outf:
+            writer = csv.writer(outf)
+            writer.writerow([
+                "UNID",
+                "Size (Bytes)",
+                "Date Last Modified",
+                "Folder",
+                "Filename",
+                "Page No",
+                "Page Size",
+            ] + area_headers + ["Latest Revision", "Latest Description", "Latest Date"] + revision_headers)
+
+            with open(body_path, "r", encoding="utf-8") as body_file:
+                reader = csv.reader(body_file)
+                for row in reader:
+                    rev_cols = max(0, len(row) - base_fixed)
+                    padded = row + [""] * (max_revisions - rev_cols)
+                    writer.writerow(padded)
+
+        try:
+            body_path.unlink()
+        except Exception:
+            pass
+
+        return max_revisions
